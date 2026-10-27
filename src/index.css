@@ -1,0 +1,474 @@
+@import "tailwindcss";
+
+@layer base {
+  * {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+    font-variant-numeric: normal;
+    font-feature-settings: "zero" 0;
+  }
+}
+
+/* Custom Gold and Dark Luxury Styling */
+.gold-gradient-text {
+  background: linear-gradient(135deg, #fef08a 0%, #f59e0b 50%, #d97706 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.gold-border-glow {
+  box-shadow: 0 0 20px -5px rgba(245, 158, 11, 0.25);
+}
+
+.gold-glow-subtle {
+  filter: drop-shadow(0 2px 8px rgba(245, 158, 11, 0.3));
+}
+
+/* Hide scrollbar for clean app shell feel */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Candy Crush Animations */
+@keyframes candyDropBounce {
+  0% {
+    transform: translateY(-80px) scaleY(1.15);
+    opacity: 0.2;
+  }
+  65% {
+    transform: translateY(6px) scaleY(0.92);
+    opacity: 1;
+  }
+  85% {
+    transform: translateY(-3px) scaleY(1.04);
+  }
+  100% {
+    transform: translateY(0) scaleY(1);
+    opacity: 1;
+  }
+}
+
+@keyframes candyPopBurst {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+    filter: brightness(1);
+  }
+  40% {
+    transform: scale(1.35);
+    opacity: 1;
+    filter: brightness(1.7) drop-shadow(0 0 16px rgba(255, 255, 255, 0.9));
+  }
+  100% {
+    transform: scale(0.1) rotate(15deg);
+    opacity: 0;
+    filter: brightness(2);
+  }
+}
+
+@keyframes candyShakeInvalid {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px) rotate(-4deg); }
+  40% { transform: translateX(8px) rotate(4deg); }
+  60% { transform: translateX(-5px) rotate(-2deg); }
+  80% { transform: translateX(5px) rotate(2deg); }
+}
+
+@keyframes scoreFloatUp {
+  0% {
+    transform: translate(-50%, 0) scale(0.7);
+    opacity: 0;
+  }
+  20% {
+    transform: translate(-50%, -12px) scale(1.15);
+    opacity: 1;
+  }
+  80% {
+    transform: translate(-50%, -36px) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-50%, -52px) scale(0.9);
+    opacity: 0;
+  }
+}
+
+.animate-candy-drop {
+  animation: candyDropBounce 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+.animate-candy-pop {
+  animation: candyPopBurst 0.32s ease-out forwards;
+}
+
+.animate-candy-invalid {
+  animation: candyShakeInvalid 0.35s ease-in-out;
+}
+
+.animate-score-float {
+  animation: scoreFloatUp 1.1s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+/* Background floating bubbles and aurora */
+@keyframes floatBubble {
+  0% {
+    transform: translateY(110vh) translateX(0) scale(0.6);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.65;
+  }
+  85% {
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateY(-20vh) translateX(30px) scale(1.1);
+    opacity: 0;
+  }
+}
+
+@keyframes auroraFlow {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes lightningPulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px #38bdf8) drop-shadow(0 0 16px #60a5fa);
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0 0 16px #38bdf8) drop-shadow(0 0 28px #93c5fd) drop-shadow(0 0 40px #facc15);
+    transform: scale(1.08) rotate(4deg);
+  }
+}
+
+@keyframes lightningZapBurst {
+  0% {
+    opacity: 0.95;
+    stroke-dashoffset: 100;
+  }
+  50% {
+    opacity: 1;
+    stroke-dashoffset: 0;
+  }
+  100% {
+    opacity: 0;
+    stroke-dashoffset: -100;
+  }
+}
+
+.animate-float-bubble {
+  animation: floatBubble linear infinite;
+}
+
+.animate-aurora {
+  background-size: 200% 200%;
+  animation: auroraFlow 14s ease infinite;
+}
+
+.animate-lightning-pulse {
+  animation: lightningPulse 1.2s ease-in-out infinite;
+}
+
+.animate-zap {
+  animation: lightningZapBurst 0.4s ease-out forwards;
+}
+
+/* ==========================================================================
+   9JACASH LIGHT MODE (CLEAR VIEW) THEME
+   High-contrast, elegant, beautiful daylight mode with floating ₦1,000 notes
+   ========================================================================== */
+
+html.light-mode,
+body.light-mode {
+  background-color: #f4f6fa !important;
+  color: #0f172a !important;
+}
+
+/* Background canvas and containers */
+html.light-mode .bg-\[\#0b0c0e\],
+html.light-mode .bg-\[\#0d0e12\],
+html.light-mode .bg-\[\#0a0b0d\],
+html.light-mode .bg-\[\#0d0d10\] {
+  background-color: #f4f6fa !important;
+  color: #0f172a !important;
+}
+
+/* Primary cards: Crisp pure white with soft luxury elevation */
+html.light-mode .bg-\[\#131418\],
+html.light-mode .bg-\[\#13141b\],
+html.light-mode .bg-\[\#16171d\],
+html.light-mode .bg-\[\#16171b\],
+html.light-mode .bg-\[\#171922\],
+html.light-mode .bg-\[\#121319\],
+html.light-mode .bg-\[\#181920\],
+html.light-mode .bg-\[\#1c1d24\],
+html.light-mode .bg-\[\#15161c\],
+html.light-mode .bg-\[\#14151b\],
+html.light-mode .bg-\[\#191a21\],
+html.light-mode .bg-\[\#18191f\]\/90,
+html.light-mode .bg-\[\#16181d\] {
+  background-color: #ffffff !important;
+  box-shadow: 0 4px 20px -2px rgba(15, 23, 42, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04) !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Secondary nested containers / tags */
+html.light-mode .bg-\[\#1a1c24\],
+html.light-mode .bg-\[\#1f212a\],
+html.light-mode .bg-\[\#232530\],
+html.light-mode .bg-\[\#252733\],
+html.light-mode .bg-\[\#22242c\],
+html.light-mode .bg-\[\#1e2029\] {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Borders */
+html.light-mode .border-stone-800,
+html.light-mode .border-stone-800\/80,
+html.light-mode .border-stone-800\/90,
+html.light-mode .border-stone-800\/60,
+html.light-mode .border-stone-800\/50,
+html.light-mode .border-stone-800\/40,
+html.light-mode .border-stone-700,
+html.light-mode .border-stone-700\/80,
+html.light-mode .border-stone-850,
+html.light-mode .border-stone-900 {
+  border-color: #e2e8f0 !important;
+}
+
+/* Text readability in light mode */
+html.light-mode .text-stone-100,
+html.light-mode .text-stone-200,
+html.light-mode h1:not([class*="text-transparent"]),
+html.light-mode h2:not([class*="text-transparent"]),
+html.light-mode h3:not([class*="text-transparent"]),
+html.light-mode h4:not([class*="text-transparent"]) {
+  color: #0f172a !important;
+}
+
+html.light-mode .text-stone-300,
+html.light-mode .text-stone-400 {
+  color: #475569 !important;
+}
+
+html.light-mode .text-stone-500 {
+  color: #64748b !important;
+}
+
+/* Make sure text inside cards that are converted to white is legible */
+html.light-mode .bg-\[\#16171d\] .text-white:not(button):not(button *),
+html.light-mode .bg-\[\#131418\] .text-white:not(button):not(button *),
+html.light-mode .bg-\[\#13141b\] .text-white:not(button):not(button *),
+html.light-mode .bg-\[\#15161c\] .text-white:not(button):not(button *),
+html.light-mode .bg-\[\#14151b\] .text-white:not(button):not(button *),
+html.light-mode .bg-\[\#16181d\] .text-white:not(button):not(button *),
+html.light-mode .bg-white .text-white:not(button):not(button *),
+html.light-mode form label.text-white,
+html.light-mode form p.text-white,
+html.light-mode form h1.text-white,
+html.light-mode form h2.text-white,
+html.light-mode form h3.text-white,
+html.light-mode [class*="text-xl font-bold text-white"]:not(button):not(button *),
+html.light-mode [class*="text-2xl font-bold text-white"]:not(button):not(button *) {
+  color: #0f172a !important;
+}
+
+/* Ensure button text remains crisp white on dark/colored buttons */
+html.light-mode button[type="submit"] span,
+html.light-mode button[type="submit"],
+html.light-mode button.bg-black span,
+html.light-mode button.bg-slate-900 span,
+html.light-mode button[class*="bg-emerald"] span,
+html.light-mode button[class*="bg-pink"] span,
+html.light-mode button[class*="bg-amber-400"] span,
+html.light-mode button[class*="bg-amber-500"] span {
+  /* Let inline/tailwind button text color take effect */
+}
+
+/* Explicit balance clarity in light mode */
+html.light-mode .balance-display,
+html.light-mode [data-balance-text] {
+  color: #0f172a !important;
+}
+
+/* Forms & inputs */
+html.light-mode input:not([type="checkbox"]):not([type="radio"]),
+html.light-mode select,
+html.light-mode textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+html.light-mode input::placeholder,
+html.light-mode textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+/* Preserve bright buttons and badges */
+html.light-mode button[class*="bg-amber-400"],
+html.light-mode button[class*="bg-amber-500"],
+html.light-mode a[class*="bg-amber-400"],
+html.light-mode a[class*="bg-amber-500"] {
+  color: #000000 !important;
+}
+
+/* Solid colored buttons */
+html.light-mode button.bg-red-500,
+html.light-mode button.bg-red-600,
+html.light-mode button.bg-emerald-500,
+html.light-mode button.bg-emerald-600,
+html.light-mode button.bg-blue-500,
+html.light-mode button.bg-blue-600 {
+  color: #ffffff !important;
+}
+
+/* Light mode Sign Out & subtle red action buttons: High contrast crisp red */
+html.light-mode button[class*="bg-red-50"],
+html.light-mode button[class*="bg-red-100"],
+html.light-mode button[class*="border-red-300"] {
+  background-color: #fef2f2 !important;
+  color: #b91c1c !important;
+  border-color: #fca5a5 !important;
+}
+
+html.light-mode button[class*="bg-red-50"] span,
+html.light-mode button[class*="bg-red-100"] span,
+html.light-mode button[class*="border-red-300"] span,
+html.light-mode button[class*="bg-red-50"] svg,
+html.light-mode button[class*="bg-red-100"] svg,
+html.light-mode button[class*="border-red-300"] svg {
+  color: #b91c1c !important;
+}
+
+html.light-mode button[class*="bg-red-50"]:hover,
+html.light-mode button[class*="bg-red-100"]:hover {
+  background-color: #fee2e2 !important;
+  color: #991b1b !important;
+  border-color: #f87171 !important;
+}
+
+html.light-mode button[class*="bg-red-50"]:hover span,
+html.light-mode button[class*="bg-red-100"]:hover span,
+html.light-mode button[class*="bg-red-50"]:hover svg,
+html.light-mode button[class*="bg-red-100"]:hover svg {
+  color: #991b1b !important;
+}
+
+/* Modals and dialogs */
+html.light-mode .fixed .bg-\[\#121316\],
+html.light-mode .fixed .bg-\[\#141518\],
+html.light-mode .fixed .bg-\[\#14151b\],
+html.light-mode .fixed .bg-\[\#16171d\],
+html.light-mode .fixed .bg-\[\#181920\],
+html.light-mode .fixed .bg-\[\#1a1b22\] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.25) !important;
+}
+
+/* ==========================================================================
+   ADMIN DASHBOARD DUAL THEME SUPPORT
+   Supports both Obsidian Dark and Clean Executive Light Mode seamlessly
+   with accurate high-contrast action buttons.
+   ========================================================================== */
+html.light-mode .admin-page-root {
+  background-color: #f4f6fa !important;
+  color: #0f172a !important;
+}
+
+html.light-mode .admin-card,
+html.light-mode .admin-page-root .bg-\[\#14151b\],
+html.light-mode .admin-page-root .bg-\[\#16171d\],
+html.light-mode .admin-page-root .bg-\[\#121319\],
+html.light-mode .admin-page-root .bg-\[\#181922\],
+html.light-mode .admin-page-root .bg-\[\#1a1c26\],
+html.light-mode .admin-page-root .bg-\[\#1c1e26\],
+html.light-mode .admin-page-root .bg-\[\#0d0e12\] {
+  background-color: #ffffff !important;
+  border-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  box-shadow: 0 4px 16px -2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(0, 0, 0, 0.02) !important;
+}
+
+html.light-mode .admin-page-root .border-stone-800,
+html.light-mode .admin-page-root .border-stone-800\/80,
+html.light-mode .admin-page-root .border-stone-700,
+html.light-mode .admin-page-root .border-stone-700\/80 {
+  border-color: #e2e8f0 !important;
+}
+
+html.light-mode .admin-page-root h1.text-white,
+html.light-mode .admin-page-root h2.text-white,
+html.light-mode .admin-page-root h3.text-white,
+html.light-mode .admin-page-root div:not([class*="bg-"]):not([class*="from-"]).text-white,
+html.light-mode .admin-page-root span:not([class*="bg-"]):not([class*="from-"]).text-white,
+html.light-mode .admin-page-root strong.text-white,
+html.light-mode .admin-page-root p.text-white {
+  color: #0f172a !important;
+}
+
+html.light-mode .admin-page-root .text-stone-400,
+html.light-mode .admin-page-root .text-stone-300 {
+  color: #475569 !important;
+}
+
+html.light-mode .admin-page-root .text-stone-500 {
+  color: #64748b !important;
+}
+
+html.light-mode .admin-page-root input:not([type="checkbox"]):not([type="radio"]),
+html.light-mode .admin-page-root select,
+html.light-mode .admin-page-root textarea {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+
+html.light-mode .admin-page-root input::placeholder,
+html.light-mode .admin-page-root textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html.light-mode .admin-page-root .bg-stone-800,
+html.light-mode .admin-page-root .bg-stone-800\/80,
+html.light-mode .admin-page-root .bg-stone-800\/90 {
+  background-color: #e2e8f0 !important;
+  color: #1e293b !important;
+}
+
+html.light-mode .admin-page-root .bg-stone-800:hover,
+html.light-mode .admin-page-root .bg-stone-700:hover {
+  background-color: #cbd5e1 !important;
+}
+
+/* Ensure accurate action button colors in admin */
+html.light-mode button.admin-btn-approve,
+html.light-mode .admin-btn-approve {
+  background-color: #059669 !important;
+  color: #ffffff !important;
+  border-color: #047857 !important;
+}
+
+html.light-mode button.admin-btn-decline,
+html.light-mode .admin-btn-decline {
+  background-color: #e11d48 !important;
+  color: #ffffff !important;
+  border-color: #be123c !important;
+}
+
+
+

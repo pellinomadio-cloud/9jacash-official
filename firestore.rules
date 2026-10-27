@@ -1,0 +1,79 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.:@]+$');
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Connection test document
+    match /test/{testId} {
+      allow read, write: if true;
+    }
+
+    // App global settings (e.g. company deposit account info)
+    match /app_settings/{settingId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(settingId);
+    }
+
+    // User profiles & wallets
+    match /users/{userId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(userId);
+    }
+
+    // Transactions
+    match /transactions/{transactionId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(transactionId);
+    }
+
+    // Referral Records
+    match /referrals/{referralId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(referralId);
+    }
+
+    // Deposit Requests
+    match /deposit_requests/{depositId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(depositId);
+    }
+
+    // Notifications
+    match /notifications/{notificationId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(notificationId);
+    }
+
+    // Safe Payout Accounts (KYC Confirmed Withdrawal Accounts)
+    match /safe_payout_accounts/{safeId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(safeId);
+    }
+
+    // Device Push Broadcasts (Company notices sent to all devices)
+    match /device_broadcasts/{broadcastId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(broadcastId);
+    }
+
+    // Device Subscribers (registered phones/tablets/desktops)
+    match /device_subscribers/{subscriberId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(subscriberId);
+    }
+
+    // Admin Universal Quick Codes (Single-use, 10-minute expiry)
+    match /admin_quick_codes/{codeId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(codeId);
+    }
+  }
+}

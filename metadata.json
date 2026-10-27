@@ -1,0 +1,8 @@
+{
+  "name": "Remix 9jacash",
+  "description": "Premium Nigerian digital banking and payments platform with instant transfers, airtime top-ups, and cashback rewards.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

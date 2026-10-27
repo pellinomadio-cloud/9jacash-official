@@ -1,0 +1,38 @@
+{
+  "id": "/",
+  "name": "9jacash - Digital Banking & Instant Rewards",
+  "short_name": "9jacash",
+  "description": "Secure digital banking, instant transfers, and quick cash code activation.",
+  "theme_color": "#0d0d0f",
+  "background_color": "#0b0c0e",
+  "display": "standalone",
+  "orientation": "portrait",
+  "start_url": "/",
+  "scope": "/",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

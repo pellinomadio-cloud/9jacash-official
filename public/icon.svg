@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="blueGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e3a8a" />
+      <stop offset="50%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#090d16" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fde047" />
+      <stop offset="50%" stop-color="#f59e0b" />
+      <stop offset="100%" stop-color="#d97706" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="12" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  
+  <!-- Background with rounded PWA squircle path -->
+  <rect width="512" height="512" rx="112" fill="url(#blueGrad)" />
+  
+  <!-- Outer Gold Border Glow -->
+  <rect x="24" y="24" width="464" height="464" rx="92" fill="none" stroke="url(#goldGrad)" stroke-width="8" opacity="0.85" filter="url(#glow)" />
+  
+  <!-- Subtle background currency pattern or rays -->
+  <circle cx="256" cy="256" r="180" fill="none" stroke="#f59e0b" stroke-width="2" opacity="0.15" />
+  <circle cx="256" cy="256" r="130" fill="none" stroke="#f59e0b" stroke-width="1.5" opacity="0.2" />
+
+  <!-- Guy Silhouette / Bust -->
+  <!-- Shoulders & Suit -->
+  <path d="M156 420 C156 350 200 320 256 320 C312 320 356 350 356 420 Z" fill="url(#goldGrad)" opacity="0.9" />
+  <path d="M176 430 C176 370 212 340 256 340 C300 340 336 370 336 430 Z" fill="#1e3a8a" />
+  
+  <!-- Shirt & Gold Tie -->
+  <polygon points="256,340 240,380 272,380" fill="#fde047" />
+
+  <!-- Head -->
+  <circle cx="256" cy="210" r="64" fill="url(#goldGrad)" />
+  <path d="M200 190 Q256 150 312 190 Q312 150 256 130 Q200 150 200 190 Z" fill="#1e3a8a" />
+
+  <!-- Money Stack / Bill held in hands -->
+  <!-- Hand 1 -->
+  <path d="M180 320 Q210 290 230 310" stroke="url(#goldGrad)" stroke-width="14" stroke-linecap="round" fill="none" />
+  <!-- Hand 2 -->
+  <path d="M332 320 Q302 290 282 310" stroke="url(#goldGrad)" stroke-width="14" stroke-linecap="round" fill="none" />
+
+  <!-- Banknotes (Cash 💴 Stack) -->
+  <!-- Bill 3 (Back) -->
+  <rect x="176" y="270" width="160" height="90" rx="10" fill="#1e3a8a" stroke="#d97706" stroke-width="4" transform="rotate(-8 256 315)" />
+  <!-- Bill 2 (Middle) -->
+  <rect x="172" y="280" width="160" height="90" rx="10" fill="#0f172a" stroke="#f59e0b" stroke-width="5" transform="rotate(4 256 325)" />
+  <!-- Bill 1 (Front) -->
+  <rect x="166" y="285" width="180" height="100" rx="12" fill="url(#goldGrad)" stroke="#ffffff" stroke-width="4" filter="url(#glow)" />
+  
+  <!-- Currency Symbol ₦ / ¥ inside bill -->
+  <circle cx="256" cy="335" r="28" fill="#1e3a8a" />
+  <text x="256" y="347" font-size="34" font-weight="900" font-family="Arial, sans-serif" fill="#fde047" text-anchor="middle">₦</text>
+
+  <!-- Sparkles / Stars for wealth/success -->
+  <path d="M110 140 L118 160 L138 168 L118 176 L110 196 L102 176 L82 168 L102 160 Z" fill="#fde047" />
+  <path d="M400 120 L405 132 L417 137 L405 142 L400 154 L395 142 L383 137 L395 132 Z" fill="#fde047" />
+  <path d="M380 380 L384 390 L394 394 L384 398 L380 408 L376 398 L366 394 L376 390 Z" fill="#fde047" />
+</svg>

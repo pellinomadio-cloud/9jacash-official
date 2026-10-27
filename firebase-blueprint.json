@@ -1,0 +1,152 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account profile and wallet data",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 150 },
+        "pin": { "type": "string", "maxLength": 10 },
+        "balance": { "type": "number" },
+        "accountNumber": { "type": "string", "maxLength": 30 },
+        "bankName": { "type": "string", "maxLength": 60 },
+        "accountName": { "type": "string", "maxLength": 100 },
+        "tier": { "type": "number" },
+        "pendingEarnings": { "type": "number" },
+        "membershipId": { "type": "string", "maxLength": 30 },
+        "referralCode": { "type": "string", "maxLength": 50 },
+        "referredBy": { "type": "string", "maxLength": 100 },
+        "referralEarnings": { "type": "number" },
+        "referralCount": { "type": "number" },
+        "isPartnershipMember": { "type": "boolean" },
+        "codesPurchasedCount": { "type": "number" },
+        "role": { "type": "string", "enum": ["user", "admin"], "maxLength": 20 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "name", "email", "pin", "balance", "tier", "referralCode", "role"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "User wallet transaction record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userEmail": { "type": "string", "maxLength": 150 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "type": { "type": "string", "enum": ["credit", "debit"], "maxLength": 20 },
+        "amount": { "type": "number" },
+        "title": { "type": "string", "maxLength": 150 },
+        "description": { "type": "string", "maxLength": 300 },
+        "date": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "enum": ["completed", "pending", "failed"], "maxLength": 30 },
+        "reference": { "type": "string", "maxLength": 100 },
+        "recipientAccount": { "type": "string", "maxLength": 50 },
+        "recipientName": { "type": "string", "maxLength": 100 },
+        "recipientBank": { "type": "string", "maxLength": 100 },
+        "network": { "type": "string", "maxLength": 50 },
+        "phoneNumber": { "type": "string", "maxLength": 30 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "userId", "type", "amount", "title", "status", "date"]
+    },
+    "ReferralRecord": {
+      "title": "ReferralRecord",
+      "description": "Referral reward event and commission record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "referrerId": { "type": "string", "maxLength": 128 },
+        "referrerEmail": { "type": "string", "maxLength": 150 },
+        "referrerCode": { "type": "string", "maxLength": 50 },
+        "referredUserId": { "type": "string", "maxLength": 128 },
+        "referredUserName": { "type": "string", "maxLength": 100 },
+        "referredUserEmail": { "type": "string", "maxLength": 150 },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["credited", "pending"], "maxLength": 30 },
+        "date": { "type": "string", "maxLength": 50 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "referrerCode", "referredUserEmail", "amount", "status", "date"]
+    },
+    "DepositRequest": {
+      "title": "DepositRequest",
+      "description": "User bank deposit confirmation and receipt submission",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 100 },
+        "userEmail": { "type": "string", "maxLength": 150 },
+        "amount": { "type": "number" },
+        "proofUrl": { "type": "string", "maxLength": 1000 },
+        "reference": { "type": "string", "maxLength": 100 },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"], "maxLength": 30 },
+        "date": { "type": "string", "maxLength": 50 },
+        "senderName": { "type": "string", "maxLength": 100 },
+        "createdAt": { "type": "string", "maxLength": 50 },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "userId", "amount", "status", "date"]
+    },
+    "CompanyAccount": {
+      "title": "CompanyAccount",
+      "description": "Official company deposit account details for bank transfers",
+      "type": "object",
+      "properties": {
+        "bankName": { "type": "string", "maxLength": 100 },
+        "accountNumber": { "type": "string", "maxLength": 50 },
+        "accountName": { "type": "string", "maxLength": 100 },
+        "minDeposit": { "type": "number" },
+        "maxDeposit": { "type": "number" },
+        "updatedAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["bankName", "accountNumber", "accountName"]
+    },
+    "AppNotification": {
+      "title": "AppNotification",
+      "description": "In-app notifications for alerts and payment updates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 150 },
+        "message": { "type": "string", "maxLength": 500 },
+        "date": { "type": "string", "maxLength": 50 },
+        "isRead": { "type": "boolean" },
+        "type": { "type": "string", "enum": ["info", "success", "warning", "reward"], "maxLength": 30 },
+        "createdAt": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["id", "userId", "title", "message", "date", "isRead", "type"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "UserProfile" },
+      "description": "User profile collection"
+    },
+    "/transactions/{transactionId}": {
+      "schema": { "$ref": "Transaction" },
+      "description": "Transactions history collection"
+    },
+    "/referrals/{referralId}": {
+      "schema": { "$ref": "ReferralRecord" },
+      "description": "Referral bonuses and tracking collection"
+    },
+    "/deposit_requests/{depositId}": {
+      "schema": { "$ref": "DepositRequest" },
+      "description": "Deposit requests for admin approval"
+    },
+    "/app_settings/{settingId}": {
+      "schema": { "$ref": "CompanyAccount" },
+      "description": "Global application configuration documents"
+    },
+    "/notifications/{notificationId}": {
+      "schema": { "$ref": "AppNotification" },
+      "description": "User notification messages"
+    }
+  }
+}
