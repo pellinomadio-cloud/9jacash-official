@@ -453,14 +453,34 @@ export const subscribeToAllReferrals = subscribeToReferrals;
 // 4. Deposit & Quick Code Requests Sync
 export async function saveDepositRequestToFirestore(deposit: DepositRequest): Promise<void> {
   if (isFirestoreQuotaExhausted()) return;
-  const path = `${DEPOSITS_COLLECTION}/${deposit.id}`;
+  const docId = deposit.id || `dpr_${Date.now()}`;
+  const path = `${DEPOSITS_COLLECTION}/${docId}`;
   try {
     const sanitized = sanitizeForFirestore({
       ...deposit,
+      id: docId,
+      status: deposit.status || 'pending',
       updatedAt: new Date().toISOString(),
     });
-    await setDoc(doc(db, DEPOSITS_COLLECTION, deposit.id), sanitized, { merge: true });
+    await setDoc(doc(db, DEPOSITS_COLLECTION, docId), sanitized, { merge: true });
   } catch (error) {
+    // If document write failed due to oversized receipt base64 image, retry without large base64 so request always reaches Admin Dashboard
+    if (deposit.receiptUrl && deposit.receiptUrl.length > 30000) {
+      try {
+        const fallbackSanitized = sanitizeForFirestore({
+          ...deposit,
+          id: docId,
+          receiptUrl: '',
+          status: deposit.status || 'pending',
+          updatedAt: new Date().toISOString(),
+        });
+        await setDoc(doc(db, DEPOSITS_COLLECTION, docId), fallbackSanitized, { merge: true });
+        return;
+      } catch (retryErr) {
+        handleFirestoreError(retryErr, OperationType.WRITE, path);
+        return;
+      }
+    }
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
@@ -470,7 +490,14 @@ export async function getAllDepositRequestsFromFirestore(): Promise<DepositReque
   const path = DEPOSITS_COLLECTION;
   try {
     const snap = await getDocs(collection(db, DEPOSITS_COLLECTION));
-    return snap.docs.map((d) => d.data() as DepositRequest);
+    return snap.docs.map((d) => {
+      const data = d.data() as DepositRequest;
+      return {
+        ...data,
+        id: data.id || d.id,
+        status: data.status || 'pending',
+      };
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
     return [];
@@ -484,7 +511,14 @@ export function subscribeToDepositRequests(onUpdate: (requests: DepositRequest[]
       collection(db, DEPOSITS_COLLECTION),
       (snap) => {
         try {
-          const requests = snap.docs.map((d) => d.data() as DepositRequest);
+          const requests = snap.docs.map((d) => {
+            const data = d.data() as DepositRequest;
+            return {
+              ...data,
+              id: data.id || d.id,
+              status: data.status || 'pending',
+            };
+          });
           onUpdate(requests);
         } catch (e) {
           console.warn('Error processing deposit requests snapshot', e);

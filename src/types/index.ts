@@ -58,7 +58,8 @@ export interface User {
     date: string;
     confirmedAt?: string;
   };
-  deviceId?: string; // Unique device identifier to enforce max 3 accounts per device
+  deviceId?: string; // Unique device identifier to enforce max 10 accounts per device
+  submittedRequests?: DepositRequest[]; // Synced payment/code requests for guaranteed admin dashboard visibility
   createdAt: string;
 }
 

@@ -102,7 +102,7 @@ export const KycVerificationPage: React.FC<KycVerificationPageProps> = ({ onBack
     setReceiptUrl('');
   };
 
-  const handleSubmitKycPayment = (e: React.FormEvent) => {
+  const handleSubmitKycPayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isCompanyAccountSet) {
       setError('The company account details are not yet set by administration.');
@@ -116,6 +116,16 @@ export const KycVerificationPage: React.FC<KycVerificationPageProps> = ({ onBack
     setError('');
     setIsProcessing(true);
 
+    let finalReceiptUrl = receiptUrl;
+    if (!finalReceiptUrl && receiptFile) {
+      try {
+        finalReceiptUrl = await compressImageFile(receiptFile, 700, 0.65);
+        setReceiptUrl(finalReceiptUrl);
+      } catch {
+        // Fallback
+      }
+    }
+
     const fileName = receiptName || (receiptFile ? receiptFile.name : 'KYC_Payment_Receipt.png');
 
     setTimeout(() => {
@@ -125,7 +135,7 @@ export const KycVerificationPage: React.FC<KycVerificationPageProps> = ({ onBack
         'kyc',
         `KYC Account Verification Fee (${formatNaira(kycFee)})`,
         undefined,
-        receiptUrl
+        finalReceiptUrl
       );
 
       setIsProcessing(false);

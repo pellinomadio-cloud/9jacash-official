@@ -129,14 +129,23 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
     setReceiptUrl('');
   };
 
-  const handleSubmitPayment = (e: React.FormEvent) => {
+  const handleSubmitPayment = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (pendingQuickCodeReq) return;
     if (!selectedFile && !receiptUrl) return;
     if (!selectedPlan) return;
 
     setIsUploading(true);
     const fileName = selectedFile ? selectedFile.name : 'QuickCode_Payment_Receipt.png';
+
+    let finalReceiptUrl = receiptUrl;
+    if (!finalReceiptUrl && selectedFile) {
+      try {
+        finalReceiptUrl = await compressImageFile(selectedFile, 700, 0.65);
+        setReceiptUrl(finalReceiptUrl);
+      } catch {
+        // Fallback if compression fails
+      }
+    }
 
     const req = submitDepositRequest(
       selectedPlan.amount,
@@ -144,7 +153,7 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
       'quickcode',
       selectedPlan.name,
       selectedPlan.withdrawals,
-      receiptUrl
+      finalReceiptUrl
     );
 
     if (!req) {
@@ -159,7 +168,7 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
 
       // Send device notification: Quick Code is successfully purchased
       sendCodePurchasedDeviceNotification(req.generatedCode, selectedPlan?.name).catch(console.warn);
-    }, 1200);
+    }, 1000);
   };
 
   const handleRefreshStatus = async () => {

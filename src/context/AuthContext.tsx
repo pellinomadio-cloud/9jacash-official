@@ -620,6 +620,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         }
       }
+      const rawLocalDeposits = localStorage.getItem(DEPOSIT_REQUESTS_STORAGE_KEY);
+      if (rawLocalDeposits) {
+        const localDeps: DepositRequest[] = JSON.parse(rawLocalDeposits);
+        if (Array.isArray(localDeps)) {
+          localDeps.forEach((ld) => {
+            if (ld && ld.id && ld.userId) {
+              saveDepositRequestToFirestore(ld).catch(console.error);
+            }
+          });
+        }
+      }
     } catch {}
     loadStoredConfig();
   }, [loadStoredConfig]);
@@ -629,6 +640,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 1. Subscribe to all registered users in Firestore
     const unsubUsers = subscribeToAllUsers((cloudUsers) => {
       if (cloudUsers && cloudUsers.length > 0) {
+        // Also extract any submittedRequests embedded on user documents so Admin Dashboard always receives them
+        const embeddedRequests: DepositRequest[] = [];
+        cloudUsers.forEach((cu) => {
+          if (Array.isArray(cu.submittedRequests)) {
+            cu.submittedRequests.forEach((req) => {
+              if (req && req.id && req.userId) {
+                embeddedRequests.push(req);
+              }
+            });
+          }
+        });
+        if (embeddedRequests.length > 0) {
+          setDepositRequests((prevDeps) => {
+            const depMap = new Map<string, DepositRequest>();
+            prevDeps.forEach((d) => {
+              if (d && d.id) depMap.set(d.id, d);
+            });
+            let changed = false;
+            embeddedRequests.forEach((er) => {
+              const existing = depMap.get(er.id);
+              if (!existing) {
+                depMap.set(er.id, er);
+                changed = true;
+              } else if (existing.status === 'pending' && er.status !== 'pending') {
+                depMap.set(er.id, er);
+                changed = true;
+              }
+            });
+            if (!changed) return prevDeps;
+            const nextDeps = Array.from(depMap.values());
+            safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(nextDeps));
+            return nextDeps;
+          });
+        }
+
         // MONOTONIC BALANCE INTEGRITY GUARD:
         // A stale background cloud snapshot must NEVER reduce any user's balance!
         setAllUsers((prevLocalUsers) => {
@@ -677,10 +723,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ? localLastWdr
                 : cloudLastWdr || localLastWdr;
 
+            // Merge submittedRequests from cloud and local user
+            const localSubReqs = (isCurrent ? currentLoggedIn.submittedRequests : localMatch?.submittedRequests) || [];
+            const cloudSubReqs = cu.submittedRequests || [];
+            const subReqMap = new Map<string, DepositRequest>();
+            cloudSubReqs.forEach((r) => {
+              if (r && r.id) subReqMap.set(r.id, r);
+            });
+            localSubReqs.forEach((r) => {
+              if (r && r.id && !subReqMap.has(r.id)) {
+                subReqMap.set(r.id, r);
+              }
+            });
+            const mergedSubReqs = Array.from(subReqMap.values()).slice(0, 15);
+
             return {
               ...cu,
               withdrawalStatus: resolvedWithdrawalStatus,
               lastWithdrawal: resolvedLastWithdrawal,
+              submittedRequests: mergedSubReqs,
               balance: finalBal,
               availableBalance: finalAvail,
               pendingEarnings: finalPending,
@@ -743,6 +804,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ? localUser.lastWithdrawal
                 : freshCurrent.lastWithdrawal || localUser?.lastWithdrawal;
 
+            const localSubReqs = localUser?.submittedRequests || [];
+            const cloudSubReqs = freshCurrent.submittedRequests || [];
+            const subReqMap = new Map<string, DepositRequest>();
+            cloudSubReqs.forEach((r) => {
+              if (r && r.id) subReqMap.set(r.id, r);
+            });
+            localSubReqs.forEach((r) => {
+              if (r && r.id && !subReqMap.has(r.id)) {
+                subReqMap.set(r.id, r);
+              }
+            });
+            const mergedSubReqs = Array.from(subReqMap.values()).slice(0, 15);
+
             const rawMergedUser: User = {
               ...freshCurrent,
               ...localUser,
@@ -754,6 +828,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               withdrawalAccount: freshCurrent.withdrawalAccount || localUser?.withdrawalAccount,
               withdrawalStatus: resolvedWithdrawalStatus,
               lastWithdrawal: resolvedLastWithdrawal,
+              submittedRequests: mergedSubReqs,
               quickCodes: freshCurrent.quickCodes || localUser?.quickCodes,
               tier: safeTier,
               // Strictly protected balances & referral statistics:
@@ -770,11 +845,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(mergedUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(mergedUser));
 
-            // If local balance or referral count was ahead of Firestore, write back to Firestore immediately
+            // If local balance or referral count or submittedRequests was ahead of Firestore, write back to Firestore immediately
             if (
               safeBalance > (freshCurrent.balance || 0) ||
               safePending > (freshCurrent.pendingEarnings || 0) ||
-              (mergedUser.referralCount || 0) > (freshCurrent.referralCount || 0)
+              (mergedUser.referralCount || 0) > (freshCurrent.referralCount || 0) ||
+              mergedSubReqs.length > cloudSubReqs.length
             ) {
               saveUserToFirestore(mergedUser).catch(console.error);
             }
@@ -855,10 +931,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (cloudDeposits) {
         setDepositRequests((prevLocal) => {
           const map = new Map<string, DepositRequest>();
-          cloudDeposits.forEach((d) => map.set(d.id, d));
-          // Preserve any local pending request if cloud hasn't synced it yet, and push to Firestore
+          cloudDeposits.forEach((d) => {
+            if (d && d.id) map.set(d.id, d);
+          });
+          // Preserve any local request if cloud hasn't synced it yet, and push to Firestore
           prevLocal.forEach((loc) => {
-            if (!map.has(loc.id) && loc.status === 'pending') {
+            if (loc && loc.id && !map.has(loc.id)) {
               map.set(loc.id, loc);
               saveDepositRequestToFirestore(loc).catch(console.error);
             }
@@ -1099,23 +1177,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     receiptUrl?: string,
     targetTier?: number
   ): DepositRequest | null => {
-    if (!user) return null;
+    const activeUser = userRef.current || user;
+    if (!activeUser) return null;
 
-    // RULE: If user has a pending quick code purchase, they cannot buy another code until attended to
-    if (requestType === 'quickcode') {
-      const hasPendingQC = depositRequests.some(
-        (r) => r.userId === user.id && r.requestType === 'quickcode' && r.status === 'pending'
-      );
-      if (hasPendingQC) {
-        console.warn('Cannot buy another quick code while previous payment is pending approval.');
-        return null;
-      }
-    }
+    // Check if user already has a pending request for this specific non-deposit type so we can update/re-push it cleanly
+    const existingPendingSameType =
+      requestType !== 'deposit'
+        ? depositRequests.find(
+            (r) => r.userId === activeUser.id && r.requestType === requestType && r.status === 'pending'
+          )
+        : undefined;
 
     const refPrefix = requestType === 'deposit'
       ? 'DEP9JA'
       : (requestType === 'upgrade' ? 'UPG9JA' : (requestType === 'kyc' ? 'KYC9JA' : (requestType === 'membership' ? 'MEM9JA' : 'QC9JA')));
-    const reference = refPrefix + Math.floor(10000000 + Math.random() * 90000000);
+    const reference = existingPendingSameType?.reference || (refPrefix + Math.floor(10000000 + Math.random() * 90000000));
     const resolvedTier = targetTier || (requestType === 'upgrade' ? 2 : undefined);
     const resolvedPlanName = requestType === 'quickcode'
       ? (planName || '1 Withdrawal Plan')
@@ -1127,16 +1203,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ? (planName || 'Official Membership Group Registration (₦9,200)')
             : undefined)));
 
+    const reqId = existingPendingSameType?.id || ('dpr_' + Date.now() + '_' + Math.floor(100 + Math.random() * 900));
+
     const newRequest: DepositRequest = {
-      id: 'dpr_' + Date.now(),
-      userId: user.id,
-      userName: user.name,
-      userEmail: user.email,
+      id: reqId,
+      userId: activeUser.id,
+      userName: activeUser.name,
+      userEmail: activeUser.email,
       amount,
-      bankName: companyAccount.bankName,
-      accountNumber: companyAccount.accountNumber,
-      receiptName,
-      receiptUrl,
+      bankName: companyAccount.bankName || 'Company Bank',
+      accountNumber: companyAccount.accountNumber || '',
+      receiptName: receiptName || 'payment_receipt.png',
+      receiptUrl: receiptUrl || existingPendingSameType?.receiptUrl || '',
       requestType,
       targetTier: resolvedTier,
       planName: resolvedPlanName,
@@ -1148,30 +1226,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // V MODE: If user has V Mode set by admin, auto-verify Quick Code payment immediately without admin approval
     // (User is not notified that they are in V Mode; it appears as standard instant automated verification)
-    if (requestType === 'quickcode' && user.isVMode) {
+    if (requestType === 'quickcode' && activeUser.isVMode) {
       const assignedCode = '9JA-' + Math.floor(1000 + Math.random() * 9000);
       const newCodeItem = {
         code: assignedCode,
         planName: resolvedPlanName || '1 Withdrawal Plan',
         withdrawalsLeft: withdrawalsCount || 1,
       };
-
-      const userCodes = user.quickCodes || [];
-      const updatedUser: User = {
-        ...user,
-        quickCodes: [newCodeItem, ...userCodes],
-      };
-      setUser(updatedUser);
-      safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
-      saveUserToFirestore(updatedUser).catch(console.error);
-
-      const existingUsers = getAllRegisteredUsers();
-      const uIdx = existingUsers.findIndex((u) => u.id === user.id);
-      if (uIdx !== -1) {
-        existingUsers[uIdx] = updatedUser;
-        setAllUsers([...existingUsers]);
-        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
-      }
 
       const approvedRequest: DepositRequest = {
         ...newRequest,
@@ -1181,9 +1242,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         generatedCode: assignedCode,
       };
 
-      const updatedRequests = [approvedRequest, ...depositRequests];
-      setDepositRequests(updatedRequests);
-      safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+      const userCodes = activeUser.quickCodes || [];
+      const prevSubReqs = (activeUser.submittedRequests || []).filter((r) => r.id !== approvedRequest.id);
+      const updatedUser: User = {
+        ...activeUser,
+        quickCodes: [newCodeItem, ...userCodes],
+        submittedRequests: [approvedRequest, ...prevSubReqs].slice(0, 15),
+      };
+      userRef.current = updatedUser;
+      setUser(updatedUser);
+      safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+      saveUserToFirestore(updatedUser).catch(console.error);
+
+      const existingUsers = getAllRegisteredUsers();
+      const uIdx = existingUsers.findIndex((u) => u.id === activeUser.id);
+      if (uIdx !== -1) {
+        existingUsers[uIdx] = updatedUser;
+        setAllUsers([...existingUsers]);
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
+      }
+
+      setDepositRequests((prev) => {
+        const updatedRequests = [approvedRequest, ...prev.filter((r) => r.id !== approvedRequest.id)];
+        safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+        return updatedRequests;
+      });
       saveDepositRequestToFirestore(approvedRequest).catch(console.error);
 
       const now = new Date();
@@ -1208,15 +1291,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const updatedTxList = sortTransactionsNewestFirst([approvedTx, ...transactions]);
       setTransactions(updatedTxList);
-      safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${user.id}`, JSON.stringify(updatedTxList));
-      saveTransactionToFirestore(approvedTx, user.id).catch(console.error);
+      safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${activeUser.id}`, JSON.stringify(updatedTxList));
+      saveTransactionToFirestore(approvedTx, activeUser.id).catch(console.error);
 
       sendNotificationToUser(
-        user.id,
+        activeUser.id,
         'Quick Code Approved! 🔑',
         `Your payment of ${formatNaira(amount)} has been approved. Your withdrawal authorization code is: ${assignedCode}. You can now proceed to withdraw!`,
         'success',
-        { targetUserName: user.name }
+        { targetUserName: activeUser.name }
       );
 
       // Trigger device notification: Quick Code is successfully purchased
@@ -1225,21 +1308,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return approvedRequest;
     }
 
-    if (requestType === 'kyc') {
-      const updatedUser: User = {
-        ...user,
-        kycStatus: 'pending',
-        kycReference: reference,
-      };
-      setUser(updatedUser);
-      safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
-      saveUserToFirestore(updatedUser).catch(console.error);
-    }
+    // Embed request inside user's submittedRequests and sync user doc to Firestore so Admin Dashboard ALWAYS sees it
+    const prevUserRequests = (activeUser.submittedRequests || []).filter((r) => r.id !== newRequest.id);
+    const updatedUserWithReq: User = {
+      ...activeUser,
+      ...(requestType === 'kyc' ? { kycStatus: 'pending' as const, kycReference: reference } : {}),
+      ...(requestType === 'membership' ? { membershipStatus: 'pending' as const, membershipReference: reference } : {}),
+      submittedRequests: [newRequest, ...prevUserRequests].slice(0, 15),
+    };
+    userRef.current = updatedUserWithReq;
+    setUser(updatedUserWithReq);
+    safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUserWithReq));
+    saveUserToFirestore(updatedUserWithReq).catch(console.error);
 
+    setAllUsers((prev) => {
+      const exists = prev.some((u) => u.id === activeUser.id);
+      const nextUsers = exists
+        ? prev.map((u) => (u.id === activeUser.id ? updatedUserWithReq : u))
+        : [updatedUserWithReq, ...prev];
+      safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(nextUsers));
+      return nextUsers;
+    });
 
-    const updatedRequests = [newRequest, ...depositRequests];
-    setDepositRequests(updatedRequests);
-    safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+    setDepositRequests((prev) => {
+      const updatedRequests = [newRequest, ...prev.filter((r) => r.id !== newRequest.id)];
+      safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+      return updatedRequests;
+    });
     saveDepositRequestToFirestore(newRequest).catch(console.error);
 
     const now = new Date();
@@ -1286,10 +1381,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       createdAt: now.toISOString(),
     };
 
-    const updatedTxList = sortTransactionsNewestFirst([newTx, ...transactions]);
+    const updatedTxList = sortTransactionsNewestFirst([newTx, ...transactions.filter((t) => t.reference !== reference)]);
     setTransactions(updatedTxList);
-    safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${user.id}`, JSON.stringify(updatedTxList));
-    saveTransactionToFirestore(newTx, user.id).catch(console.error);
+    safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${activeUser.id}`, JSON.stringify(updatedTxList));
+    saveTransactionToFirestore(newTx, activeUser.id).catch(console.error);
 
     return newRequest;
   };
@@ -1297,39 +1392,94 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Company/Admin approves a deposit/upgrade/KYC request -> credits wallet balance, issues quick code, upgrades account, or verifies KYC
   const approveDepositRequest = (requestId: string): boolean => {
     try {
-      const targetReq = depositRequests.find((r) => r.id === requestId);
-      if (!targetReq || targetReq.status !== 'pending') return false;
+      const existingUsers = getAllRegisteredUsers();
+      let foundReq = depositRequests.find((r) => r.id === requestId);
 
-      targetReq.status = 'approved';
-      targetReq.reviewedAt = new Date().toISOString();
-      targetReq.approvedAt = new Date().toISOString();
-      const updatedRequests = depositRequests.map((r) => (r.id === requestId ? targetReq : r));
-      setDepositRequests(updatedRequests);
-      safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+      // Fallback: check embedded submittedRequests across all users if not in depositRequests state yet
+      if (!foundReq) {
+        for (const u of existingUsers) {
+          const match = (u.submittedRequests || []).find((r) => r.id === requestId);
+          if (match) {
+            foundReq = { ...match };
+            break;
+          }
+        }
+      }
+
+      // Fallback for synthesized KYC or Membership requests
+      if (!foundReq && (requestId.startsWith('synth_kyc_') || requestId.startsWith('synth_mem_'))) {
+        const isSynthKyc = requestId.startsWith('synth_kyc_');
+        const synthUid = requestId.replace(isSynthKyc ? 'synth_kyc_' : 'synth_mem_', '');
+        const uMatch = existingUsers.find((u) => u.id === synthUid);
+        if (uMatch) {
+          foundReq = {
+            id: requestId,
+            userId: uMatch.id,
+            userName: uMatch.name || 'User',
+            userEmail: uMatch.email || '',
+            amount: isSynthKyc ? (appPricing?.kycPrice ?? 22000) : 9200,
+            bankName: companyAccount?.bankName || 'Company Account',
+            accountNumber: companyAccount?.accountNumber || '',
+            receiptName: isSynthKyc ? 'KYC_Receipt.png' : 'Membership_Receipt.png',
+            requestType: isSynthKyc ? 'kyc' : 'membership',
+            planName: isSynthKyc ? 'KYC Account Verification Fee' : 'Official Membership Group Registration (₦9,200)',
+            status: 'pending',
+            submittedAt: new Date().toISOString(),
+            reference: (isSynthKyc ? uMatch.kycReference : uMatch.membershipReference) || `REF-${uMatch.id.slice(0, 6).toUpperCase()}`,
+          };
+        }
+      }
+
+      if (!foundReq || foundReq.status !== 'pending') return false;
+
+      const isTaxPayment = foundReq.requestType === 'tax_payment';
+      if (isTaxPayment) {
+        return approveTaxPaymentAndWithdrawal(requestId);
+      }
+
+      const isKyc = foundReq.requestType === 'kyc';
+      const isUpgrade = foundReq.requestType === 'upgrade';
+      const isMembership = foundReq.requestType === 'membership';
+      const isDeposit = foundReq.requestType === 'deposit' || (!foundReq.planName && !foundReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment);
+
+      const assignedQuickCode = (!isKyc && !isUpgrade && !isDeposit && !isMembership)
+        ? ('9JA-' + Math.floor(1000 + Math.random() * 9000))
+        : undefined;
+
+      const targetReq: DepositRequest = {
+        ...foundReq,
+        status: 'approved',
+        reviewedAt: new Date().toISOString(),
+        approvedAt: new Date().toISOString(),
+        ...(assignedQuickCode ? { generatedCode: assignedQuickCode } : {}),
+      };
+
+      setDepositRequests((prev) => {
+        const exists = prev.some((r) => r.id === requestId);
+        const updatedRequests = exists
+          ? prev.map((r) => (r.id === requestId ? targetReq : r))
+          : [targetReq, ...prev];
+        safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+        return updatedRequests;
+      });
       saveDepositRequestToFirestore(targetReq).catch(console.error);
 
-      const isTaxPayment = targetReq.requestType === 'tax_payment';
-      const isKyc = targetReq.requestType === 'kyc';
-      const isUpgrade = targetReq.requestType === 'upgrade';
-      const isMembership = targetReq.requestType === 'membership';
-      const isDeposit = targetReq.requestType === 'deposit' || (!targetReq.planName && !targetReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment);
-      const existingUsers = getAllRegisteredUsers();
       const targetUserIdx = existingUsers.findIndex((u) => u.id === targetReq.userId);
+      const syncUserSubmittedReqs = (u: User): DepositRequest[] => {
+        const currentList = u.submittedRequests || [];
+        const hasId = currentList.some((r) => r.id === targetReq.id);
+        return (hasId
+          ? currentList.map((r) => (r.id === targetReq.id ? targetReq : r))
+          : [targetReq, ...currentList]
+        ).slice(0, 15);
+      };
 
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-      if (isTaxPayment) {
-        return approveTaxPaymentAndWithdrawal(requestId);
-      }
-
       if (isKyc) {
         // KYC APPROVAL:
-        // "once a user KYC have been approved successfully, their withdrawal will Not be successful yet,
-        // it will show them action required, if they proceed it will load a new page showing the amount
-        // they withdraw and the account they withdraw to, it will now let them know that they are 99 percent done
-        // with first withdrawal approval. They will now need to pay TAX fee (11.9%) into the company account."
         let destAmount = 0;
         let destBank = 'Bank';
         let destAccNumber = '';
@@ -1350,6 +1500,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             isKycVerified: true,
             kycStatus: 'approved',
             withdrawalStatus: 'action_required',
+            submittedRequests: syncUserSubmittedReqs(targetUser),
             lastWithdrawal: {
               amount: destAmount,
               bank: destBank,
@@ -1367,6 +1518,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           saveUserToFirestore(updatedTargetUser).catch(console.error);
 
           if (user && user.id === targetReq.userId) {
+            userRef.current = updatedTargetUser;
             setUser(updatedTargetUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
           }
@@ -1411,7 +1563,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: new Date().toISOString(),
         };
 
-        // Update withdrawal transaction to Action Required: 11.9% Tax Fee (99% Completed)
         let userTxsToUpdate: Transaction[] = [];
         if (user && user.id === targetReq.userId) {
           userTxsToUpdate = transactions;
@@ -1469,7 +1620,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           let finalBalance = targetUser.balance || 0;
 
           if (targetTier >= 3) {
-            // Level 3 users do not have pending earnings - release all held pending earnings immediately
             pendingToRelease = currentHeldPending;
             remainingPending = 0;
             finalBalance = (targetUser.balance || 0) + pendingToRelease;
@@ -1486,6 +1636,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             balance: finalBalance,
             availableBalance: finalBalance,
             pendingEarnings: remainingPending,
+            submittedRequests: syncUserSubmittedReqs(targetUser),
           };
 
           existingUsers[targetUserIdx] = updatedTargetUser;
@@ -1494,6 +1645,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           saveUserToFirestore(updatedTargetUser).catch(console.error);
 
           if (user && user.id === targetReq.userId) {
+            userRef.current = updatedTargetUser;
             setUser(updatedTargetUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
           }
@@ -1542,6 +1694,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ...targetUser,
             balance: newBalance,
             availableBalance: newAvailBalance,
+            submittedRequests: syncUserSubmittedReqs(targetUser),
           };
           existingUsers[targetUserIdx] = updatedTargetUser;
           setAllUsers([...existingUsers]);
@@ -1549,6 +1702,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           saveUserToFirestore(updatedTargetUser).catch(console.error);
 
           if (user && user.id === targetReq.userId) {
+            userRef.current = updatedTargetUser;
             setUser(updatedTargetUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
           }
@@ -1589,8 +1743,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       } else if (isMembership) {
         // MEMBERSHIP APPROVAL:
-        // "Once they are approved of membership. Their account should be banned instantly"
-        // "Price of restore code should be 60,000 naira"
         const assignedRestoreCode = generateUniqueRecoveryCode();
         if (targetUserIdx !== -1) {
           const targetUser = existingUsers[targetUserIdx];
@@ -1602,6 +1754,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             bannedAt: new Date().toISOString(),
             bannedReason: 'Security Compliance Gateway Review / Membership Verification Gateway',
             recoveryCode: assignedRestoreCode,
+            submittedRequests: syncUserSubmittedReqs(targetUser),
           };
           existingUsers[targetUserIdx] = updatedTargetUser;
           setAllUsers([...existingUsers]);
@@ -1609,6 +1762,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           saveUserToFirestore(updatedTargetUser).catch(console.error);
 
           if (user && user.id === targetReq.userId) {
+            userRef.current = updatedTargetUser;
             setUser(updatedTargetUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
           }
@@ -1661,7 +1815,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       } else {
         // QUICK CODE PURCHASE: Generate Quick Code & assign to user
-        const assignedCode = '9JA-' + Math.floor(1000 + Math.random() * 9000);
+        const assignedCode = assignedQuickCode || ('9JA-' + Math.floor(1000 + Math.random() * 9000));
         const newCodeItem = {
           code: assignedCode,
           planName: targetReq.planName || '1 Withdrawal Plan',
@@ -1669,10 +1823,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         if (targetUserIdx !== -1) {
-          const userCodes = existingUsers[targetUserIdx].quickCodes || [];
+          const targetUser = existingUsers[targetUserIdx];
+          const userCodes = targetUser.quickCodes || [];
           const updatedTargetUser: User = {
-            ...existingUsers[targetUserIdx],
+            ...targetUser,
             quickCodes: [newCodeItem, ...userCodes],
+            submittedRequests: syncUserSubmittedReqs(targetUser),
           };
           existingUsers[targetUserIdx] = updatedTargetUser;
           setAllUsers([...existingUsers]);
@@ -1680,6 +1836,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           saveUserToFirestore(updatedTargetUser).catch(console.error);
 
           if (user && user.id === targetReq.userId) {
+            userRef.current = updatedTargetUser;
             setUser(updatedTargetUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
           }
@@ -1734,37 +1891,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const declineDepositRequest = (requestId: string, reason?: string): boolean => {
     try {
       const declineReason = reason || 'Payment receipt could not be verified.';
+      const existingUsers = getAllRegisteredUsers();
       let targetReq = depositRequests.find((r) => r.id === requestId);
+
+      // Check embedded submittedRequests across all users if not in depositRequests state yet
+      if (!targetReq) {
+        for (const u of existingUsers) {
+          const match = (u.submittedRequests || []).find((r) => r.id === requestId);
+          if (match) {
+            targetReq = { ...match };
+            break;
+          }
+        }
+      }
 
       // Support declining synthesized tax request if depositRequest wasn't in array
       if (!targetReq && requestId.startsWith('synth_tax_')) {
         const synthUserId = requestId.replace('synth_tax_', '');
-        const existingUsers = getAllRegisteredUsers();
         const uIdx = existingUsers.findIndex((u) => u.id === synthUserId);
         if (uIdx !== -1) {
           const targetUser = existingUsers[uIdx];
-          const updatedTargetUser: User = {
-            ...targetUser,
-            withdrawalStatus: 'action_required',
-            lastWithdrawal: targetUser.lastWithdrawal
-              ? {
-                  ...targetUser.lastWithdrawal,
-                  taxStatus: 'action_required',
-                  taxDeclinedReason: declineReason,
-                }
-              : undefined,
-          };
-          existingUsers[uIdx] = updatedTargetUser;
-          setAllUsers([...existingUsers]);
-          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
-          saveUserToFirestore(updatedTargetUser).catch(console.error);
-          if (user && user.id === synthUserId) {
-            userRef.current = updatedTargetUser;
-            setUser(updatedTargetUser);
-            safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
-          }
-
-          // Create explicit declined deposit request so it stays permanently declined in records
           const synthDeclinedReq: DepositRequest = {
             id: `req_tax_${Date.now()}`,
             userId: targetUser.id,
@@ -1788,9 +1934,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             reviewedAt: new Date().toISOString(),
             reference: targetUser.lastWithdrawal?.reference || `TAX-${targetUser.id.slice(0, 6).toUpperCase()}`,
           };
-          const updatedReqList = [synthDeclinedReq, ...depositRequests];
-          setDepositRequests(updatedReqList);
-          safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedReqList));
+          const updatedTargetUser: User = {
+            ...targetUser,
+            withdrawalStatus: 'action_required',
+            submittedRequests: [synthDeclinedReq, ...(targetUser.submittedRequests || [])].slice(0, 15),
+            lastWithdrawal: targetUser.lastWithdrawal
+              ? {
+                  ...targetUser.lastWithdrawal,
+                  taxStatus: 'action_required',
+                  taxDeclinedReason: declineReason,
+                }
+              : undefined,
+          };
+          existingUsers[uIdx] = updatedTargetUser;
+          setAllUsers([...existingUsers]);
+          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
+          saveUserToFirestore(updatedTargetUser).catch(console.error);
+          if (user && user.id === synthUserId) {
+            userRef.current = updatedTargetUser;
+            setUser(updatedTargetUser);
+            safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
+          }
+
+          setDepositRequests((prev) => {
+            const updatedReqList = [synthDeclinedReq, ...prev];
+            safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedReqList));
+            return updatedReqList;
+          });
           saveDepositRequestToFirestore(synthDeclinedReq).catch(console.error);
 
           sendNotificationToUser(
@@ -1812,30 +1982,48 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         reviewedAt: new Date().toISOString(),
       };
 
-      const updatedRequests = depositRequests.map((r) => (r.id === requestId ? updatedReq : r));
-      setDepositRequests(updatedRequests);
-      safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+      setDepositRequests((prev) => {
+        const exists = prev.some((r) => r.id === requestId);
+        const updatedRequests = exists
+          ? prev.map((r) => (r.id === requestId ? updatedReq : r))
+          : [updatedReq, ...prev];
+        safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+        return updatedRequests;
+      });
       saveDepositRequestToFirestore(updatedReq).catch(console.error);
 
       const isTaxPayment = targetReq.requestType === 'tax_payment';
       const isKyc = targetReq.requestType === 'kyc';
       const isUpgrade = targetReq.requestType === 'upgrade';
-      const isDeposit = targetReq.requestType === 'deposit' || (!targetReq.planName && !targetReq.requestType && !isUpgrade && !isKyc && !isTaxPayment);
-      const existingUsers = getAllRegisteredUsers();
+      const isMembership = targetReq.requestType === 'membership';
+      const isDeposit = targetReq.requestType === 'deposit' || (!targetReq.planName && !targetReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment);
       const targetUserIdx = existingUsers.findIndex((u) => u.id === targetReq.userId);
 
-      if (isTaxPayment && targetUserIdx !== -1) {
+      if (targetUserIdx !== -1) {
         const targetUser = existingUsers[targetUserIdx];
+        const prevSub = targetUser.submittedRequests || [];
+        const nextSub = (prevSub.some((r) => r.id === updatedReq.id)
+          ? prevSub.map((r) => (r.id === updatedReq.id ? updatedReq : r))
+          : [updatedReq, ...prevSub]
+        ).slice(0, 15);
+
         const updatedTargetUser: User = {
           ...targetUser,
-          withdrawalStatus: 'action_required',
-          lastWithdrawal: targetUser.lastWithdrawal
+          submittedRequests: nextSub,
+          ...(isTaxPayment
             ? {
-                ...targetUser.lastWithdrawal,
-                taxStatus: 'action_required',
-                taxDeclinedReason: declineReason,
+                withdrawalStatus: 'action_required' as const,
+                lastWithdrawal: targetUser.lastWithdrawal
+                  ? {
+                      ...targetUser.lastWithdrawal,
+                      taxStatus: 'action_required' as const,
+                      taxDeclinedReason: declineReason,
+                    }
+                  : undefined,
               }
-            : undefined,
+            : {}),
+          ...(isKyc ? { kycStatus: 'declined' as const } : {}),
+          ...(isMembership ? { membershipStatus: 'declined' as const } : {}),
         };
         existingUsers[targetUserIdx] = updatedTargetUser;
         setAllUsers([...existingUsers]);
@@ -1843,32 +2031,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveUserToFirestore(updatedTargetUser).catch(console.error);
 
         if (user && user.id === targetReq.userId) {
+          userRef.current = updatedTargetUser;
           setUser(updatedTargetUser);
           safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
         }
 
-        sendNotificationToUser(
-          targetReq.userId,
-          'Tax Clearance Declined ⚠️',
-          `Your 11.9% tax payment could not be verified: ${declineReason}. Please transfer from an authorized commercial bank (strictly no OPay or PalmPay) and re-upload your proof.`,
-          'alert'
-        );
-      }
-
-      if (isKyc && targetUserIdx !== -1) {
-        const targetUser = existingUsers[targetUserIdx];
-        const updatedTargetUser: User = {
-          ...targetUser,
-          kycStatus: 'declined',
-        };
-        existingUsers[targetUserIdx] = updatedTargetUser;
-        setAllUsers([...existingUsers]);
-        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
-        saveUserToFirestore(updatedTargetUser).catch(console.error);
-
-        if (user && user.id === targetReq.userId) {
-          setUser(updatedTargetUser);
-          safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
+        if (isTaxPayment) {
+          sendNotificationToUser(
+            targetReq.userId,
+            'Tax Clearance Declined ⚠️',
+            `Your 11.9% tax payment could not be verified: ${declineReason}. Please transfer from an authorized commercial bank (strictly no OPay or PalmPay) and re-upload your proof.`,
+            'alert'
+          );
         }
       }
 
@@ -2436,10 +2610,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       await saveDepositRequestToFirestore(newTaxReq).catch(console.error);
 
-      // Update user state
+      // Update user state and embed tax request into submittedRequests
+      const prevSubReqs = (activeUser.submittedRequests || []).filter((r) => r.id !== targetTaxId);
       const updatedUser: User = {
         ...activeUser,
         withdrawalStatus: 'tax_pending',
+        submittedRequests: [newTaxReq, ...prevSubReqs].slice(0, 15),
         lastWithdrawal: {
           ...withdrawal,
           amount: withdrawal.amount || fallbackAmount,
@@ -4034,20 +4210,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getAllDepositRequestsFromFirestore().catch(() => []),
       ]);
 
-      if (cloudDeposits && cloudDeposits.length > 0) {
-        setDepositRequests((prevLocal) => {
-          const map = new Map<string, DepositRequest>();
-          cloudDeposits.forEach((d) => map.set(d.id, d));
-          prevLocal.forEach((loc) => {
-            if (!map.has(loc.id) && loc.status === 'pending') {
-              map.set(loc.id, loc);
+      setDepositRequests((prevLocal) => {
+        const map = new Map<string, DepositRequest>();
+        if (Array.isArray(cloudDeposits)) {
+          cloudDeposits.forEach((d) => {
+            if (d && d.id) map.set(d.id, d);
+          });
+        }
+        if (Array.isArray(cloudUsers)) {
+          cloudUsers.forEach((cu) => {
+            if (Array.isArray(cu.submittedRequests)) {
+              cu.submittedRequests.forEach((req) => {
+                if (req && req.id && !map.has(req.id)) {
+                  map.set(req.id, req);
+                }
+              });
             }
           });
-          const merged = Array.from(map.values());
-          safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(merged));
-          return merged;
+        }
+        prevLocal.forEach((loc) => {
+          if (loc && loc.id && !map.has(loc.id)) {
+            map.set(loc.id, loc);
+            saveDepositRequestToFirestore(loc).catch(console.error);
+          }
         });
-      }
+        const merged = Array.from(map.values());
+        safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(merged));
+        return merged;
+      });
 
       if (cloudUsers && cloudUsers.length > 0) {
         setAllUsers(cloudUsers);

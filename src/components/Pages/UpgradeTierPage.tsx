@@ -137,7 +137,7 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({ onBack }) => {
     setReceiptUrl('');
   };
 
-  const handleSubmitUpgradePayment = (e: React.FormEvent) => {
+  const handleSubmitUpgradePayment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isCompanyAccountSet) {
       setUpgradeError('The company account details are not yet set by administration.');
@@ -151,6 +151,16 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({ onBack }) => {
     setUpgradeError('');
     setIsProcessing(true);
 
+    let finalReceiptUrl = receiptUrl;
+    if (!finalReceiptUrl && receiptFile) {
+      try {
+        finalReceiptUrl = await compressImageFile(receiptFile, 700, 0.65);
+        setReceiptUrl(finalReceiptUrl);
+      } catch {
+        // Fallback
+      }
+    }
+
     const activePlan = tierDetails[selectedTier];
     const fileName = receiptName || (receiptFile ? receiptFile.name : `Upgrade_Tier_${selectedTier}_receipt.png`);
 
@@ -161,7 +171,7 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({ onBack }) => {
         'upgrade',
         activePlan.title,
         undefined,
-        receiptUrl,
+        finalReceiptUrl,
         selectedTier
       );
 
@@ -172,7 +182,7 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({ onBack }) => {
       } else {
         setUpgradeError('Failed to submit upgrade request. Please try again.');
       }
-    }, 1200);
+    }, 1000);
   };
 
   const handleRefreshStatus = async () => {

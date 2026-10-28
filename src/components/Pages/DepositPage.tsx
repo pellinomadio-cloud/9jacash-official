@@ -87,20 +87,30 @@ export const DepositPage: React.FC<DepositPageProps> = ({ onBack }) => {
     }
   };
 
-  const handleSubmitForApproval = () => {
-    if (!receiptFile && !receiptName) {
+  const handleSubmitForApproval = async () => {
+    if (!receiptFile && !receiptName && !receiptUrl) {
       setError('Please upload your payment receipt / proof of transfer to proceed');
       return;
+    }
+
+    let finalReceiptUrl = receiptUrl;
+    if (!finalReceiptUrl && receiptFile) {
+      try {
+        finalReceiptUrl = await compressImageFile(receiptFile, 700, 0.65);
+        setReceiptUrl(finalReceiptUrl);
+      } catch {
+        // Fallback
+      }
     }
 
     const amt = parseFloat(depositAmount);
     const req = submitDepositRequest(
       amt,
-      receiptName || 'transfer_receipt.png',
+      receiptName || (receiptFile ? receiptFile.name : 'transfer_receipt.png'),
       'deposit',
       undefined,
       undefined,
-      receiptUrl
+      finalReceiptUrl
     );
     if (req) {
       setActiveRequest(req);

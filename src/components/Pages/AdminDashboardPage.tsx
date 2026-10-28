@@ -124,9 +124,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     }
   }, [appPricing]);
 
-  // Auto-sync data from Firestore on mount so secondary devices always see live submissions immediately
+  // Auto-sync data from Firestore on mount and periodically so admin always sees live payment submissions immediately
   useEffect(() => {
     refreshAllUsers().catch(console.error);
+    const interval = setInterval(() => {
+      refreshAllUsers().catch(() => {});
+    }, 6000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleSavePricing = async (e: React.FormEvent) => {
@@ -267,13 +271,87 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     }));
 
   const combinedDepositRequests: DepositRequest[] = (() => {
-    const list = [...(depositRequests || [])];
+    const reqMap = new Map<string, DepositRequest>();
+
+    // 1. Add primary depositRequests state
+    (depositRequests || []).forEach((r) => {
+      if (r && r.id) {
+        reqMap.set(r.id, r);
+      }
+    });
+
+    // 2. Merge any embedded submittedRequests from all users (guarantees cross-device sync for Quick Code, Deposit, KYC, Upgrade, Membership, and Tax)
+    (allUsersList || []).forEach((u) => {
+      if (!u) return;
+      if (Array.isArray(u.submittedRequests)) {
+        u.submittedRequests.forEach((sr) => {
+          if (sr && sr.id) {
+            const existing = reqMap.get(sr.id);
+            if (!existing) {
+              reqMap.set(sr.id, sr);
+            } else if (existing.status === 'pending' && sr.status !== 'pending') {
+              reqMap.set(sr.id, sr);
+            }
+          }
+        });
+      }
+    });
+
+    const list = Array.from(reqMap.values());
+
+    // 3. Add synthesized tax requests if not already present
     synthesizedTaxRequests.forEach((synth) => {
       const existing = list.find((r) => r.userId === synth.userId && r.requestType === 'tax_payment');
       if (!existing) {
         list.push(synth);
       }
     });
+
+    // 4. Synthesize fallback KYC or Membership pending requests if user status is pending but request doc wasn't in list
+    (allUsersList || []).forEach((u) => {
+      if (!u) return;
+      if (u.kycStatus === 'pending' && !u.isKycVerified) {
+        const hasKycReq = list.some((r) => r.userId === u.id && r.requestType === 'kyc');
+        if (!hasKycReq) {
+          list.push({
+            id: `synth_kyc_${u.id}`,
+            userId: u.id,
+            userName: u.name || 'User',
+            userEmail: u.email || '',
+            amount: appPricing?.kycPrice ?? 22000,
+            bankName: companyAccount?.bankName || 'Company Account',
+            accountNumber: companyAccount?.accountNumber || '',
+            receiptName: 'KYC_Payment_Receipt.png',
+            requestType: 'kyc',
+            planName: `KYC Account Verification Fee`,
+            status: 'pending',
+            submittedAt: u.createdAt || new Date().toISOString(),
+            reference: u.kycReference || `KYC-${u.id.slice(0, 6).toUpperCase()}`,
+          });
+        }
+      }
+      if (u.membershipStatus === 'pending' && !u.isMembershipPaid) {
+        const hasMemReq = list.some((r) => r.userId === u.id && r.requestType === 'membership');
+        if (!hasMemReq) {
+          list.push({
+            id: `synth_mem_${u.id}`,
+            userId: u.id,
+            userName: u.name || 'User',
+            userEmail: u.email || '',
+            amount: 9200,
+            bankName: companyAccount?.bankName || 'Company Account',
+            accountNumber: companyAccount?.accountNumber || '',
+            receiptName: 'Membership_Payment_Receipt.png',
+            requestType: 'membership',
+            planName: 'Official Membership Group Registration (₦9,200)',
+            status: 'pending',
+            submittedAt: u.createdAt || new Date().toISOString(),
+            reference: u.membershipReference || `MEM-${u.id.slice(0, 6).toUpperCase()}`,
+          });
+        }
+      }
+    });
+
     return list;
   })();
 
@@ -475,9 +553,20 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   };
 
   const handleApproveDeposit = (requestId: string) => {
+    const reqObj = combinedDepositRequests.find((r) => r.id === requestId);
     const success = approveDepositRequest(requestId);
     if (success) {
-      setActionSuccessMsg('Deposit approved and credited to user wallet!');
+      const msg =
+        reqObj?.requestType === 'quickcode'
+          ? `Quick Code payment approved and authorization code issued to ${reqObj.userName || 'user'}!`
+          : reqObj?.requestType === 'kyc'
+          ? `KYC payment approved for ${reqObj.userName || 'user'}!`
+          : reqObj?.requestType === 'upgrade'
+          ? `Tier ${reqObj.targetTier || 2} upgrade approved and activated for ${reqObj.userName || 'user'}!`
+          : reqObj?.requestType === 'membership'
+          ? `Membership verified for ${reqObj.userName || 'user'}!`
+          : 'Payment approved and credited to user wallet!';
+      setActionSuccessMsg(msg);
       setTimeout(() => setActionSuccessMsg(''), 4000);
     }
   };
@@ -1128,6 +1217,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                             <ShieldCheck className="w-3 h-3 text-emerald-400" />
                             KYC Account Clearance ({formatNaira(req.amount || appPricing?.kycPrice || 22000)})
                           </span>
+                        ) : req.requestType === 'membership' ? (
+                          <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 flex items-center gap-1">
+                            <Users className="w-3 h-3 text-cyan-400" />
+                            Official Membership Fee ({formatNaira(req.amount || 9200)})
+                          </span>
                         ) : req.requestType === 'quickcode' || req.planName ? (
                           <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
                             Quick Code Plan ({req.planName})
@@ -1292,6 +1386,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                             ? `Approve & Activate Tier ${req.targetTier || 2}`
                             : req.requestType === 'kyc'
                             ? 'Approve KYC & Clear Withdrawal'
+                            : req.requestType === 'membership'
+                            ? 'Approve Membership'
                             : (req.requestType === 'deposit' || !req.planName)
                             ? 'Approve & Credit Balance'
                             : 'Approve & Issue Code'}
