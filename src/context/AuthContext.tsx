@@ -36,6 +36,7 @@ import {
   subscribeToAdminQuickCodes,
   deleteAdminQuickCodeFromFirestore,
   findUserByReferralCodeInFirestore,
+  firebaseConfig,
 } from '../services/firebase.ts';
 import { sortTransactionsNewestFirst } from '../utils/transactionSort.ts';
 import { safeLocalStorageSet, cleanStorageQuota } from '../utils/storage.ts';
@@ -595,43 +596,44 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cleanStorageQuota();
     } catch {}
 
-    // 1. Test Firestore connection on boot
+    // 1. Check if Firebase project changed so stale local caches from a previous project are not mixed in
+    const ACTIVE_PROJECT_KEY = '9jacash_active_firebase_project_id';
+    const currentUserSession = getInitialUser();
+    try {
+      const lastProjectId = localStorage.getItem(ACTIVE_PROJECT_KEY);
+      if (lastProjectId !== firebaseConfig.projectId) {
+        localStorage.setItem(ACTIVE_PROJECT_KEY, firebaseConfig.projectId);
+        const initialUsers = currentUserSession ? [currentUserSession] : [];
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(initialUsers));
+        setAllUsers(initialUsers);
+        const initialDeps = Array.isArray(currentUserSession?.submittedRequests)
+          ? currentUserSession.submittedRequests
+          : [];
+        safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(initialDeps));
+        setDepositRequests(initialDeps);
+      }
+    } catch {}
+
+    // 2. Test Firestore connection on boot
     testConnection();
 
-    // 2. Ensure session sync & push existing local accounts to the active Firebase project
-    const restoredUser = getInitialUser();
+    // 3. Ensure active session user & their submitted requests are synced to Firestore
+    const restoredUser = currentUserSession;
     if (restoredUser) {
       setUser((prev) => prev || restoredUser);
       saveUserToFirestore(restoredUser).catch(console.error);
+      if (Array.isArray(restoredUser.submittedRequests)) {
+        restoredUser.submittedRequests.forEach((req) => {
+          if (req && req.id && req.userId) {
+            saveDepositRequestToFirestore(req).catch(console.error);
+          }
+        });
+      }
       const restoredTx = getInitialTransactions(restoredUser);
       if (restoredTx.length > 0) {
         setTransactions((prev) => (prev.length > 0 ? prev : restoredTx));
       }
     }
-    try {
-      const localStr = localStorage.getItem(USERS_STORAGE_KEY);
-      if (localStr) {
-        const localList: User[] = JSON.parse(localStr);
-        if (Array.isArray(localList)) {
-          localList.forEach((lu) => {
-            if (lu && lu.id && lu.email) {
-              saveUserToFirestore(lu).catch(console.error);
-            }
-          });
-        }
-      }
-      const rawLocalDeposits = localStorage.getItem(DEPOSIT_REQUESTS_STORAGE_KEY);
-      if (rawLocalDeposits) {
-        const localDeps: DepositRequest[] = JSON.parse(rawLocalDeposits);
-        if (Array.isArray(localDeps)) {
-          localDeps.forEach((ld) => {
-            if (ld && ld.id && ld.userId) {
-              saveDepositRequestToFirestore(ld).catch(console.error);
-            }
-          });
-        }
-      }
-    } catch {}
     loadStoredConfig();
   }, [loadStoredConfig]);
 
@@ -806,17 +808,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             };
           });
 
-          // Ensure any local users not yet in Firestore are preserved and pushed up
+          // Ensure the currently logged-in user on this device is always preserved and synced to Firestore
           const cloudIds = new Set(merged.map((u) => u.id));
-          prevLocalUsers.forEach((lu) => {
-            if (lu && lu.id && !cloudIds.has(lu.id)) {
-              merged.push(lu);
-              cloudIds.add(lu.id);
-              saveUserToFirestore(lu).catch(console.error);
-            }
-          });
           if (currentLoggedIn && currentLoggedIn.id && !cloudIds.has(currentLoggedIn.id)) {
             merged.push(currentLoggedIn);
+            cloudIds.add(currentLoggedIn.id);
             saveUserToFirestore(currentLoggedIn).catch(console.error);
           }
 
@@ -909,22 +905,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else {
-        // If Firestore users collection is currently empty, push any local registered users up to Firestore
+        // If Firestore users collection is currently empty, ensure current logged-in user is pushed to Firestore
         try {
-          const localStr = localStorage.getItem(USERS_STORAGE_KEY);
-          if (localStr) {
-            const localUsers: User[] = JSON.parse(localStr);
-            if (localUsers.length > 0) {
-              localUsers.forEach((u) => {
-                saveUserToFirestore(u).catch(console.error);
-              });
-            }
-          }
           if (userRef.current) {
+            setAllUsers([userRef.current]);
+            safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([userRef.current]));
             saveUserToFirestore(userRef.current).catch(console.error);
+          } else {
+            setAllUsers([]);
+            safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([]));
           }
         } catch (err) {
-          console.error('Error auto-syncing local users to Firestore:', err);
+          console.error('Error syncing current user to Firestore:', err);
         }
       }
     });

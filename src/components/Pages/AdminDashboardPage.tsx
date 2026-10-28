@@ -124,12 +124,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     }
   }, [appPricing]);
 
-  // Auto-sync data from Firestore on mount and periodically so admin always sees live payment submissions immediately
+  // Auto-sync data from Firestore on mount and periodically alongside real-time onSnapshot listeners
   useEffect(() => {
     refreshAllUsers().catch(console.error);
     const interval = setInterval(() => {
       refreshAllUsers().catch(() => {});
-    }, 6000);
+    }, 30000);
     return () => clearInterval(interval);
   }, []);
 

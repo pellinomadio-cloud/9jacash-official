@@ -24,13 +24,13 @@ import { extractReferralCodeFromEmail } from '../utils/referral.ts';
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 export const firebaseConfig = {
-  apiKey: "AIzaSyB6jugu9FEmeX6lyIQx2t56Rn6C0vSXou4",
-  authDomain: "jacash-off.firebaseapp.com",
-  projectId: "jacash-off",
-  storageBucket: "jacash-off.firebasestorage.app",
-  messagingSenderId: "538653420258",
-  appId: "1:538653420258:web:424cf4e48ba9ab91b78cbb",
-  measurementId: "G-B3YLQ9SS2S"
+  apiKey: "AIzaSyB4PRlRaR2yz4HH4fbi3hk3BttItITsOfQ",
+  authDomain: "project-2901277293043662795.firebaseapp.com",
+  projectId: "project-2901277293043662795",
+  storageBucket: "project-2901277293043662795.firebasestorage.app",
+  messagingSenderId: "139269929507",
+  appId: "1:139269929507:web:f8ada97617ed072f870f96",
+  measurementId: "G-5X1T59TKH6"
 };
 
 // Initialize Firebase

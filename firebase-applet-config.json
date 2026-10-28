@@ -1,12 +1,12 @@
 {
-  "projectId": "jacash-off",
-  "appId": "1:538653420258:web:424cf4e48ba9ab91b78cbb",
-  "apiKey": "AIzaSyB6jugu9FEmeX6lyIQx2t56Rn6C0vSXou4",
-  "authDomain": "jacash-off.firebaseapp.com",
+  "projectId": "project-2901277293043662795",
+  "appId": "1:139269929507:web:f8ada97617ed072f870f96",
+  "apiKey": "AIzaSyB4PRlRaR2yz4HH4fbi3hk3BttItITsOfQ",
+  "authDomain": "project-2901277293043662795.firebaseapp.com",
   "firestoreDatabaseId": "(default)",
-  "storageBucket": "jacash-off.firebasestorage.app",
-  "messagingSenderId": "538653420258",
-  "measurementId": "G-B3YLQ9SS2S",
+  "storageBucket": "project-2901277293043662795.firebasestorage.app",
+  "messagingSenderId": "139269929507",
+  "measurementId": "G-5X1T59TKH6",
   "oAuthClientId": "",
   "recaptchaSiteKey": ""
 }
