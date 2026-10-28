@@ -20,6 +20,7 @@ import { getAuth } from 'firebase/auth';
 import { getAnalytics, isSupported } from 'firebase/analytics';
 import { User, Transaction, ReferralRecord, DepositRequest, CompanyAccount, CommunityLinks, AppNotification, SafeWithdrawalAccount, AppPricing, DevicePushBroadcast, DeviceSubscriber, AdminQuickCode } from '../types/index.ts';
 import { sortTransactionsNewestFirst } from '../utils/transactionSort.ts';
+import { extractReferralCodeFromEmail } from '../utils/referral.ts';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 // Initialize Firebase App
@@ -226,6 +227,61 @@ export async function getAllUsersFromFirestore(): Promise<User[]> {
     handleFirestoreError(error, OperationType.LIST, path);
     return [];
   }
+}
+
+/**
+ * Quickly finds a user in Firestore matching a referral code, email, handle or membership ID.
+ * Employs a strict 1.8-second timeout so registration never stalls or delays.
+ */
+export async function findUserByReferralCodeInFirestore(code: string): Promise<User | null> {
+  if (!code || isFirestoreQuotaExhausted()) return null;
+  const clean = code.trim().toLowerCase();
+
+  const searchOperation = (async (): Promise<User | null> => {
+    try {
+      // 1. Direct query by referralCode field
+      const qRef = query(collection(db, USERS_COLLECTION), where('referralCode', '==', clean));
+      const snapRef = await getDocs(qRef);
+      if (!snapRef.empty) {
+        return snapRef.docs[0].data() as User;
+      }
+
+      // 2. Query by email
+      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', clean));
+      const snapEmail = await getDocs(qEmail);
+      if (!snapEmail.empty) {
+        return snapEmail.docs[0].data() as User;
+      }
+
+      // 3. Fallback: inspect user documents
+      const snapAll = await getDocs(collection(db, USERS_COLLECTION));
+      for (const d of snapAll.docs) {
+        const u = d.data() as User;
+        if (!u) continue;
+        const uRef = (u.referralCode || '').toLowerCase().trim();
+        const uEmail = (u.email || '').toLowerCase().trim();
+        const uLocal = uEmail.split('@')[0];
+        const uEmailRef = extractReferralCodeFromEmail(uEmail);
+        const uMemberId = (u.membershipId || '').toLowerCase().trim();
+        if (
+          uRef === clean ||
+          uEmail === clean ||
+          uLocal === clean ||
+          uEmailRef === clean ||
+          uMemberId === clean
+        ) {
+          return u;
+        }
+      }
+      return null;
+    } catch (err) {
+      console.warn('Failed to query referrer from Firestore:', err);
+      return null;
+    }
+  })();
+
+  const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1800));
+  return Promise.race([searchOperation, timeoutPromise]);
 }
 
 export function subscribeToAllUsers(onUpdate: (users: User[]) => void): Unsubscribe {

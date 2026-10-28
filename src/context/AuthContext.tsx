@@ -34,6 +34,7 @@ import {
   saveAdminQuickCodeToFirestore,
   subscribeToAdminQuickCodes,
   deleteAdminQuickCodeFromFirestore,
+  findUserByReferralCodeInFirestore,
 } from '../services/firebase.ts';
 import { sortTransactionsNewestFirst } from '../utils/transactionSort.ts';
 import { safeLocalStorageSet, cleanStorageQuota } from '../utils/storage.ts';
@@ -717,10 +718,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               lastWithdrawal: resolvedLastWithdrawal,
               quickCodes: freshCurrent.quickCodes || localUser?.quickCodes,
               tier: safeTier,
-              // Strictly protected balances - NEVER decrease on background sync:
+              // Strictly protected balances & referral statistics:
               balance: safeBalance,
               availableBalance: safeAvailable,
               pendingEarnings: safePending,
+              referralEarnings: Math.max(freshCurrent.referralEarnings || 0, localUser?.referralEarnings || 0),
+              referralCount: Math.max(freshCurrent.referralCount || 0, localUser?.referralCount || 0),
             };
 
             const mergedUser = normalizeUser(rawMergedUser) || rawMergedUser;
@@ -2676,9 +2679,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, pin: string, inputReferralCode?: string) => {
     try {
       const cleanEmail = email.trim().toLowerCase();
-      const existingUsers = getAllRegisteredUsers();
+      let existingUsers = getAllRegisteredUsers();
 
-      const existing = existingUsers.find((u) => (u?.email || '').toLowerCase() === cleanEmail);
+      // Check if user already exists locally or in cloud
+      let existing = existingUsers.find((u) => (u?.email || '').toLowerCase() === cleanEmail);
+      if (!existing && existingUsers.length === 0) {
+        try {
+          const cloudCheck = await findUserByReferralCodeInFirestore(cleanEmail);
+          if (cloudCheck) {
+            existing = cloudCheck;
+          }
+        } catch {}
+      }
+
       if (existing) {
         return { success: false, message: 'An account with this email already exists. Please log in.' };
       }
@@ -2697,19 +2710,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let matchedReferrer: User | undefined;
 
       if (cleanRefCode) {
+        // 1. Search in-memory / locally stored users first (instant)
         matchedReferrer = existingUsers.find((u) => {
           if (!u) return false;
-          const uRef = (u.referralCode || '').toLowerCase();
-          const uEmailRef = extractReferralCodeFromEmail(u.email || '').toLowerCase();
-          const uMemberId = (u.membershipId || '').toLowerCase();
-          const uEmailLocal = (u.email || '').toLowerCase().split('@')[0];
+          const uRef = (u.referralCode || '').toLowerCase().trim();
+          const uEmail = (u.email || '').toLowerCase().trim();
+          const uEmailRef = extractReferralCodeFromEmail(uEmail).toLowerCase().trim();
+          const uMemberId = (u.membershipId || '').toLowerCase().trim();
+          const uEmailLocal = uEmail.split('@')[0];
           return (
             uRef === cleanRefCode ||
             uEmailRef === cleanRefCode ||
             uMemberId === cleanRefCode ||
-            uEmailLocal === cleanRefCode
+            uEmailLocal === cleanRefCode ||
+            uEmail === cleanRefCode
           );
         });
+
+        // 2. If not found in local memory (e.g. cross-device registration), look up in Firestore directly
+        if (!matchedReferrer) {
+          try {
+            const cloudReferrer = await findUserByReferralCodeInFirestore(cleanRefCode);
+            if (cloudReferrer) {
+              matchedReferrer = cloudReferrer;
+            }
+          } catch (e) {
+            console.warn('Error fetching referrer from Firestore:', e);
+          }
+        }
       }
 
       const isReferred = Boolean(matchedReferrer || cleanRefCode);
@@ -2736,8 +2764,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: new Date().toISOString(),
       };
 
-      // Save user to Firebase Firestore
-      await saveUserToFirestore(newUser);
+      // Save user to Firebase Firestore with a 1.2s timeout race so registration never stalls or delays
+      Promise.race([
+        saveUserToFirestore(newUser),
+        new Promise((resolve) => setTimeout(resolve, 1200)),
+      ]).catch(console.error);
 
       // Record account on device to enforce the 3 accounts limit
       recordAccountOnDevice(cleanEmail);
@@ -2768,12 +2799,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       // If registered with a valid referrer, credit ₦15,000 bonus to the referrer on Firebase!
+      let updatedReferrerToStore: User | null = null;
       if (matchedReferrer) {
         const referrerTier = matchedReferrer.tier || 1;
         const referrerTierLimit = getUserTierLimit(referrerTier);
         const bonusAmount = REFERRAL_BONUS_AMOUNT; // ₦15,000
 
-        let refNewBalance = matchedReferrer.balance;
+        let refNewBalance = matchedReferrer.balance || 0;
         let refNewPending = matchedReferrer.pendingEarnings || 0;
 
         if (referrerTier >= 3) {
@@ -2797,9 +2829,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           referralCount: (matchedReferrer.referralCount || 0) + 1,
         };
         const updatedReferrer = normalizeUser(rawUpdatedReferrer) || rawUpdatedReferrer;
+        updatedReferrerToStore = updatedReferrer;
 
-        // Update Referrer in Firebase Firestore
-        await saveUserToFirestore(updatedReferrer);
+        // Update Referrer in Firebase Firestore (with timeout guard so registration is instant)
+        Promise.race([
+          saveUserToFirestore(updatedReferrer),
+          new Promise((resolve) => setTimeout(resolve, 1200)),
+        ]).catch(console.error);
 
         // Record Referral Transaction in Firestore for Referrer
         const reference = 'REF9JA' + Math.floor(10000000 + Math.random() * 90000000);
@@ -2833,13 +2869,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           time: timeStr,
         };
         saveReferralRecordToFirestore(newRefRecord).catch(console.error);
+
+        // Send In-App Notification directly to the Referrer
+        sendNotificationToUser(
+          matchedReferrer.id,
+          'Referral Cash Bonus! 🎉',
+          `You earned +₦${bonusAmount.toLocaleString()}.00! ${newUser.name} just registered using your referral code.`,
+          'success',
+          { targetUserName: matchedReferrer.name }
+        );
       }
 
-      // Update local state and storage
-      const updatedAll = [...existingUsers.filter((u) => u.id !== newUser.id), newUser];
+      // Update local state and storage - accurately ensuring the updated referrer is persisted
+      let updatedAll = existingUsers.filter((u) => u.id !== newUser.id);
+      if (updatedReferrerToStore) {
+        const refId = updatedReferrerToStore.id;
+        const exists = updatedAll.some((u) => u.id === refId);
+        if (exists) {
+          updatedAll = updatedAll.map((u) => (u.id === refId ? updatedReferrerToStore! : u));
+        } else {
+          updatedAll.push(updatedReferrerToStore);
+        }
+      }
+      updatedAll.push(newUser);
+
       setAllUsers(updatedAll);
       safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(updatedAll));
       safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(newUser));
+
       // Brand new user must NEVER inherit any previous user's pending KYC withdrawal or modal
       localStorage.removeItem('9jacash_kyc_pending_withdrawal');
       setKycPendingWithdrawalState(null);
