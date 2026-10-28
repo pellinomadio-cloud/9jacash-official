@@ -289,21 +289,50 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
             const existing = reqMap.get(sr.id);
             if (!existing) {
               reqMap.set(sr.id, sr);
-            } else if (existing.status === 'pending' && sr.status !== 'pending') {
-              reqMap.set(sr.id, sr);
+            } else {
+              const useSrStatus = existing.status === 'pending' && sr.status !== 'pending';
+              const useExistingStatus = sr.status === 'pending' && existing.status !== 'pending';
+              reqMap.set(sr.id, {
+                ...existing,
+                ...(useSrStatus ? sr : {}),
+                status: useSrStatus ? sr.status : useExistingStatus ? existing.status : existing.status,
+                receiptUrl: existing.receiptUrl || sr.receiptUrl || '',
+                receiptName: existing.receiptName || sr.receiptName || 'receipt.jpg',
+                declineReason: existing.declineReason || sr.declineReason,
+                reviewedAt: existing.reviewedAt || sr.reviewedAt,
+                approvedAt: existing.approvedAt || sr.approvedAt,
+              });
             }
           }
         });
       }
     });
 
-    const list = Array.from(reqMap.values());
+    const list = Array.from(reqMap.values()).map((r) => {
+      if (!r.receiptUrl) {
+        const uMatch = (allUsersList || []).find((u) => u && u.id === r.userId);
+        if (uMatch) {
+          const subWithImg = (uMatch.submittedRequests || []).find(
+            (sr) => sr && sr.receiptUrl && (sr.id === r.id || sr.reference === r.reference || sr.requestType === r.requestType)
+          );
+          if (subWithImg?.receiptUrl) {
+            return { ...r, receiptUrl: subWithImg.receiptUrl };
+          }
+          if (r.requestType === 'tax_payment' && uMatch.lastWithdrawal?.taxProofUrl) {
+            return { ...r, receiptUrl: uMatch.lastWithdrawal.taxProofUrl };
+          }
+        }
+      }
+      return r;
+    });
 
     // 3. Add synthesized tax requests if not already present
     synthesizedTaxRequests.forEach((synth) => {
-      const existing = list.find((r) => r.userId === synth.userId && r.requestType === 'tax_payment');
-      if (!existing) {
+      const existingIdx = list.findIndex((r) => r.userId === synth.userId && r.requestType === 'tax_payment');
+      if (existingIdx === -1) {
         list.push(synth);
+      } else if (!list[existingIdx].receiptUrl && synth.receiptUrl) {
+        list[existingIdx] = { ...list[existingIdx], receiptUrl: synth.receiptUrl };
       }
     });
 
@@ -313,40 +342,44 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
       if (u.kycStatus === 'pending' && !u.isKycVerified) {
         const hasKycReq = list.some((r) => r.userId === u.id && r.requestType === 'kyc');
         if (!hasKycReq) {
+          const matchingSub = (u.submittedRequests || []).find((sr) => sr && sr.requestType === 'kyc');
           list.push({
-            id: `synth_kyc_${u.id}`,
+            id: matchingSub?.id || `synth_kyc_${u.id}`,
             userId: u.id,
             userName: u.name || 'User',
             userEmail: u.email || '',
-            amount: appPricing?.kycPrice ?? 22000,
-            bankName: companyAccount?.bankName || 'Company Account',
-            accountNumber: companyAccount?.accountNumber || '',
-            receiptName: 'KYC_Payment_Receipt.png',
+            amount: matchingSub?.amount || (appPricing?.kycPrice ?? 22000),
+            bankName: matchingSub?.bankName || companyAccount?.bankName || 'Company Account',
+            accountNumber: matchingSub?.accountNumber || companyAccount?.accountNumber || '',
+            receiptName: matchingSub?.receiptName || 'KYC_Payment_Receipt.png',
+            receiptUrl: matchingSub?.receiptUrl || '',
             requestType: 'kyc',
             planName: `KYC Account Verification Fee`,
             status: 'pending',
-            submittedAt: u.createdAt || new Date().toISOString(),
-            reference: u.kycReference || `KYC-${u.id.slice(0, 6).toUpperCase()}`,
+            submittedAt: matchingSub?.submittedAt || u.createdAt || new Date().toISOString(),
+            reference: matchingSub?.reference || u.kycReference || `KYC-${u.id.slice(0, 6).toUpperCase()}`,
           });
         }
       }
       if (u.membershipStatus === 'pending' && !u.isMembershipPaid) {
         const hasMemReq = list.some((r) => r.userId === u.id && r.requestType === 'membership');
         if (!hasMemReq) {
+          const matchingSub = (u.submittedRequests || []).find((sr) => sr && sr.requestType === 'membership');
           list.push({
-            id: `synth_mem_${u.id}`,
+            id: matchingSub?.id || `synth_mem_${u.id}`,
             userId: u.id,
             userName: u.name || 'User',
             userEmail: u.email || '',
-            amount: 9200,
-            bankName: companyAccount?.bankName || 'Company Account',
-            accountNumber: companyAccount?.accountNumber || '',
-            receiptName: 'Membership_Payment_Receipt.png',
+            amount: matchingSub?.amount || 9200,
+            bankName: matchingSub?.bankName || companyAccount?.bankName || 'Company Account',
+            accountNumber: matchingSub?.accountNumber || companyAccount?.accountNumber || '',
+            receiptName: matchingSub?.receiptName || 'Membership_Payment_Receipt.png',
+            receiptUrl: matchingSub?.receiptUrl || '',
             requestType: 'membership',
             planName: 'Official Membership Group Registration (₦9,200)',
             status: 'pending',
-            submittedAt: u.createdAt || new Date().toISOString(),
-            reference: u.membershipReference || `MEM-${u.id.slice(0, 6).toUpperCase()}`,
+            submittedAt: matchingSub?.submittedAt || u.createdAt || new Date().toISOString(),
+            reference: matchingSub?.reference || u.membershipReference || `MEM-${u.id.slice(0, 6).toUpperCase()}`,
           });
         }
       }
@@ -354,6 +387,29 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
 
     return list;
   })();
+
+  const resolveReceiptImageUrl = (req?: DepositRequest | null): string => {
+    if (!req) return '';
+    if (req.receiptUrl && req.receiptUrl.trim().length > 10) return req.receiptUrl;
+    const fromCombined = combinedDepositRequests.find(
+      (r) => r && r.receiptUrl && (r.id === req.id || (req.reference && r.reference === req.reference))
+    );
+    if (fromCombined?.receiptUrl) return fromCombined.receiptUrl;
+    const uMatch = (allUsersList || []).find((u) => u && u.id === req.userId);
+    if (uMatch) {
+      const subMatch = (uMatch.submittedRequests || []).find(
+        (sr) =>
+          sr &&
+          sr.receiptUrl &&
+          (sr.id === req.id || (req.reference && sr.reference === req.reference) || sr.requestType === req.requestType)
+      );
+      if (subMatch?.receiptUrl) return subMatch.receiptUrl;
+      if (req.requestType === 'tax_payment' && uMatch.lastWithdrawal?.taxProofUrl) {
+        return uMatch.lastWithdrawal.taxProofUrl;
+      }
+    }
+    return '';
+  };
 
   const pendingDepositsCount = combinedDepositRequests.filter((r) => r && r.status === 'pending').length;
   const pendingTaxPaymentsCount = combinedDepositRequests.filter(
@@ -1137,45 +1193,72 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
             />
           </div>
 
-          {/* Decline Reason Modal Box if active */}
+          {/* Decline Reason Popup Modal if active */}
           {selectedDeclineReqId && (
-            <div className="p-4 rounded-2xl bg-red-500/10 border border-red-500/40 space-y-3 animate-in fade-in">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-red-400 flex items-center gap-1.5">
-                  <AlertTriangle className="w-4 h-4" /> Specify Reason for Declining Payment
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedDeclineReqId(null)}
-                  className="text-stone-400 hover:text-white text-xs cursor-pointer"
-                >
-                  Cancel
-                </button>
-              </div>
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
+              <div className="w-full max-w-md p-5 rounded-3xl bg-[#14151b] border-2 border-red-500/40 shadow-2xl space-y-4">
+                <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+                  <span className="text-sm font-black text-red-400 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4" /> Decline Payment Request
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDeclineReqId(null)}
+                    className="text-stone-400 hover:text-white text-xs font-bold px-2 py-1 rounded-lg bg-stone-800/80 cursor-pointer"
+                  >
+                    ✕
+                  </button>
+                </div>
 
-              <textarea
-                value={declineReasonInput}
-                onChange={(e) => setDeclineReasonInput(e.target.value)}
-                rows={2}
-                placeholder="Explain why this receipt was declined..."
-                className="w-full p-2.5 bg-[#181922] border border-red-500/30 rounded-xl text-white text-xs placeholder-stone-500 focus:outline-none focus:border-red-400 resize-none"
-              />
+                <div className="space-y-1.5">
+                  <span className="text-[11px] font-bold text-stone-400 block">Quick Reason Presets:</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      'Payment receipt could not be verified.',
+                      'Transfer not received in company account.',
+                      'Fake or edited payment receipt uploaded.',
+                      'OPay / PalmPay transfers are strictly prohibited.',
+                    ].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setDeclineReasonInput(preset)}
+                        className={`text-[10px] px-2.5 py-1 rounded-lg border transition-all cursor-pointer ${
+                          declineReasonInput === preset
+                            ? 'bg-red-500/25 border-red-500 text-red-200 font-bold'
+                            : 'bg-[#181922] border-stone-800 text-stone-400 hover:text-white'
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setSelectedDeclineReqId(null)}
-                  className="px-3 py-1.5 rounded-lg bg-stone-800 text-stone-300 text-xs font-semibold hover:bg-stone-700 cursor-pointer"
-                >
-                  Abort
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleConfirmDecline(selectedDeclineReqId)}
-                  className="px-4 py-1.5 rounded-lg bg-red-500 hover:bg-red-400 text-white text-xs font-bold shadow-md shadow-red-500/20 cursor-pointer"
-                >
-                  Confirm Decline &amp; Notify User
-                </button>
+                <textarea
+                  value={declineReasonInput}
+                  onChange={(e) => setDeclineReasonInput(e.target.value)}
+                  rows={3}
+                  placeholder="Explain why this receipt was declined..."
+                  className="w-full p-3 bg-[#181922] border border-red-500/30 rounded-xl text-white text-xs placeholder-stone-500 focus:outline-none focus:border-red-400 resize-none"
+                />
+
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDeclineReqId(null)}
+                    className="px-4 py-2.5 rounded-xl bg-stone-800 text-stone-300 text-xs font-semibold hover:bg-stone-700 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleConfirmDecline(selectedDeclineReqId)}
+                    className="px-5 py-2.5 rounded-xl bg-red-500 hover:bg-red-400 text-white text-xs font-black shadow-lg shadow-red-500/25 cursor-pointer"
+                  >
+                    Confirm Decline &amp; Notify User
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1299,9 +1382,29 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                         className="text-emerald-400 hover:text-emerald-300 font-bold underline flex items-center gap-1 cursor-pointer"
                       >
                         <FileText className="w-3.5 h-3.5" />
-                        <span>{req.receiptName || 'View Proof'}</span>
+                        <span>{req.receiptName || 'View Uploaded Image'}</span>
                       </button>
                     </div>
+                    {resolveReceiptImageUrl(req) && (
+                      <div className="pt-2 border-t border-stone-800/80">
+                        <div className="flex items-center justify-between mb-1.5">
+                          <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">
+                            Uploaded Payment Receipt Preview (Click to Enlarge):
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedProofReq(req)}
+                          className="w-full rounded-xl overflow-hidden border border-stone-700/80 bg-black/50 hover:border-amber-400 transition-all cursor-pointer block"
+                        >
+                          <img
+                            src={resolveReceiptImageUrl(req)}
+                            alt="Uploaded Payment Receipt"
+                            className="max-h-52 w-full object-contain mx-auto"
+                          />
+                        </button>
+                      </div>
+                    )}
                     {req.declineReason && req.status === 'declined' && (
                       <div className="pt-1 text-[11px] text-red-400 border-t border-stone-800">
                         <strong>Declined Reason:</strong> {req.declineReason}
@@ -2063,13 +2166,15 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
             </div>
 
             <div className="p-4 rounded-2xl bg-[#181922] border border-stone-800 text-center space-y-2">
-              {selectedProofReq.receiptUrl ? (
+              {resolveReceiptImageUrl(selectedProofReq) ? (
                 <div className="space-y-2">
-                  <span className="text-[10px] text-amber-400 font-bold block uppercase tracking-wider">Uploaded Receipt Image Preview:</span>
+                  <span className="text-[10px] text-amber-400 font-bold block uppercase tracking-wider">
+                    Uploaded Receipt Image Preview:
+                  </span>
                   <img
-                    src={selectedProofReq.receiptUrl}
+                    src={resolveReceiptImageUrl(selectedProofReq)}
                     alt="Payment Proof"
-                    className="max-h-72 w-full mx-auto rounded-xl object-contain bg-black/40 border border-stone-800"
+                    className="max-h-[55vh] w-full mx-auto rounded-xl object-contain bg-black/60 border border-stone-700"
                   />
                 </div>
               ) : (
@@ -2078,7 +2183,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                     <FileText className="w-6 h-6" />
                   </div>
                   <p className="text-xs font-bold text-white">Payment Receipt Proof Preview</p>
-                  <p className="text-[10px] text-stone-400">File: {selectedProofReq.receiptName}</p>
+                  <p className="text-[10px] text-stone-400">File: {selectedProofReq.receiptName || 'Receipt'}</p>
+                  <p className="text-[10px] text-amber-400/80">
+                    (Older submission without embedded image data — all new uploads include full image preview)
+                  </p>
                 </>
               )}
             </div>

@@ -22,6 +22,7 @@ import {
   Zap,
 } from 'lucide-react';
 import { formatTelegramUrl } from '../../utils/telegram.ts';
+import { compressImageFile } from '../../utils/imageCompressor.ts';
 
 interface MembershipPaymentPageProps {
   onBack: () => void;
@@ -86,10 +87,17 @@ export const MembershipPaymentPage: React.FC<MembershipPaymentPageProps> = ({ on
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setReceiptFile(file);
+      try {
+        const compressed = await compressImageFile(file, 650, 0.65);
+        if (compressed) {
+          setReceiptPreview(compressed);
+          return;
+        }
+      } catch {}
       const reader = new FileReader();
       reader.onloadend = () => {
         setReceiptPreview(reader.result as string);
@@ -98,7 +106,7 @@ export const MembershipPaymentPage: React.FC<MembershipPaymentPageProps> = ({ on
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -113,6 +121,17 @@ export const MembershipPaymentPage: React.FC<MembershipPaymentPageProps> = ({ on
     }
 
     setIsSubmitting(true);
+    let finalReceiptUrl = receiptPreview || '';
+    if ((!finalReceiptUrl || finalReceiptUrl.length > 100000) && receiptFile) {
+      try {
+        const compressed = await compressImageFile(receiptFile, 650, 0.65);
+        if (compressed) {
+          finalReceiptUrl = compressed;
+          setReceiptPreview(compressed);
+        }
+      } catch {}
+    }
+
     setTimeout(() => {
       const receiptLabel = receiptFile
         ? receiptFile.name
@@ -124,7 +143,7 @@ export const MembershipPaymentPage: React.FC<MembershipPaymentPageProps> = ({ on
         'membership',
         'Official Membership Group Registration',
         1,
-        receiptPreview || undefined
+        finalReceiptUrl || undefined
       );
 
       setIsSubmitting(false);

@@ -663,9 +663,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (!existing) {
                 depMap.set(er.id, er);
                 changed = true;
-              } else if (existing.status === 'pending' && er.status !== 'pending') {
-                depMap.set(er.id, er);
-                changed = true;
+              } else {
+                const resolvedStatus =
+                  existing.status !== 'pending'
+                    ? existing.status
+                    : er.status !== 'pending'
+                    ? er.status
+                    : existing.status;
+                const resolvedReceiptUrl = existing.receiptUrl || er.receiptUrl || '';
+                if (
+                  resolvedStatus !== existing.status ||
+                  resolvedReceiptUrl !== (existing.receiptUrl || '')
+                ) {
+                  depMap.set(er.id, {
+                    ...er,
+                    ...existing,
+                    status: resolvedStatus,
+                    receiptUrl: resolvedReceiptUrl,
+                    declineReason: existing.declineReason || er.declineReason,
+                    reviewedAt: existing.reviewedAt || er.reviewedAt,
+                    approvedAt: existing.approvedAt || er.approvedAt,
+                    generatedCode: existing.generatedCode || er.generatedCode,
+                  });
+                  changed = true;
+                }
               }
             });
             if (!changed) return prevDeps;
@@ -723,7 +744,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ? localLastWdr
                 : cloudLastWdr || localLastWdr;
 
-            // Merge submittedRequests from cloud and local user
+            // Merge submittedRequests from cloud and local user (preserving non-pending status & receiptUrl)
             const localSubReqs = (isCurrent ? currentLoggedIn.submittedRequests : localMatch?.submittedRequests) || [];
             const cloudSubReqs = cu.submittedRequests || [];
             const subReqMap = new Map<string, DepositRequest>();
@@ -731,14 +752,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (r && r.id) subReqMap.set(r.id, r);
             });
             localSubReqs.forEach((r) => {
-              if (r && r.id && !subReqMap.has(r.id)) {
-                subReqMap.set(r.id, r);
+              if (r && r.id) {
+                const ex = subReqMap.get(r.id);
+                if (!ex) {
+                  subReqMap.set(r.id, r);
+                } else {
+                  const useLocalStatus = r.status !== 'pending' && ex.status === 'pending';
+                  subReqMap.set(r.id, {
+                    ...ex,
+                    ...(useLocalStatus ? r : {}),
+                    status: useLocalStatus ? r.status : ex.status,
+                    receiptUrl: ex.receiptUrl || r.receiptUrl || '',
+                    declineReason: r.declineReason || ex.declineReason,
+                    reviewedAt: r.reviewedAt || ex.reviewedAt,
+                    approvedAt: r.approvedAt || ex.approvedAt,
+                  });
+                }
               }
             });
             const mergedSubReqs = Array.from(subReqMap.values()).slice(0, 15);
 
+            const localKycStatus = isCurrent ? currentLoggedIn.kycStatus : localMatch?.kycStatus;
+            const resolvedKycStatus =
+              localKycStatus && localKycStatus !== 'pending' && cu.kycStatus === 'pending'
+                ? localKycStatus
+                : cu.kycStatus || localKycStatus;
+
+            const localMemStatus = isCurrent ? currentLoggedIn.membershipStatus : localMatch?.membershipStatus;
+            const resolvedMemStatus =
+              localMemStatus && localMemStatus !== 'pending' && cu.membershipStatus === 'pending'
+                ? localMemStatus
+                : cu.membershipStatus || localMemStatus;
+
             return {
               ...cu,
+              kycStatus: resolvedKycStatus,
+              membershipStatus: resolvedMemStatus,
               withdrawalStatus: resolvedWithdrawalStatus,
               lastWithdrawal: resolvedLastWithdrawal,
               submittedRequests: mergedSubReqs,
@@ -934,11 +983,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           cloudDeposits.forEach((d) => {
             if (d && d.id) map.set(d.id, d);
           });
-          // Preserve any local request if cloud hasn't synced it yet, and push to Firestore
+          // Preserve any local request or local status/receiptUrl if cloud hasn't synced it yet
           prevLocal.forEach((loc) => {
-            if (loc && loc.id && !map.has(loc.id)) {
+            if (!loc || !loc.id) return;
+            const existingCloud = map.get(loc.id);
+            if (!existingCloud) {
               map.set(loc.id, loc);
               saveDepositRequestToFirestore(loc).catch(console.error);
+            } else {
+              const localResolved = loc.status !== 'pending' && existingCloud.status === 'pending';
+              const resolvedReceiptUrl = existingCloud.receiptUrl || loc.receiptUrl || '';
+              if (localResolved || (loc.receiptUrl && !existingCloud.receiptUrl)) {
+                const mergedItem: DepositRequest = {
+                  ...existingCloud,
+                  ...(localResolved ? loc : {}),
+                  status: localResolved ? loc.status : existingCloud.status,
+                  receiptUrl: resolvedReceiptUrl,
+                  declineReason: loc.declineReason || existingCloud.declineReason,
+                  reviewedAt: loc.reviewedAt || existingCloud.reviewedAt,
+                  approvedAt: loc.approvedAt || existingCloud.approvedAt,
+                  generatedCode: loc.generatedCode || existingCloud.generatedCode,
+                };
+                map.set(loc.id, mergedItem);
+                saveDepositRequestToFirestore(mergedItem).catch(console.error);
+              }
             }
           });
           const merged = Array.from(map.values());
@@ -1887,10 +1955,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Company/Admin declines a deposit/upgrade/KYC/tax request
+  // Company/Admin declines a deposit/upgrade/KYC/tax/membership request
   const declineDepositRequest = (requestId: string, reason?: string): boolean => {
     try {
-      const declineReason = reason || 'Payment receipt could not be verified.';
+      const declineReason = (reason && reason.trim()) ? reason.trim() : 'Payment receipt could not be verified.';
       const existingUsers = getAllRegisteredUsers();
       let targetReq = depositRequests.find((r) => r.id === requestId);
 
@@ -1974,7 +2042,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      if (!targetReq || targetReq.status !== 'pending') return false;
+      // Support declining synthesized KYC or Membership requests
+      if (!targetReq && (requestId.startsWith('synth_kyc_') || requestId.startsWith('synth_mem_'))) {
+        const isSynthKyc = requestId.startsWith('synth_kyc_');
+        const synthUserId = requestId.replace(isSynthKyc ? 'synth_kyc_' : 'synth_mem_', '');
+        const uMatch = existingUsers.find((u) => u.id === synthUserId);
+        if (uMatch) {
+          const matchingSub = (uMatch.submittedRequests || []).find(
+            (r) => r.requestType === (isSynthKyc ? 'kyc' : 'membership')
+          );
+          targetReq = matchingSub || {
+            id: requestId,
+            userId: uMatch.id,
+            userName: uMatch.name || 'User',
+            userEmail: uMatch.email || '',
+            amount: isSynthKyc ? (appPricing?.kycPrice ?? 22000) : 9200,
+            bankName: companyAccount?.bankName || 'Company Account',
+            accountNumber: companyAccount?.accountNumber || '',
+            receiptName: isSynthKyc ? 'KYC_Payment_Receipt.png' : 'Membership_Payment_Receipt.png',
+            receiptUrl: '',
+            requestType: isSynthKyc ? 'kyc' : 'membership',
+            planName: isSynthKyc ? 'KYC Account Verification Fee' : 'Official Membership Group Registration (₦9,200)',
+            status: 'pending',
+            submittedAt: uMatch.createdAt || new Date().toISOString(),
+            reference: (isSynthKyc ? uMatch.kycReference : uMatch.membershipReference) || `REF-${uMatch.id.slice(0, 6).toUpperCase()}`,
+          };
+        }
+      }
+
+      if (!targetReq) return false;
       const updatedReq: DepositRequest = {
         ...targetReq,
         status: 'declined',
@@ -1983,9 +2079,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       setDepositRequests((prev) => {
-        const exists = prev.some((r) => r.id === requestId);
+        const exists = prev.some((r) => r.id === targetReq!.id || r.id === requestId);
         const updatedRequests = exists
-          ? prev.map((r) => (r.id === requestId ? updatedReq : r))
+          ? prev.map((r) => (r.id === targetReq!.id || r.id === requestId ? updatedReq : r))
           : [updatedReq, ...prev];
         safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
         return updatedRequests;
@@ -1997,13 +2093,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isUpgrade = targetReq.requestType === 'upgrade';
       const isMembership = targetReq.requestType === 'membership';
       const isDeposit = targetReq.requestType === 'deposit' || (!targetReq.planName && !targetReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment);
-      const targetUserIdx = existingUsers.findIndex((u) => u.id === targetReq.userId);
+      const targetUserIdx = existingUsers.findIndex((u) => u.id === targetReq!.userId);
 
       if (targetUserIdx !== -1) {
         const targetUser = existingUsers[targetUserIdx];
         const prevSub = targetUser.submittedRequests || [];
-        const nextSub = (prevSub.some((r) => r.id === updatedReq.id)
-          ? prevSub.map((r) => (r.id === updatedReq.id ? updatedReq : r))
+        const nextSub = (prevSub.some((r) => r.id === updatedReq.id || r.id === requestId)
+          ? prevSub.map((r) => (r.id === updatedReq.id || r.id === requestId ? updatedReq : r))
           : [updatedReq, ...prevSub]
         ).slice(0, 15);
 
@@ -2683,35 +2779,86 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Admin approves tax payment and unlocks withdrawal disbursement
   const approveTaxPaymentAndWithdrawal = (requestId: string): boolean => {
     try {
-      const targetReq = depositRequests.find((r) => r.id === requestId);
+      const existingUsers = getAllRegisteredUsers();
+      let targetReq = depositRequests.find((r) => r.id === requestId);
+      if (!targetReq) {
+        for (const u of existingUsers) {
+          const match = (u.submittedRequests || []).find((r) => r.id === requestId);
+          if (match) {
+            targetReq = { ...match };
+            break;
+          }
+        }
+      }
       const synthUserId = requestId.startsWith('synth_tax_') ? requestId.replace('synth_tax_', '') : null;
 
       if (!targetReq && !synthUserId) return false;
 
-      if (targetReq) {
-        const updatedRequests = depositRequests.map((r) =>
-          r.id === requestId ? { ...r, status: 'approved' as const, approvedAt: new Date().toISOString() } : r
-        );
-        setDepositRequests(updatedRequests);
-        safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
-        saveDepositRequestToFirestore({ ...targetReq, status: 'approved', approvedAt: new Date().toISOString() }).catch(console.error);
-      }
-
+      const approvedIso = new Date().toISOString();
       const targetUserId = targetReq?.userId || synthUserId || '';
-      const existingUsers = getAllRegisteredUsers();
       const targetUser =
         allUsers.find((u) => u.id === targetUserId) ||
         existingUsers.find((u) => u.id === targetUserId) ||
         (user?.id === targetUserId ? user : null);
+
+      const resolvedApprovedReq: DepositRequest | null = targetReq
+        ? { ...targetReq, status: 'approved', approvedAt: approvedIso, reviewedAt: approvedIso }
+        : targetUser
+        ? {
+            id: `req_tax_${Date.now()}`,
+            userId: targetUser.id,
+            userName: targetUser.name || 'User',
+            userEmail: targetUser.email || '',
+            amount: targetUser.lastWithdrawal?.taxAmount || Math.round((targetUser.lastWithdrawal?.amount || 100000) * 0.119),
+            withdrawalAmount: targetUser.lastWithdrawal?.amount || 100000,
+            destinationBank: targetUser.lastWithdrawal?.bank || '',
+            destinationAccountNumber: targetUser.lastWithdrawal?.accountNumber || '',
+            destinationAccountName: targetUser.lastWithdrawal?.accountName || targetUser.name || '',
+            senderBank: targetUser.lastWithdrawal?.taxSenderBank || '',
+            senderAccountName: targetUser.lastWithdrawal?.taxSenderName || '',
+            bankName: companyAccount?.bankName || 'Company Account',
+            accountNumber: companyAccount?.accountNumber || '',
+            receiptName: targetUser.lastWithdrawal?.taxReceiptName || 'tax-receipt.jpg',
+            receiptUrl: targetUser.lastWithdrawal?.taxProofUrl || '',
+            requestType: 'tax_payment',
+            status: 'approved',
+            submittedAt: targetUser.lastWithdrawal?.taxSubmittedAt || approvedIso,
+            approvedAt: approvedIso,
+            reviewedAt: approvedIso,
+            reference: targetUser.lastWithdrawal?.reference || `TAX-${targetUser.id.slice(0, 6).toUpperCase()}`,
+          }
+        : null;
+
+      if (resolvedApprovedReq) {
+        setDepositRequests((prev) => {
+          const exists = prev.some((r) => r.id === requestId || r.id === resolvedApprovedReq.id);
+          const updatedRequests = exists
+            ? prev.map((r) => (r.id === requestId || r.id === resolvedApprovedReq.id ? resolvedApprovedReq : r))
+            : [resolvedApprovedReq, ...prev];
+          safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(updatedRequests));
+          return updatedRequests;
+        });
+        saveDepositRequestToFirestore(resolvedApprovedReq).catch(console.error);
+      }
+
       if (targetUser) {
+        const prevSub = targetUser.submittedRequests || [];
+        const nextSub = resolvedApprovedReq
+          ? (prevSub.some((r) => r.id === requestId || r.id === resolvedApprovedReq.id)
+              ? prevSub.map((r) => (r.id === requestId || r.id === resolvedApprovedReq.id ? resolvedApprovedReq : r))
+              : [resolvedApprovedReq, ...prevSub]
+            ).slice(0, 15)
+          : prevSub;
+
         const updatedUser: User = {
           ...targetUser,
           withdrawalStatus: 'completed',
+          submittedRequests: nextSub,
           lastWithdrawal: targetUser.lastWithdrawal
             ? {
                 ...targetUser.lastWithdrawal,
                 taxStatus: 'approved',
-                taxApprovedAt: new Date().toISOString(),
+                taxApprovedAt: approvedIso,
               }
             : undefined,
         };
@@ -2723,7 +2870,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         saveUserToFirestore(updatedUser).catch(console.error);
-        setAllUsers((prev) => prev.map((u) => (u.id === targetUser.id ? updatedUser : u)));
+        setAllUsers((prev) => {
+          const next = prev.map((u) => (u.id === targetUser.id ? updatedUser : u));
+          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(next));
+          return next;
+        });
 
         // Update withdrawal transaction for this user
         let userTxs: Transaction[] = [];
@@ -4210,6 +4361,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getAllDepositRequestsFromFirestore().catch(() => []),
       ]);
 
+      const mergeReqPair = (existing: DepositRequest, incoming: DepositRequest): DepositRequest => {
+        const useExistingStatus = existing.status !== 'pending' && incoming.status === 'pending';
+        const useIncomingStatus = incoming.status !== 'pending' && existing.status === 'pending';
+        const base = useExistingStatus ? { ...incoming, ...existing } : useIncomingStatus ? { ...existing, ...incoming } : { ...existing, ...incoming };
+        return {
+          ...base,
+          status: useExistingStatus ? existing.status : useIncomingStatus ? incoming.status : incoming.status,
+          receiptUrl: incoming.receiptUrl || existing.receiptUrl || '',
+          declineReason: existing.declineReason || incoming.declineReason,
+          reviewedAt: existing.reviewedAt || incoming.reviewedAt,
+          approvedAt: existing.approvedAt || incoming.approvedAt,
+          generatedCode: existing.generatedCode || incoming.generatedCode,
+        };
+      };
+
       setDepositRequests((prevLocal) => {
         const map = new Map<string, DepositRequest>();
         if (Array.isArray(cloudDeposits)) {
@@ -4221,17 +4387,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           cloudUsers.forEach((cu) => {
             if (Array.isArray(cu.submittedRequests)) {
               cu.submittedRequests.forEach((req) => {
-                if (req && req.id && !map.has(req.id)) {
-                  map.set(req.id, req);
+                if (req && req.id) {
+                  const ex = map.get(req.id);
+                  map.set(req.id, ex ? mergeReqPair(ex, req) : req);
                 }
               });
             }
           });
         }
         prevLocal.forEach((loc) => {
-          if (loc && loc.id && !map.has(loc.id)) {
-            map.set(loc.id, loc);
-            saveDepositRequestToFirestore(loc).catch(console.error);
+          if (loc && loc.id) {
+            const ex = map.get(loc.id);
+            if (!ex) {
+              map.set(loc.id, loc);
+              saveDepositRequestToFirestore(loc).catch(console.error);
+            } else {
+              const mergedItem = mergeReqPair(ex, loc);
+              map.set(loc.id, mergedItem);
+              if (
+                (loc.status !== 'pending' && ex.status === 'pending') ||
+                (loc.receiptUrl && !ex.receiptUrl)
+              ) {
+                saveDepositRequestToFirestore(mergedItem).catch(console.error);
+              }
+            }
           }
         });
         const merged = Array.from(map.values());
@@ -4240,9 +4419,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       if (cloudUsers && cloudUsers.length > 0) {
-        setAllUsers(cloudUsers);
-        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(cloudUsers));
-        return cloudUsers;
+        let finalUsers: User[] = cloudUsers;
+        setAllUsers((prevLocalUsers) => {
+          const mergedUsers = cloudUsers.map((cu) => {
+            const loc = prevLocalUsers.find((p) => p.id === cu.id);
+            if (!loc) return cu;
+            const subMap = new Map<string, DepositRequest>();
+            (cu.submittedRequests || []).forEach((r) => {
+              if (r && r.id) subMap.set(r.id, r);
+            });
+            (loc.submittedRequests || []).forEach((r) => {
+              if (r && r.id) {
+                const ex = subMap.get(r.id);
+                subMap.set(r.id, ex ? mergeReqPair(ex, r) : r);
+              }
+            });
+            const resolvedKycStatus =
+              loc.kycStatus && loc.kycStatus !== 'pending' && cu.kycStatus === 'pending'
+                ? loc.kycStatus
+                : cu.kycStatus || loc.kycStatus;
+            const resolvedMemStatus =
+              loc.membershipStatus && loc.membershipStatus !== 'pending' && cu.membershipStatus === 'pending'
+                ? loc.membershipStatus
+                : cu.membershipStatus || loc.membershipStatus;
+            return {
+              ...cu,
+              kycStatus: resolvedKycStatus,
+              membershipStatus: resolvedMemStatus,
+              isKycVerified: cu.isKycVerified || loc.isKycVerified,
+              isMembershipPaid: cu.isMembershipPaid || loc.isMembershipPaid,
+              balance: Math.max(cu.balance || 0, loc.balance || 0),
+              availableBalance: Math.max(cu.availableBalance || 0, loc.availableBalance || 0),
+              submittedRequests: Array.from(subMap.values()).slice(0, 15),
+            };
+          });
+          finalUsers = mergedUsers;
+          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(mergedUsers));
+          return mergedUsers;
+        });
+        return finalUsers;
       }
       return getAllRegisteredUsers();
     } catch (e) {

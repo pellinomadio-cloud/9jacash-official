@@ -197,13 +197,38 @@ export async function saveUserToFirestore(user: User): Promise<void> {
   if (isFirestoreQuotaExhausted()) return;
   const path = `${USERS_COLLECTION}/${user.id}`;
   try {
-    const sanitized = sanitizeForFirestore({
+    // Keep at most 6 recent submittedRequests on the user document so the user doc stays well under Firestore's 1MB limit
+    const trimmedUser: User = {
       ...user,
+      ...(Array.isArray(user.submittedRequests)
+        ? {
+            submittedRequests: user.submittedRequests.slice(0, 6).map((r) => ({
+              ...r,
+              receiptUrl: r.receiptUrl && r.receiptUrl.length > 150000 ? '' : r.receiptUrl,
+            })),
+          }
+        : {}),
+    };
+    const sanitized = sanitizeForFirestore({
+      ...trimmedUser,
       updatedAt: new Date().toISOString(),
     });
     await setDoc(doc(db, USERS_COLLECTION, user.id), sanitized, { merge: true });
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    // Fallback if user doc was still too large
+    try {
+      const lightUser = sanitizeForFirestore({
+        ...user,
+        submittedRequests: (user.submittedRequests || []).slice(0, 5).map((r) => ({
+          ...r,
+          receiptUrl: r.receiptUrl && r.receiptUrl.length > 60000 ? '' : r.receiptUrl,
+        })),
+        updatedAt: new Date().toISOString(),
+      });
+      await setDoc(doc(db, USERS_COLLECTION, user.id), lightUser, { merge: true });
+    } catch (retryErr) {
+      handleFirestoreError(retryErr, OperationType.WRITE, path);
+    }
   }
 }
 
@@ -464,8 +489,8 @@ export async function saveDepositRequestToFirestore(deposit: DepositRequest): Pr
     });
     await setDoc(doc(db, DEPOSITS_COLLECTION, docId), sanitized, { merge: true });
   } catch (error) {
-    // If document write failed due to oversized receipt base64 image, retry without large base64 so request always reaches Admin Dashboard
-    if (deposit.receiptUrl && deposit.receiptUrl.length > 30000) {
+    // Only strip receiptUrl if it exceeded 750KB (Firestore limit is 1MB)
+    if (deposit.receiptUrl && deposit.receiptUrl.length > 750000) {
       try {
         const fallbackSanitized = sanitizeForFirestore({
           ...deposit,
