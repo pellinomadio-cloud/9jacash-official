@@ -5,6 +5,7 @@ import { TermsModal } from './TermsModal.tsx';
 import {
   extractReferralCodeFromEmail,
   getIncomingReferralCode,
+  cleanReferralCodeInput,
   SITE_DOMAIN,
 } from '../../utils/referral.ts';
 import { canRegisterAccountOnDevice } from '../../utils/deviceLimit.ts';
@@ -40,11 +41,11 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   const [isDeviceLimitReached, setIsDeviceLimitReached] = useState(false);
 
   useEffect(() => {
-    // Check if device has reached maximum 3 accounts
+    // Check if device has reached maximum 10 accounts
     const check = canRegisterAccountOnDevice();
     if (!check.allowed) {
       setIsDeviceLimitReached(true);
-      setError(check.message || 'Device registration limit reached. A maximum of 3 accounts can be created on this device.');
+      setError(check.message || 'Device registration limit reached. A maximum of 10 accounts can be created on this device.');
     }
 
     const incoming = getIncomingReferralCode();
@@ -55,14 +56,8 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   }, []);
 
   const handleReferralInput = (val: string) => {
-    let clean = val.trim();
-    if (clean.includes('ref=')) {
-      const match = clean.match(/ref=([^&]+)/);
-      if (match && match[1]) {
-        clean = decodeURIComponent(match[1]);
-      }
-    }
-    setReferralCode(clean.toLowerCase());
+    const clean = cleanReferralCodeInput(val);
+    setReferralCode(clean);
   };
 
   const prospectiveReferralCode = email.includes('@') ? extractReferralCodeFromEmail(email) : '';
@@ -76,11 +71,11 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
     e.preventDefault();
     setError('');
 
-    // Enforce 3 accounts limit per device
+    // Enforce 10 accounts limit per device
     const deviceCheck = canRegisterAccountOnDevice();
     if (!deviceCheck.allowed) {
       setIsDeviceLimitReached(true);
-      setError(deviceCheck.message || 'Device registration limit reached. A maximum of 3 accounts can be created on this device.');
+      setError(deviceCheck.message || 'Device registration limit reached. A maximum of 10 accounts can be created on this device.');
       return;
     }
 
@@ -101,8 +96,9 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
       return;
     }
 
+    const finalRefCode = cleanReferralCodeInput(referralCode) || getIncomingReferralCode() || undefined;
     setIsLoading(true);
-    const result = await register(name, email, pin, referralCode.trim() || undefined);
+    const result = await register(name, email, pin, finalRefCode);
     setIsLoading(false);
 
     if (!result.success) {
@@ -153,7 +149,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
               <span>Device Registration Limit Reached</span>
             </div>
             <p className="text-[11px] text-stone-300 leading-relaxed">
-              A maximum of 3 accounts can be created on this device. You can log in to your existing account.
+              A maximum of 10 accounts can be created on this device. You can log in to your existing account.
             </p>
             <button
               type="button"

@@ -4,6 +4,7 @@ import { soundFx } from '../utils/sound.ts';
 import {
   SITE_DOMAIN,
   extractReferralCodeFromEmail,
+  cleanReferralCodeInput,
   buildReferralLink,
   getDisplayReferralLink,
 } from '../utils/referral.ts';
@@ -597,15 +598,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 1. Test Firestore connection on boot
     testConnection();
 
-    // 2. Ensure session sync
+    // 2. Ensure session sync & push existing local accounts to the active Firebase project
     const restoredUser = getInitialUser();
     if (restoredUser) {
       setUser((prev) => prev || restoredUser);
+      saveUserToFirestore(restoredUser).catch(console.error);
       const restoredTx = getInitialTransactions(restoredUser);
       if (restoredTx.length > 0) {
         setTransactions((prev) => (prev.length > 0 ? prev : restoredTx));
       }
     }
+    try {
+      const localStr = localStorage.getItem(USERS_STORAGE_KEY);
+      if (localStr) {
+        const localList: User[] = JSON.parse(localStr);
+        if (Array.isArray(localList)) {
+          localList.forEach((lu) => {
+            if (lu && lu.id && lu.email) {
+              saveUserToFirestore(lu).catch(console.error);
+            }
+          });
+        }
+      }
+    } catch {}
     loadStoredConfig();
   }, [loadStoredConfig]);
 
@@ -618,7 +633,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // A stale background cloud snapshot must NEVER reduce any user's balance!
         setAllUsers((prevLocalUsers) => {
           const currentLoggedIn = userRef.current;
-          const merged = cloudUsers.map((cu) => {
+          const merged: User[] = cloudUsers.map((cu): User => {
             const isCurrent = currentLoggedIn && cu.id === currentLoggedIn.id;
             const localMatch = prevLocalUsers.find((p) => p.id === cu.id);
             const highestKnownBalance = Math.max(
@@ -669,9 +684,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               balance: finalBal,
               availableBalance: finalAvail,
               pendingEarnings: finalPending,
+              referralEarnings: Math.max(
+                cu.referralEarnings || 0,
+                isCurrent ? (currentLoggedIn.referralEarnings || 0) : (localMatch?.referralEarnings || 0)
+              ),
+              referralCount: Math.max(
+                cu.referralCount || 0,
+                isCurrent ? (currentLoggedIn.referralCount || 0) : (localMatch?.referralCount || 0)
+              ),
               tier: resolvedTier,
             };
           });
+
+          // Ensure any local users not yet in Firestore are preserved and pushed up
+          const cloudIds = new Set(merged.map((u) => u.id));
+          prevLocalUsers.forEach((lu) => {
+            if (lu && lu.id && !cloudIds.has(lu.id)) {
+              merged.push(lu);
+              cloudIds.add(lu.id);
+              saveUserToFirestore(lu).catch(console.error);
+            }
+          });
+          if (currentLoggedIn && currentLoggedIn.id && !cloudIds.has(currentLoggedIn.id)) {
+            merged.push(currentLoggedIn);
+            saveUserToFirestore(currentLoggedIn).catch(console.error);
+          }
+
           safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(merged));
           return merged;
         });
@@ -732,10 +770,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(mergedUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(mergedUser));
 
-            // If local balance was ahead of Firestore, write back to Firestore immediately
-            if (safeBalance > (freshCurrent.balance || 0) || safePending > (freshCurrent.pendingEarnings || 0)) {
+            // If local balance or referral count was ahead of Firestore, write back to Firestore immediately
+            if (
+              safeBalance > (freshCurrent.balance || 0) ||
+              safePending > (freshCurrent.pendingEarnings || 0) ||
+              (mergedUser.referralCount || 0) > (freshCurrent.referralCount || 0)
+            ) {
               saveUserToFirestore(mergedUser).catch(console.error);
             }
+          } else if (userRef.current) {
+            // Current logged-in user is not in Firestore yet — upload immediately
+            saveUserToFirestore(userRef.current).catch(console.error);
           }
         }
       } else {
@@ -749,7 +794,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 saveUserToFirestore(u).catch(console.error);
               });
             }
-          } else if (userRef.current) {
+          }
+          if (userRef.current) {
             saveUserToFirestore(userRef.current).catch(console.error);
           }
         } catch (err) {
@@ -2675,6 +2721,146 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user?.id]);
 
+  // Automatic Referral Reconciliation:
+  // Ensures that if any user registered using the current user's referral code (even across devices or before profile sync),
+  // the current user is guaranteed to receive their ₦15,000 bonus per referred user!
+  useEffect(() => {
+    const activeUser = userRef.current || user;
+    if (!activeUser?.id || !activeUser?.email || allUsers.length === 0) return;
+
+    const myCode = (activeUser.referralCode || extractReferralCodeFromEmail(activeUser.email)).toLowerCase().trim();
+    const myEmail = activeUser.email.toLowerCase().trim();
+    const myEmailLocal = myEmail.split('@')[0];
+
+    const matchingReferredUsers = allUsers.filter((u) => {
+      if (!u || u.id === activeUser.id || !u.referredBy) return false;
+      const refBy = u.referredBy.toLowerCase().trim();
+      const refByClean = cleanReferralCodeInput(refBy);
+      return (
+        refBy === myCode ||
+        refByClean === myCode ||
+        refBy === myEmail ||
+        refBy === myEmailLocal
+      );
+    });
+
+    if (matchingReferredUsers.length === 0) return;
+
+    const creditedKey = `9jacash_credited_ref_ids_${activeUser.id}`;
+    let creditedIds: string[] = [];
+    try {
+      const raw = localStorage.getItem(creditedKey);
+      if (raw) creditedIds = JSON.parse(raw);
+    } catch {}
+
+    // Also mark any referredUserId already in `referrals` or existing referral transactions as credited
+    referrals.forEach((r) => {
+      if (r.referrerId === activeUser.id && r.referredUserId && !creditedIds.includes(r.referredUserId)) {
+        creditedIds.push(r.referredUserId);
+      }
+    });
+
+    // If activeUser already has referralCount >= matchingReferredUsers.length, record their IDs so we don't double-credit
+    if ((activeUser.referralCount || 0) >= matchingReferredUsers.length) {
+      const allIds = Array.from(new Set([...creditedIds, ...matchingReferredUsers.map((u) => u.id)]));
+      safeLocalStorageSet(creditedKey, JSON.stringify(allIds));
+      return;
+    }
+
+    const uncreditedUsers = matchingReferredUsers.filter((u) => !creditedIds.includes(u.id));
+    if (uncreditedUsers.length === 0) return;
+
+    const bonusPerUser = REFERRAL_BONUS_AMOUNT; // ₦15,000
+    const totalBonusToAdd = uncreditedUsers.length * bonusPerUser;
+    const now = new Date();
+    const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+    const newCreditedIds = [...creditedIds, ...uncreditedUsers.map((u) => u.id)];
+    safeLocalStorageSet(creditedKey, JSON.stringify(newCreditedIds));
+
+    const newBalance = (activeUser.balance || 0) + totalBonusToAdd;
+    const newReferralCount = Math.max((activeUser.referralCount || 0) + uncreditedUsers.length, matchingReferredUsers.length);
+    const newReferralEarnings = Math.max(
+      (activeUser.referralEarnings || 0) + totalBonusToAdd,
+      newReferralCount * bonusPerUser
+    );
+
+    const updatedUser: User = {
+      ...activeUser,
+      balance: newBalance,
+      availableBalance: newBalance,
+      referralEarnings: newReferralEarnings,
+      referralCount: newReferralCount,
+    };
+
+    userRef.current = updatedUser;
+    setUser(updatedUser);
+    safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+    saveUserToFirestore(updatedUser).catch(console.error);
+
+    setAllUsers((prev) => {
+      const next = prev.map((u) => (u.id === updatedUser.id ? updatedUser : u));
+      safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+
+    const newTxs: Transaction[] = [];
+    const newRefRecords: ReferralRecord[] = [];
+
+    uncreditedUsers.forEach((referredU, idx) => {
+      const reference = 'REF9JA' + Math.floor(10000000 + Math.random() * 90000000);
+      const refTx: Transaction = {
+        id: 'tx_ref_' + (Date.now() + idx),
+        type: 'earn',
+        title: 'Referral Cash Bonus',
+        subtitle: `Invited new member: ${referredU.name} (+₦15,000)`,
+        amount: bonusPerUser,
+        date: dateStr,
+        time: timeStr,
+        isCredit: true,
+        status: 'successful',
+        reference,
+        timestamp: now.getTime() + idx,
+        createdAt: now.toISOString(),
+      };
+      newTxs.push(refTx);
+      saveTransactionToFirestore(refTx, updatedUser.id).catch(console.error);
+
+      const rec: ReferralRecord = {
+        id: 'ref_rec_' + updatedUser.id + '_' + referredU.id,
+        referrerId: updatedUser.id,
+        referrerName: updatedUser.name,
+        referredUserId: referredU.id,
+        referredUserName: referredU.name,
+        referredUserEmail: referredU.email,
+        bonusAmount: bonusPerUser,
+        date: dateStr,
+        time: timeStr,
+      };
+      newRefRecords.push(rec);
+      saveReferralRecordToFirestore(rec).catch(console.error);
+    });
+
+    if (newTxs.length > 0) {
+      setTransactions((prev) => {
+        const mergedTxs = sortTransactionsNewestFirst([...newTxs, ...prev]);
+        safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${updatedUser.id}`, JSON.stringify(mergedTxs));
+        return mergedTxs;
+      });
+    }
+
+    if (newRefRecords.length > 0) {
+      setReferrals((prev) => {
+        const existingRecIds = new Set(prev.map((r) => r.referredUserId));
+        const filteredNew = newRefRecords.filter((r) => !existingRecIds.has(r.referredUserId));
+        const mergedRefs = [...filteredNew, ...prev];
+        safeLocalStorageSet(REFERRALS_STORAGE_KEY, JSON.stringify(mergedRefs));
+        return mergedRefs;
+      });
+    }
+  }, [user?.id, allUsers.length]);
+
   // Firebase Registration with real-time Firestore synchronization and Instant Referral Credit
   const register = async (name: string, email: string, pin: string, inputReferralCode?: string) => {
     try {
@@ -2686,7 +2872,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!existing && existingUsers.length === 0) {
         try {
           const cloudCheck = await findUserByReferralCodeInFirestore(cleanEmail);
-          if (cloudCheck) {
+          if (cloudCheck && (cloudCheck.email || '').toLowerCase().trim() === cleanEmail) {
             existing = cloudCheck;
           }
         } catch {}
@@ -2696,17 +2882,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, message: 'An account with this email already exists. Please log in.' };
       }
 
-      // Enforce device registration limit (Maximum 3 accounts per device)
+      // Enforce device registration limit (Maximum 10 accounts per device)
       const deviceCheck = canRegisterAccountOnDevice(existingUsers);
       if (!deviceCheck.allowed) {
         return {
           success: false,
-          message: deviceCheck.message || 'Device registration limit reached. A maximum of 3 accounts can be created on this device. Please log in to your existing account.',
+          message: deviceCheck.message || 'Device registration limit reached. A maximum of 10 accounts can be created on this device. Please log in to your existing account.',
         };
       }
 
       const myReferralCode = extractReferralCodeFromEmail(cleanEmail);
-      const cleanRefCode = inputReferralCode ? inputReferralCode.trim().toLowerCase() : undefined;
+      const rawRefInput = inputReferralCode ? inputReferralCode.trim().toLowerCase() : '';
+      const cleanRefCode = rawRefInput ? (cleanReferralCodeInput(rawRefInput) || rawRefInput) : undefined;
       let matchedReferrer: User | undefined;
 
       if (cleanRefCode) {
@@ -2723,7 +2910,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             uEmailRef === cleanRefCode ||
             uMemberId === cleanRefCode ||
             uEmailLocal === cleanRefCode ||
-            uEmail === cleanRefCode
+            uEmail === cleanRefCode ||
+            uRef === rawRefInput ||
+            uEmail === rawRefInput
           );
         });
 
@@ -2764,13 +2953,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: new Date().toISOString(),
       };
 
-      // Save user to Firebase Firestore with a 1.2s timeout race so registration never stalls or delays
-      Promise.race([
-        saveUserToFirestore(newUser),
-        new Promise((resolve) => setTimeout(resolve, 1200)),
-      ]).catch(console.error);
-
-      // Record account on device to enforce the 3 accounts limit
+      // Record account on device to enforce the 10 accounts limit
       recordAccountOnDevice(cleanEmail);
 
       let initialTxs: Transaction[] = [];
@@ -2798,32 +2981,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         saveTransactionToFirestore(welcomeTx, newUser.id).catch(console.error);
       }
 
-      // If registered with a valid referrer, credit ₦15,000 bonus to the referrer on Firebase!
+      const firestoreTasks: Promise<any>[] = [saveUserToFirestore(newUser)];
+
+      // If registered with a valid referrer, credit ₦15,000 bonus directly to the referrer's wallet balance!
       let updatedReferrerToStore: User | null = null;
       if (matchedReferrer) {
-        const referrerTier = matchedReferrer.tier || 1;
-        const referrerTierLimit = getUserTierLimit(referrerTier);
         const bonusAmount = REFERRAL_BONUS_AMOUNT; // ₦15,000
-
-        let refNewBalance = matchedReferrer.balance || 0;
-        let refNewPending = matchedReferrer.pendingEarnings || 0;
-
-        if (referrerTier >= 3) {
-          // Level 3 users do not have pending earnings - credit 100% directly to available balance
-          refNewBalance = (matchedReferrer.balance || 0) + bonusAmount + (matchedReferrer.pendingEarnings || 0);
-          refNewPending = 0;
-        } else if (refNewBalance + bonusAmount > referrerTierLimit) {
-          const room = Math.max(0, referrerTierLimit - refNewBalance);
-          refNewBalance = referrerTierLimit;
-          refNewPending += bonusAmount - room;
-        } else {
-          refNewBalance += bonusAmount;
-        }
+        const refNewBalance = (matchedReferrer.balance || 0) + bonusAmount;
+        const refNewAvailable = Math.max(matchedReferrer.availableBalance || 0, matchedReferrer.balance || 0) + bonusAmount;
+        const refNewPending = (matchedReferrer.tier || 1) >= 3 ? 0 : (matchedReferrer.pendingEarnings || 0);
 
         const rawUpdatedReferrer: User = {
           ...matchedReferrer,
           balance: refNewBalance,
-          availableBalance: refNewBalance,
+          availableBalance: refNewAvailable,
           pendingEarnings: refNewPending,
           referralEarnings: (matchedReferrer.referralEarnings || 0) + bonusAmount,
           referralCount: (matchedReferrer.referralCount || 0) + 1,
@@ -2831,13 +3002,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const updatedReferrer = normalizeUser(rawUpdatedReferrer) || rawUpdatedReferrer;
         updatedReferrerToStore = updatedReferrer;
 
-        // Update Referrer in Firebase Firestore (with timeout guard so registration is instant)
-        Promise.race([
-          saveUserToFirestore(updatedReferrer),
-          new Promise((resolve) => setTimeout(resolve, 1200)),
-        ]).catch(console.error);
+        // Mark this referred user ID as credited for the referrer so reconciliation doesn't double-credit
+        try {
+          const creditedKey = `9jacash_credited_ref_ids_${matchedReferrer.id}`;
+          const existingCreditedRaw = localStorage.getItem(creditedKey);
+          const existingCredited: string[] = existingCreditedRaw ? JSON.parse(existingCreditedRaw) : [];
+          if (!existingCredited.includes(newUser.id)) {
+            existingCredited.push(newUser.id);
+            safeLocalStorageSet(creditedKey, JSON.stringify(existingCredited));
+          }
+        } catch {}
 
-        // Record Referral Transaction in Firestore for Referrer
+        // Record Referral Transaction for Referrer (both localStorage and Firestore)
         const reference = 'REF9JA' + Math.floor(10000000 + Math.random() * 90000000);
 
         const refTx: Transaction = {
@@ -2854,11 +3030,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           timestamp: now.getTime(),
           createdAt: now.toISOString(),
         };
-        saveTransactionToFirestore(refTx, matchedReferrer.id).catch(console.error);
 
-        // Save Referral Record in Firestore
+        try {
+          const refTxKey = `${TRANSACTIONS_PREFIX}${matchedReferrer.id}`;
+          const existingRefTxsRaw = localStorage.getItem(refTxKey);
+          const existingRefTxs: Transaction[] = existingRefTxsRaw ? JSON.parse(existingRefTxsRaw) : [];
+          safeLocalStorageSet(refTxKey, JSON.stringify(sortTransactionsNewestFirst([refTx, ...existingRefTxs])));
+        } catch {}
+
+        // Save Referral Record (both localStorage and Firestore)
         const newRefRecord: ReferralRecord = {
-          id: 'ref_rec_' + Date.now(),
+          id: 'ref_rec_' + matchedReferrer.id + '_' + newUser.id,
           referrerId: matchedReferrer.id,
           referrerName: matchedReferrer.name,
           referredUserId: newUser.id,
@@ -2868,7 +3050,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           date: dateStr,
           time: timeStr,
         };
-        saveReferralRecordToFirestore(newRefRecord).catch(console.error);
+
+        setReferrals((prev) => {
+          const updatedRefs = [newRefRecord, ...prev.filter((r) => r.id !== newRefRecord.id)];
+          safeLocalStorageSet(REFERRALS_STORAGE_KEY, JSON.stringify(updatedRefs));
+          return updatedRefs;
+        });
+
+        firestoreTasks.push(
+          saveUserToFirestore(updatedReferrer),
+          saveTransactionToFirestore(refTx, matchedReferrer.id),
+          saveReferralRecordToFirestore(newRefRecord)
+        );
 
         // Send In-App Notification directly to the Referrer
         sendNotificationToUser(
@@ -2879,6 +3072,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           { targetUserName: matchedReferrer.name }
         );
       }
+
+      // Wait up to 2.5s for Firestore writes so cross-device referral rewards are persisted reliably
+      await Promise.race([
+        Promise.all(firestoreTasks),
+        new Promise((resolve) => setTimeout(resolve, 2500)),
+      ]).catch(console.error);
 
       // Update local state and storage - accurately ensuring the updated referrer is persisted
       let updatedAll = existingUsers.filter((u) => u.id !== newUser.id);
@@ -2896,6 +3095,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setAllUsers(updatedAll);
       safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(updatedAll));
       safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(newUser));
+      safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${newUser.id}`, JSON.stringify(initialTxs));
 
       // Brand new user must NEVER inherit any previous user's pending KYC withdrawal or modal
       localStorage.removeItem('9jacash_kyc_pending_withdrawal');

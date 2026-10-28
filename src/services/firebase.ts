@@ -21,10 +21,33 @@ import { getAnalytics, isSupported } from 'firebase/analytics';
 import { User, Transaction, ReferralRecord, DepositRequest, CompanyAccount, CommunityLinks, AppNotification, SafeWithdrawalAccount, AppPricing, DevicePushBroadcast, DeviceSubscriber, AdminQuickCode } from '../types/index.ts';
 import { sortTransactionsNewestFirst } from '../utils/transactionSort.ts';
 import { extractReferralCodeFromEmail } from '../utils/referral.ts';
-import firebaseConfig from '../../firebase-applet-config.json';
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+export const firebaseConfig = {
+  apiKey: "AIzaSyB6jugu9FEmeX6lyIQx2t56Rn6C0vSXou4",
+  authDomain: "jacash-off.firebaseapp.com",
+  projectId: "jacash-off",
+  storageBucket: "jacash-off.firebasestorage.app",
+  messagingSenderId: "538653420258",
+  appId: "1:538653420258:web:424cf4e48ba9ab91b78cbb",
+  measurementId: "G-B3YLQ9SS2S"
+};
 
-// Initialize Firebase App
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+// Initialize Firebase
+export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+
+export let analytics: ReturnType<typeof getAnalytics> | null = null;
+if (typeof window !== 'undefined') {
+  try {
+    analytics = getAnalytics(app);
+  } catch {
+    isSupported().then((supported) => {
+      if (supported) {
+        analytics = getAnalytics(app);
+      }
+    }).catch(() => {});
+  }
+}
 
 // Silence internal offline retry and backoff logs to keep console clean
 try {
@@ -34,39 +57,19 @@ try {
 }
 
 // Configure Firestore with in-memory cache and auto-detect long polling
-// Using memoryLocalCache avoids browser IndexedDB quota limits (QuotaExceededError) in iframes and private tabs
 function initFirestoreInstance() {
-  const dbId = (firebaseConfig.firestoreDatabaseId && firebaseConfig.firestoreDatabaseId !== '(default)')
-    ? firebaseConfig.firestoreDatabaseId
-    : undefined;
-
   try {
-    const config = {
+    return initializeFirestore(app, {
       experimentalAutoDetectLongPolling: true,
       localCache: memoryLocalCache(),
-    };
-    if (dbId) {
-      return initializeFirestore(app, config, dbId);
-    }
-    return initializeFirestore(app, config);
+    });
   } catch {
-    return dbId ? getFirestore(app, dbId) : getFirestore(app);
+    return getFirestore(app);
   }
 }
 
 export const db = initFirestoreInstance();
 export const auth = getAuth(app);
-
-// Optional Analytics
-if (typeof window !== 'undefined' && firebaseConfig.measurementId) {
-  isSupported().then((supported) => {
-    if (supported) {
-      getAnalytics(app);
-    }
-  }).catch(() => {
-    // Ignore analytics unsupported in some iframe/preview environments
-  });
-}
 
 export enum OperationType {
   CREATE = 'create',
@@ -222,7 +225,14 @@ export async function getAllUsersFromFirestore(): Promise<User[]> {
   const path = USERS_COLLECTION;
   try {
     const snap = await getDocs(collection(db, USERS_COLLECTION));
-    return snap.docs.map((d) => d.data() as User);
+    return snap.docs.map((d) => {
+      const data = d.data() as User;
+      return {
+        ...data,
+        id: data.id || d.id,
+        referralCode: data.referralCode || extractReferralCodeFromEmail(data.email || ''),
+      };
+    });
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
     return [];
@@ -231,33 +241,39 @@ export async function getAllUsersFromFirestore(): Promise<User[]> {
 
 /**
  * Quickly finds a user in Firestore matching a referral code, email, handle or membership ID.
- * Employs a strict 1.8-second timeout so registration never stalls or delays.
+ * Employs a 3-second timeout so registration remains fast while reliably resolving cross-device referrals.
  */
 export async function findUserByReferralCodeInFirestore(code: string): Promise<User | null> {
   if (!code || isFirestoreQuotaExhausted()) return null;
   const clean = code.trim().toLowerCase();
+  const cleanHandle = clean.includes('@') ? extractReferralCodeFromEmail(clean) : clean;
 
   const searchOperation = (async (): Promise<User | null> => {
     try {
       // 1. Direct query by referralCode field
-      const qRef = query(collection(db, USERS_COLLECTION), where('referralCode', '==', clean));
+      const qRef = query(collection(db, USERS_COLLECTION), where('referralCode', '==', cleanHandle));
       const snapRef = await getDocs(qRef);
       if (!snapRef.empty) {
-        return snapRef.docs[0].data() as User;
+        const docSnap = snapRef.docs[0];
+        const data = docSnap.data() as User;
+        return { ...data, id: data.id || docSnap.id };
       }
 
       // 2. Query by email
       const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', clean));
       const snapEmail = await getDocs(qEmail);
       if (!snapEmail.empty) {
-        return snapEmail.docs[0].data() as User;
+        const docSnap = snapEmail.docs[0];
+        const data = docSnap.data() as User;
+        return { ...data, id: data.id || docSnap.id };
       }
 
       // 3. Fallback: inspect user documents
       const snapAll = await getDocs(collection(db, USERS_COLLECTION));
       for (const d of snapAll.docs) {
-        const u = d.data() as User;
-        if (!u) continue;
+        const raw = d.data() as User;
+        if (!raw) continue;
+        const u: User = { ...raw, id: raw.id || d.id };
         const uRef = (u.referralCode || '').toLowerCase().trim();
         const uEmail = (u.email || '').toLowerCase().trim();
         const uLocal = uEmail.split('@')[0];
@@ -265,9 +281,12 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
         const uMemberId = (u.membershipId || '').toLowerCase().trim();
         if (
           uRef === clean ||
+          uRef === cleanHandle ||
           uEmail === clean ||
           uLocal === clean ||
+          uLocal === cleanHandle ||
           uEmailRef === clean ||
+          uEmailRef === cleanHandle ||
           uMemberId === clean
         ) {
           return u;
@@ -280,7 +299,7 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
     }
   })();
 
-  const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 1800));
+  const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
   return Promise.race([searchOperation, timeoutPromise]);
 }
 
@@ -291,7 +310,14 @@ export function subscribeToAllUsers(onUpdate: (users: User[]) => void): Unsubscr
       collection(db, USERS_COLLECTION),
       (snap) => {
         try {
-          const users = snap.docs.map((d) => d.data() as User);
+          const users = snap.docs.map((d) => {
+            const data = d.data() as User;
+            return {
+              ...data,
+              id: data.id || d.id,
+              referralCode: data.referralCode || extractReferralCodeFromEmail(data.email || ''),
+            };
+          });
           onUpdate(users);
         } catch (e) {
           console.warn('Error processing users snapshot', e);

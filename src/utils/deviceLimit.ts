@@ -1,7 +1,7 @@
 import { User } from '../types/index.ts';
 import { getOrCreateDeviceId } from './deviceNotifications.ts';
 
-export const MAX_ACCOUNTS_PER_DEVICE = 3;
+export const MAX_ACCOUNTS_PER_DEVICE = 10;
 export const DEVICE_ACCOUNTS_STORAGE_KEY = '9jacash_registered_accounts_on_device';
 
 /**
@@ -20,7 +20,7 @@ export function getRegisteredAccountsOnDevice(): string[] {
 }
 
 /**
- * Check if current device is allowed to create another account (Maximum 3 accounts per device)
+ * Check if current device is allowed to create another account (Maximum 10 accounts per device)
  */
 export function canRegisterAccountOnDevice(existingUsers?: User[]): {
   allowed: boolean;
