@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { useTheme } from '../../context/ThemeContext.tsx';
 import {
   ArrowLeft,
   ShieldCheck,
@@ -33,6 +34,7 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
   onBack,
   onNavigateToSupport,
 }) => {
+  const { isLight } = useTheme();
   const { user, formatNaira, companyAccount, submitTaxPayment, depositRequests } = useAuth();
 
   const existingPendingTaxReq = (depositRequests || []).find(
@@ -213,42 +215,70 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
   };
 
   return (
-    <div className="min-h-screen pb-16 space-y-4 animate-in fade-in duration-200">
+    <div className={`min-h-screen pb-16 space-y-4 animate-in fade-in duration-200 ${
+      isLight ? 'text-slate-800' : 'text-stone-200'
+    }`}>
       {/* Top Header */}
-      <div className="flex items-center gap-3 pt-2 pb-3 border-b border-stone-800">
+      <div className={`flex items-center gap-3 pt-2 pb-3 border-b ${
+        isLight ? 'border-slate-200' : 'border-stone-800'
+      }`}>
         <button
           type="button"
           onClick={onBack}
-          className="w-10 h-10 rounded-full bg-[#16171d] border border-stone-800 flex items-center justify-center text-stone-300 hover:text-white hover:border-amber-500/50 transition-colors cursor-pointer"
+          className={`w-10 h-10 rounded-full border flex items-center justify-center transition-colors cursor-pointer ${
+            isLight
+              ? 'bg-white border-slate-200 text-slate-700 hover:text-slate-900 hover:bg-slate-50 shadow-xs'
+              : 'bg-[#16171d] border-stone-800 text-stone-300 hover:text-white hover:border-amber-500/50'
+          }`}
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-lg font-bold text-white flex items-center gap-1.5">
-            Tax Clearance <ShieldCheck className="w-4 h-4 text-amber-400" />
+          <h1 className={`text-lg font-bold flex items-center gap-1.5 ${
+            isLight ? 'text-slate-900' : 'text-white'
+          }`}>
+            Tax Clearance <ShieldCheck className="w-4 h-4 text-amber-500" />
           </h1>
-          <p className="text-xs text-stone-400">First Withdrawal Approval • 11.9% Statutory Clearance</p>
+          <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+            First Withdrawal Approval • 11.9% Statutory Clearance
+          </p>
         </div>
       </div>
 
       {/* 99% DONE HERO BANNER */}
-      <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[#1b1c2b] via-[#141522] to-[#0d0e17] border-2 border-amber-500/50 p-5 sm:p-6 shadow-2xl">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-10 -left-10 w-48 h-48 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+      <div className={`relative overflow-hidden rounded-3xl border-2 p-5 sm:p-6 shadow-2xl ${
+        isLight
+          ? 'bg-gradient-to-br from-amber-50 via-white to-emerald-50/50 border-amber-400 shadow-amber-500/10 text-slate-900'
+          : 'bg-gradient-to-br from-[#1b1c2b] via-[#141522] to-[#0d0e17] border-amber-500/50 text-white'
+      }`}>
+        <div className={`absolute top-0 right-0 w-64 h-64 rounded-full blur-3xl pointer-events-none ${
+          isLight ? 'bg-amber-400/20' : 'bg-amber-500/10'
+        }`} />
+        <div className={`absolute -bottom-10 -left-10 w-48 h-48 rounded-full blur-2xl pointer-events-none ${
+          isLight ? 'bg-emerald-400/15' : 'bg-emerald-500/10'
+        }`} />
 
         <div className="relative z-10 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
           <div className="space-y-2 max-w-md">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-400/20 border border-amber-400/40 text-amber-300 text-[11px] font-black uppercase tracking-wider">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[11px] font-black uppercase tracking-wider ${
+              isLight
+                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                : 'bg-amber-400/20 border-amber-400/40 text-amber-300'
+            }`}>
+              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
               <span>99% APPROVAL REACHED</span>
             </div>
 
-            <h2 className="text-xl sm:text-2xl font-black text-white tracking-tight leading-snug">
-              You are <span className="text-amber-400 font-mono">99% Done</span> with First Withdrawal Approval
+            <h2 className={`text-xl sm:text-2xl font-black tracking-tight leading-snug ${
+              isLight ? 'text-slate-900' : 'text-white'
+            }`}>
+              You are <span className="text-amber-600 font-mono">99% Done</span> with First Withdrawal Approval
             </h2>
 
-            <p className="text-xs text-stone-300 leading-relaxed">
-              Your withdrawal of <strong className="text-amber-400 font-mono">{formatNaira(withdrawalAmount)}</strong> is in its final approval stage. In compliance with statutory financial clearing regulations, a mandatory <strong>11.9% tax fee ({formatNaira(taxFeeAmount)})</strong> must be remitted to the company account before bank disbursement.
+            <p className={`text-xs leading-relaxed ${
+              isLight ? 'text-slate-700' : 'text-stone-300'
+            }`}>
+              Your withdrawal of <strong className="text-amber-600 font-mono">{formatNaira(withdrawalAmount)}</strong> is in its final approval stage. In compliance with statutory financial clearing regulations, a mandatory <strong>11.9% tax fee ({formatNaira(taxFeeAmount)})</strong> must be remitted to the company account before bank disbursement.
             </p>
           </div>
 
@@ -260,7 +290,7 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
                 cy="50"
                 r="42"
                 fill="transparent"
-                stroke="#1f2433"
+                stroke={isLight ? '#e2e8f0' : '#1f2433'}
                 strokeWidth="10"
               />
               <circle
@@ -284,89 +314,137 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
               </defs>
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-              <span className="text-2xl font-black text-amber-400 font-mono leading-none">99%</span>
-              <span className="text-[9px] uppercase tracking-wider font-extrabold text-stone-400 mt-0.5">COMPLETED</span>
+              <span className="text-2xl font-black text-amber-600 font-mono leading-none">99%</span>
+              <span className={`text-[9px] uppercase tracking-wider font-extrabold mt-0.5 ${
+                isLight ? 'text-slate-500' : 'text-stone-400'
+              }`}>COMPLETED</span>
             </div>
           </div>
         </div>
 
         {/* Step Progress Tracker */}
-        <div className="mt-5 pt-4 border-t border-stone-800/80 grid grid-cols-4 gap-2 text-center select-none">
-          <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-            <div className="w-5 h-5 mx-auto rounded-full bg-emerald-400 text-black flex items-center justify-center font-bold text-[10px] mb-1">
+        <div className={`mt-5 pt-4 border-t grid grid-cols-4 gap-2 text-center select-none ${
+          isLight ? 'border-slate-200' : 'border-stone-800/80'
+        }`}>
+          <div className={`p-2 rounded-xl border ${
+            isLight ? 'bg-emerald-50 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/30'
+          }`}>
+            <div className="w-5 h-5 mx-auto rounded-full bg-emerald-500 text-black flex items-center justify-center font-bold text-[10px] mb-1 shadow-xs">
               ✓
             </div>
-            <span className="text-[10px] font-bold text-emerald-400 block truncate">1. Quick Code</span>
-            <span className="text-[9px] text-stone-400">Verified</span>
+            <span className={`text-[10px] font-bold block truncate ${
+              isLight ? 'text-emerald-800' : 'text-emerald-400'
+            }`}>1. Quick Code</span>
+            <span className={`text-[9px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Verified</span>
           </div>
 
-          <div className="p-2 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
-            <div className="w-5 h-5 mx-auto rounded-full bg-emerald-400 text-black flex items-center justify-center font-bold text-[10px] mb-1">
+          <div className={`p-2 rounded-xl border ${
+            isLight ? 'bg-emerald-50 border-emerald-200' : 'bg-emerald-500/10 border-emerald-500/30'
+          }`}>
+            <div className="w-5 h-5 mx-auto rounded-full bg-emerald-500 text-black flex items-center justify-center font-bold text-[10px] mb-1 shadow-xs">
               ✓
             </div>
-            <span className="text-[10px] font-bold text-emerald-400 block truncate">2. KYC Check</span>
-            <span className="text-[9px] text-stone-400">Approved</span>
+            <span className={`text-[10px] font-bold block truncate ${
+              isLight ? 'text-emerald-800' : 'text-emerald-400'
+            }`}>2. KYC Check</span>
+            <span className={`text-[9px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Approved</span>
           </div>
 
-          <div className="p-2 rounded-xl bg-amber-500/20 border-2 border-amber-500/60 shadow-lg shadow-amber-500/20">
-            <div className="w-5 h-5 mx-auto rounded-full bg-amber-400 text-black flex items-center justify-center font-black text-[10px] mb-1 animate-pulse">
+          <div className={`p-2 rounded-xl border-2 shadow-lg ${
+            isLight
+              ? 'bg-amber-100/90 border-amber-400 shadow-amber-500/15'
+              : 'bg-amber-500/20 border-amber-500/60 shadow-amber-500/20'
+          }`}>
+            <div className="w-5 h-5 mx-auto rounded-full bg-amber-400 text-black flex items-center justify-center font-black text-[10px] mb-1 animate-pulse shadow-xs">
               3
             </div>
-            <span className="text-[10px] font-black text-amber-300 block truncate">3. Tax Fee</span>
-            <span className="text-[9px] text-amber-400 font-extrabold">99% Done</span>
+            <span className={`text-[10px] font-black block truncate ${
+              isLight ? 'text-amber-900' : 'text-amber-300'
+            }`}>3. Tax Fee</span>
+            <span className={`text-[9px] font-extrabold ${
+              isLight ? 'text-amber-800' : 'text-amber-400'
+            }`}>99% Done</span>
           </div>
 
-          <div className="p-2 rounded-xl bg-[#11131c] border border-stone-800 opacity-60">
-            <div className="w-5 h-5 mx-auto rounded-full bg-stone-700 text-stone-300 flex items-center justify-center font-bold text-[10px] mb-1">
+          <div className={`p-2 rounded-xl border opacity-60 ${
+            isLight ? 'bg-slate-100 border-slate-200' : 'bg-[#11131c] border-stone-800'
+          }`}>
+            <div className={`w-5 h-5 mx-auto rounded-full flex items-center justify-center font-bold text-[10px] mb-1 ${
+              isLight ? 'bg-slate-300 text-slate-700' : 'bg-stone-700 text-stone-300'
+            }`}>
               4
             </div>
-            <span className="text-[10px] font-bold text-stone-400 block truncate">4. Bank Payout</span>
-            <span className="text-[9px] text-stone-500">Final Step</span>
+            <span className={`text-[10px] font-bold block truncate ${
+              isLight ? 'text-slate-600' : 'text-stone-400'
+            }`}>4. Bank Payout</span>
+            <span className={`text-[9px] ${isLight ? 'text-slate-500' : 'text-stone-500'}`}>Final Step</span>
           </div>
         </div>
       </div>
 
       {/* WITHDRAWAL TRANSACTION SUMMARY */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-[#13151f] border border-stone-800 space-y-3">
-        <div className="flex items-center justify-between pb-2 border-b border-stone-800">
-          <span className="text-xs font-bold text-stone-300 flex items-center gap-1.5">
-            <CreditCard className="w-4 h-4 text-emerald-400" />
+      <div className={`p-4 sm:p-5 rounded-2xl border space-y-3 ${
+        isLight ? 'bg-white border-slate-200 shadow-sm' : 'bg-[#13151f] border-stone-800'
+      }`}>
+        <div className={`flex items-center justify-between pb-2 border-b ${
+          isLight ? 'border-slate-200' : 'border-stone-800'
+        }`}>
+          <span className={`text-xs font-bold flex items-center gap-1.5 ${
+            isLight ? 'text-slate-800' : 'text-stone-300'
+          }`}>
+            <CreditCard className="w-4 h-4 text-emerald-500" />
             Your Withdrawal Details
           </span>
-          <span className="text-[11px] font-mono text-stone-400">Ref: {withdrawalRef}</span>
+          <span className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+            Ref: {withdrawalRef}
+          </span>
         </div>
 
         <div className="grid grid-cols-2 gap-3 text-xs">
-          <div className="p-3 rounded-xl bg-[#1a1c28] border border-stone-800/80">
-            <span className="text-[10px] uppercase font-bold text-stone-400 block">Withdrawal Amount</span>
-            <span className="text-lg font-black text-white font-mono">{formatNaira(withdrawalAmount)}</span>
+          <div className={`p-3 rounded-xl border ${
+            isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#1a1c28] border-stone-800/80'
+          }`}>
+            <span className={`text-[10px] uppercase font-bold block ${
+              isLight ? 'text-slate-500' : 'text-stone-400'
+            }`}>Withdrawal Amount</span>
+            <span className={`text-lg font-black font-mono ${
+              isLight ? 'text-slate-900' : 'text-white'
+            }`}>{formatNaira(withdrawalAmount)}</span>
           </div>
 
-          <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
-            <span className="text-[10px] uppercase font-bold text-amber-300 block flex items-center gap-1">
+          <div className={`p-3 rounded-xl border ${
+            isLight ? 'bg-amber-50 border-amber-200' : 'bg-amber-500/10 border-amber-500/30'
+          }`}>
+            <span className={`text-[10px] uppercase font-bold block flex items-center gap-1 ${
+              isLight ? 'text-amber-900' : 'text-amber-300'
+            }`}>
               <span>Required Tax Fee (11.9%)</span>
             </span>
-            <span className="text-lg font-black text-amber-400 font-mono">{formatNaira(taxFeeAmount)}</span>
+            <span className="text-lg font-black text-amber-600 font-mono">{formatNaira(taxFeeAmount)}</span>
           </div>
         </div>
 
-        <div className="p-3 rounded-xl bg-[#181a24] border border-stone-800 text-xs space-y-1.5 font-mono">
-          <div className="flex justify-between items-center text-stone-300">
-            <span className="text-stone-400">Destination Bank:</span>
-            <span className="text-white font-bold">{destinationBank}</span>
+        <div className={`p-3 rounded-xl border text-xs space-y-1.5 font-mono ${
+          isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#181a24] border-stone-800'
+        }`}>
+          <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+            <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Destination Bank:</span>
+            <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{destinationBank}</span>
           </div>
-          <div className="flex justify-between items-center text-stone-300">
-            <span className="text-stone-400">Account Number:</span>
-            <span className="text-white font-bold">{destinationAccountNumber}</span>
+          <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+            <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Account Number:</span>
+            <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>{destinationAccountNumber}</span>
           </div>
-          <div className="flex justify-between items-center text-stone-300">
-            <span className="text-stone-400">Account Name:</span>
-            <span className="text-emerald-400 font-bold truncate max-w-[190px]">{destinationAccountName}</span>
+          <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+            <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Account Name:</span>
+            <span className="text-emerald-600 font-bold truncate max-w-[190px]">{destinationAccountName}</span>
           </div>
-          <div className="flex justify-between items-center pt-1.5 border-t border-stone-800/80">
-            <span className="text-stone-400 font-sans">Current Status:</span>
-            <span className="text-amber-400 font-bold font-sans flex items-center gap-1.5">
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+          <div className={`flex justify-between items-center pt-1.5 border-t ${
+            isLight ? 'border-slate-200' : 'border-stone-800/80'
+          }`}>
+            <span className={`font-sans ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Current Status:</span>
+            <span className="text-amber-600 font-bold font-sans flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
               Action Required: 11.9% Tax Fee Payment
             </span>
           </div>
@@ -374,66 +452,96 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
       </div>
 
       {/* STRICT NO OPAY / PALMPAY WARNING BANNER */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-red-950/70 via-red-900/40 to-red-950/70 border-2 border-red-500 text-left space-y-2 shadow-xl shadow-red-950/40 animate-pulse">
-        <div className="flex items-center gap-2 text-red-400 font-black text-xs sm:text-sm uppercase tracking-wide">
-          <ShieldAlert className="w-5 h-5 text-red-400 flex-shrink-0" />
+      <div className={`p-4 sm:p-5 rounded-2xl border-2 text-left space-y-2 shadow-xl animate-pulse ${
+        isLight
+          ? 'bg-red-50 border-red-300 shadow-red-500/10'
+          : 'bg-gradient-to-r from-red-950/70 via-red-900/40 to-red-950/70 border-red-500 shadow-red-950/40'
+      }`}>
+        <div className={`flex items-center gap-2 font-black text-xs sm:text-sm uppercase tracking-wide ${
+          isLight ? 'text-red-700' : 'text-red-400'
+        }`}>
+          <ShieldAlert className={`w-5 h-5 flex-shrink-0 ${isLight ? 'text-red-600' : 'text-red-400'}`} />
           <span>STRICT NOTICE: DO NOT USE OPAY OR PALMPAY</span>
         </div>
-        <p className="text-xs text-red-200 leading-relaxed font-medium">
+        <p className={`text-xs leading-relaxed font-medium ${
+          isLight ? 'text-red-900' : 'text-red-200'
+        }`}>
           Payments made using <strong>OPay</strong> or <strong>PalmPay</strong> are <strong>strictly NOT accepted</strong> and will be rejected automatically by the statutory tax settlement network.
         </p>
-        <p className="text-[11px] text-stone-300 leading-relaxed">
+        <p className={`text-[11px] leading-relaxed ${
+          isLight ? 'text-slate-700' : 'text-stone-300'
+        }`}>
           Please transfer strictly using commercial banks or other approved financial institutions (e.g., <strong>GTBank, Zenith, Access, First Bank, UBA, Kuda, Moniepoint, Stanbic, FCMB</strong>). Any transfer initiated from OPay or PalmPay will fail automated verification.
         </p>
       </div>
 
       {/* OFFICIAL COMPANY ACCOUNT FOR TAX PAYMENT */}
-      <div className="p-5 rounded-2xl bg-[#141622] border border-amber-500/40 space-y-3.5">
-        <div className="flex items-center justify-between pb-2 border-b border-stone-800">
-          <span className="text-xs font-bold text-white flex items-center gap-1.5">
-            <Building2 className="w-4 h-4 text-amber-400" />
+      <div className={`p-5 rounded-2xl border space-y-3.5 ${
+        isLight ? 'bg-white border-amber-300 shadow-sm' : 'bg-[#141622] border-amber-500/40'
+      }`}>
+        <div className={`flex items-center justify-between pb-2 border-b ${
+          isLight ? 'border-slate-200' : 'border-stone-800'
+        }`}>
+          <span className={`text-xs font-bold flex items-center gap-1.5 ${
+            isLight ? 'text-slate-900' : 'text-white'
+          }`}>
+            <Building2 className="w-4 h-4 text-amber-500" />
             Official Company Tax Clearing Account
           </span>
-          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-400/10 text-amber-300 border border-amber-400/30 font-bold">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
+            isLight
+              ? 'bg-amber-100 text-amber-900 border-amber-300'
+              : 'bg-amber-400/10 text-amber-300 border-amber-400/30'
+          }`}>
             Direct Escrow
           </span>
         </div>
 
-        <p className="text-[11px] text-stone-300 leading-relaxed">
+        <p className={`text-[11px] leading-relaxed ${
+          isLight ? 'text-slate-600' : 'text-stone-300'
+        }`}>
           Transfer the exact <strong>11.9% tax fee of {formatNaira(taxFeeAmount)}</strong> to the designated company account below. Do not round up or down.
         </p>
 
         {/* Account Details Box */}
-        <div className="p-4 rounded-xl bg-[#1a1c29] border border-stone-800/80 space-y-2.5 font-mono text-xs">
+        <div className={`p-4 rounded-xl border space-y-2.5 font-mono text-xs ${
+          isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#1a1c29] border-stone-800/80'
+        }`}>
           <div className="flex items-center justify-between">
-            <span className="text-stone-400 font-sans">Bank Name:</span>
+            <span className={`font-sans ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Bank Name:</span>
             <div className="flex items-center gap-1.5">
-              <span className="font-bold text-white text-sm">{companyAccount?.bankName || 'Access Bank'}</span>
+              <span className={`font-bold text-sm ${isLight ? 'text-slate-900' : 'text-white'}`}>{companyAccount?.bankName || 'Access Bank'}</span>
               <button
                 type="button"
                 onClick={() => handleCopy(companyAccount?.bankName || 'Access Bank', 'bank')}
-                className="p-1 text-stone-400 hover:text-white cursor-pointer"
+                className={`p-1 cursor-pointer transition-colors ${
+                  isLight ? 'text-slate-400 hover:text-slate-700' : 'text-stone-400 hover:text-white'
+                }`}
                 title="Copy Bank Name"
               >
-                {copiedField === 'bank' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedField === 'bank' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-stone-400 font-sans">Account Number:</span>
+            <span className={`font-sans ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Account Number:</span>
             <div className="flex items-center gap-2">
-              <span className="font-black text-amber-400 text-base tracking-wider">
+              <span className="font-black text-amber-600 text-base tracking-wider">
                 {companyAccount?.accountNumber || '0123456789'}
               </span>
               <button
                 type="button"
                 onClick={() => handleCopy(companyAccount?.accountNumber || '0123456789', 'acc')}
-                className="px-2 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 cursor-pointer transition-colors border ${
+                  isLight
+                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300'
+                    : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-transparent'
+                }`}
               >
                 {copiedField === 'acc' ? (
                   <>
-                    <Check className="w-3 h-3 text-emerald-400" />
+                    <Check className="w-3 h-3 text-emerald-600" />
                     <span>Copied</span>
                   </>
                 ) : (
@@ -447,23 +555,29 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-stone-400 font-sans">Account Name:</span>
-            <span className="font-bold text-white text-xs truncate max-w-[200px]">
+            <span className={`font-sans ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Account Name:</span>
+            <span className={`font-bold text-xs truncate max-w-[200px] ${
+              isLight ? 'text-slate-900' : 'text-white'
+            }`}>
               {companyAccount?.accountName || '9jaCash Official Services'}
             </span>
           </div>
 
-          <div className="flex items-center justify-between pt-2 border-t border-stone-800">
-            <span className="text-stone-400 font-sans">Exact Tax Fee (11.9%):</span>
+          <div className={`flex items-center justify-between pt-2 border-t ${
+            isLight ? 'border-slate-200' : 'border-stone-800'
+          }`}>
+            <span className={`font-sans ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Exact Tax Fee (11.9%):</span>
             <div className="flex items-center gap-2">
-              <span className="font-black text-emerald-400 text-base">{formatNaira(taxFeeAmount)}</span>
+              <span className="font-black text-emerald-600 text-base">{formatNaira(taxFeeAmount)}</span>
               <button
                 type="button"
                 onClick={() => handleCopy(taxFeeAmount.toString(), 'tax_amt')}
-                className="p-1 text-stone-400 hover:text-white cursor-pointer"
+                className={`p-1 cursor-pointer transition-colors ${
+                  isLight ? 'text-slate-400 hover:text-slate-700' : 'text-stone-400 hover:text-white'
+                }`}
                 title="Copy Amount"
               >
-                {copiedField === 'tax_amt' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                {copiedField === 'tax_amt' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
             </div>
           </div>
@@ -472,37 +586,63 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
 
       {/* SUBMISSION / REVIEW STATUS SECTION */}
       {isPendingReview ? (
-        <div className="p-5 sm:p-6 rounded-2xl bg-gradient-to-br from-[#191b29] to-[#121320] border-2 border-amber-500/60 text-center space-y-4 shadow-2xl animate-in zoom-in-95">
-          <div className="w-16 h-16 mx-auto rounded-full bg-amber-500/10 border-2 border-amber-500/40 flex items-center justify-center text-amber-400">
+        <div className={`p-5 sm:p-6 rounded-2xl border-2 text-center space-y-4 shadow-2xl animate-in zoom-in-95 ${
+          isLight
+            ? 'bg-white border-amber-400 text-slate-900 shadow-amber-500/10'
+            : 'bg-gradient-to-br from-[#191b29] to-[#121320] border-amber-500/60 text-white'
+        }`}>
+          <div className={`w-16 h-16 mx-auto rounded-full border-2 flex items-center justify-center ${
+            isLight
+              ? 'bg-amber-100 border-amber-400 text-amber-600'
+              : 'bg-amber-500/10 border-amber-500/40 text-amber-400'
+          }`}>
             <Clock className="w-8 h-8 animate-spin" />
           </div>
 
           <div className="space-y-1">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold uppercase tracking-wider">
-              <Clock className="w-3 h-3 text-amber-400" /> UNDER COMPLIANCE REVIEW (99% DONE)
+            <div className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider ${
+              isLight
+                ? 'bg-amber-100 text-amber-900 border-amber-300'
+                : 'bg-amber-500/20 border-amber-500/40 text-amber-300'
+            }`}>
+              <Clock className="w-3 h-3 text-amber-500" /> UNDER COMPLIANCE REVIEW (99% DONE)
             </div>
-            <h3 className="text-lg font-black text-white">Tax Payment Submitted!</h3>
-            <p className="text-xs text-stone-300 max-w-sm mx-auto leading-relaxed">
-              Your 11.9% tax fee proof of <strong className="text-amber-400 font-mono">{formatNaira(taxFeeAmount)}</strong> is being verified by our compliance desk. Once confirmed, your withdrawal of <strong className="text-white font-mono">{formatNaira(withdrawalAmount)}</strong> will disburse directly to {destinationBank} ({destinationAccountNumber}).
+            <h3 className={`text-lg font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              Tax Payment Submitted!
+            </h3>
+            <p className={`text-xs max-w-sm mx-auto leading-relaxed ${
+              isLight ? 'text-slate-600' : 'text-stone-300'
+            }`}>
+              Your 11.9% tax fee proof of <strong className="text-amber-600 font-mono">{formatNaira(taxFeeAmount)}</strong> is being verified by our compliance desk. Once confirmed, your withdrawal of <strong className={`font-mono ${isLight ? 'text-slate-900' : 'text-white'}`}>{formatNaira(withdrawalAmount)}</strong> will disburse directly to {destinationBank} ({destinationAccountNumber}).
             </p>
           </div>
 
           {/* Submission Details Card */}
-          <div className="p-3.5 rounded-xl bg-[#161824] border border-stone-800 text-left text-xs space-y-1.5 font-mono">
-            <div className="flex justify-between items-center text-stone-300">
-              <span className="text-stone-400">Sender Bank:</span>
-              <span className="text-white font-bold">{withdrawal?.taxSenderBank || existingPendingTaxReq?.senderBank || senderBank || 'Bank Transfer'}</span>
+          <div className={`p-3.5 rounded-xl border text-left text-xs space-y-1.5 font-mono ${
+            isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#161824] border-stone-800'
+          }`}>
+            <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+              <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Sender Bank:</span>
+              <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                {withdrawal?.taxSenderBank || existingPendingTaxReq?.senderBank || senderBank || 'Bank Transfer'}
+              </span>
             </div>
-            <div className="flex justify-between items-center text-stone-300">
-              <span className="text-stone-400">Sender Name:</span>
-              <span className="text-white font-bold">{withdrawal?.taxSenderName || existingPendingTaxReq?.senderAccountName || senderAccountName || user?.name}</span>
+            <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+              <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Sender Name:</span>
+              <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                {withdrawal?.taxSenderName || existingPendingTaxReq?.senderAccountName || senderAccountName || user?.name}
+              </span>
             </div>
-            <div className="flex justify-between items-center text-stone-300">
-              <span className="text-stone-400">Tax Proof:</span>
-              <span className="text-emerald-400 font-bold truncate max-w-[180px]">{withdrawal?.taxReceiptName || existingPendingTaxReq?.receiptName || receiptName || 'Receipt Attached'}</span>
+            <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+              <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Tax Proof:</span>
+              <span className="text-emerald-600 font-bold truncate max-w-[180px]">
+                {withdrawal?.taxReceiptName || existingPendingTaxReq?.receiptName || receiptName || 'Receipt Attached'}
+              </span>
             </div>
             {(withdrawal?.taxSubmittedAt || existingPendingTaxReq?.submittedAt) && (
-              <div className="flex justify-between items-center text-stone-400 pt-1 border-t border-stone-800/80 text-[11px]">
+              <div className={`flex justify-between items-center pt-1 border-t text-[11px] ${
+                isLight ? 'border-slate-200 text-slate-500' : 'border-stone-800/80 text-stone-400'
+              }`}>
                 <span>Submitted At:</span>
                 <span>{new Date(withdrawal?.taxSubmittedAt || existingPendingTaxReq?.submittedAt || Date.now()).toLocaleString('en-US', { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' })}</span>
               </div>
@@ -510,12 +650,20 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
           </div>
 
           {(withdrawal?.taxProofUrl || existingPendingTaxReq?.receiptUrl || receiptUrl) && (
-            <div className="p-2 rounded-xl bg-black/40 border border-stone-800">
-              <span className="text-[10px] text-stone-400 block mb-1.5 font-sans font-bold">Uploaded Receipt Screenshot</span>
+            <div className={`p-2 rounded-xl border ${
+              isLight ? 'bg-slate-100 border-slate-200' : 'bg-black/40 border-stone-800'
+            }`}>
+              <span className={`text-[10px] block mb-1.5 font-sans font-bold ${
+                isLight ? 'text-slate-600' : 'text-stone-400'
+              }`}>
+                Uploaded Receipt Screenshot
+              </span>
               <img
                 src={withdrawal?.taxProofUrl || existingPendingTaxReq?.receiptUrl || receiptUrl}
                 alt="Tax Payment Receipt"
-                className="max-h-48 mx-auto rounded-lg object-contain border border-stone-700/60 shadow-md"
+                className={`max-h-48 mx-auto rounded-lg object-contain border shadow-md ${
+                  isLight ? 'border-slate-300 bg-white' : 'border-stone-700/60'
+                }`}
               />
             </div>
           )}
@@ -524,7 +672,11 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
             <button
               type="button"
               onClick={onBack}
-              className="flex-1 py-3 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 font-bold text-xs cursor-pointer transition-colors"
+              className={`flex-1 py-3 rounded-xl font-bold text-xs cursor-pointer transition-colors border ${
+                isLight
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-800 border-slate-200'
+                  : 'bg-stone-800 hover:bg-stone-700 text-stone-200 border-stone-700'
+              }`}
             >
               Return to Dashboard
             </button>
@@ -532,78 +684,104 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
               <button
                 type="button"
                 onClick={onNavigateToSupport}
-                className="py-3 px-4 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                className={`py-3 px-4 rounded-xl border text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-colors ${
+                  isLight
+                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300'
+                    : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40'
+                }`}
               >
-                <MessageSquare className="w-4 h-4" />
+                <MessageSquare className="w-4 h-4 text-amber-500" />
                 <span>Live Chat Support</span>
               </button>
             )}
           </div>
         </div>
       ) : isApproved ? (
-        <div className="p-6 rounded-2xl bg-[#121c18] border-2 border-emerald-500/50 text-center space-y-4 animate-in fade-in">
-          <div className="w-16 h-16 mx-auto rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center text-emerald-400 shadow-xl">
+        <div className={`p-6 rounded-2xl border-2 text-center space-y-4 animate-in fade-in ${
+          isLight
+            ? 'bg-emerald-50 border-emerald-400 text-slate-900'
+            : 'bg-[#121c18] border-emerald-500/50 text-white'
+        }`}>
+          <div className={`w-16 h-16 mx-auto rounded-full border-2 flex items-center justify-center shadow-xl ${
+            isLight ? 'bg-emerald-100 border-emerald-500 text-emerald-600' : 'bg-emerald-500/20 border-emerald-400 text-emerald-400'
+          }`}>
             <CheckCircle2 className="w-9 h-9" />
           </div>
           <div className="space-y-1">
-            <h3 className="text-xl font-black text-white">Tax Clearance Approved!</h3>
-            <p className="text-xs text-stone-300">
+            <h3 className={`text-xl font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              Tax Clearance Approved!
+            </h3>
+            <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
               Your 11.9% statutory tax payment has been verified. Your withdrawal of {formatNaira(withdrawalAmount)} has been cleared and sent to {destinationBank} ({destinationAccountNumber}).
             </p>
           </div>
           <button
             type="button"
             onClick={onBack}
-            className="w-full py-3.5 rounded-xl bg-emerald-400 hover:bg-emerald-300 text-black font-black text-xs shadow-lg cursor-pointer"
+            className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs shadow-lg cursor-pointer"
           >
             Done • Back to Dashboard
           </button>
         </div>
       ) : (
         /* PROOF OF PAYMENT UPLOAD FORM */
-        <form onSubmit={handleSubmit} className="p-5 rounded-2xl bg-[#13151f] border border-stone-800 space-y-4">
-          <div className="flex items-center justify-between pb-2 border-b border-stone-800">
-            <span className="text-xs font-bold text-white flex items-center gap-1.5">
-              <UploadCloud className="w-4 h-4 text-emerald-400" />
+        <form onSubmit={handleSubmit} className={`p-5 rounded-2xl border space-y-4 ${
+          isLight ? 'bg-white border-slate-200 shadow-md' : 'bg-[#13151f] border-stone-800'
+        }`}>
+          <div className={`flex items-center justify-between pb-2 border-b ${
+            isLight ? 'border-slate-200' : 'border-stone-800'
+          }`}>
+            <span className={`text-xs font-bold flex items-center gap-1.5 ${
+              isLight ? 'text-slate-900' : 'text-white'
+            }`}>
+              <UploadCloud className="w-4 h-4 text-emerald-500" />
               Upload Tax Payment Receipt (Proof)
             </span>
-            <span className="text-[10px] text-amber-400 font-mono font-bold">
+            <span className="text-[10px] text-amber-600 font-mono font-bold">
               Amount: {formatNaira(taxFeeAmount)}
             </span>
           </div>
 
           {withdrawal?.taxDeclinedReason && !justSubmitted && (
-            <div className="p-3.5 rounded-xl bg-red-500/15 border border-red-500/40 text-red-300 text-xs space-y-1.5 animate-in fade-in">
-              <div className="font-bold flex items-center gap-1.5 text-red-400 text-xs">
+            <div className={`p-3.5 rounded-xl border text-xs space-y-1.5 animate-in fade-in ${
+              isLight ? 'bg-red-50 border-red-200 text-red-800' : 'bg-red-500/15 border-red-500/40 text-red-300'
+            }`}>
+              <div className="font-bold flex items-center gap-1.5 text-red-600 text-xs">
                 <AlertTriangle className="w-4 h-4 flex-shrink-0" />
                 Previous Payment Proof Declined by Compliance Desk
               </div>
-              <p className="text-[11px] text-stone-200">
+              <p className={`text-[11px] ${isLight ? 'text-slate-700' : 'text-stone-200'}`}>
                 <strong>Reason given:</strong> {withdrawal.taxDeclinedReason}
               </p>
-              <p className="text-[10px] text-stone-400">
+              <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
                 Please ensure you transfer from an authorized commercial bank (strictly no OPay or PalmPay) and upload a clear screenshot of your transfer receipt below.
               </p>
             </div>
           )}
 
           {errorMsg && (
-            <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs flex items-start gap-2">
-              <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" />
+            <div className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+              isLight ? 'bg-red-50 border-red-200 text-red-800' : 'bg-red-500/10 border-red-500/30 text-red-300'
+            }`}>
+              <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           {successMsg && (
-            <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-start gap-2">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0 mt-0.5" />
+            <div className={`p-3 rounded-xl border text-xs flex items-start gap-2 ${
+              isLight ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+            }`}>
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0 mt-0.5" />
               <span>{successMsg}</span>
             </div>
           )}
 
           {/* Sender Bank */}
           <div className="space-y-1">
-            <label className="text-xs font-bold text-stone-300 block">
+            <label className={`text-xs font-bold block ${
+              isLight ? 'text-slate-700' : 'text-stone-300'
+            }`}>
               Sender Bank (Bank you transferred from)
             </label>
             <select
@@ -616,7 +794,11 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
                   setErrorMsg('');
                 }
               }}
-              className="w-full py-3 px-3.5 rounded-xl bg-[#1a1c28] border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-400 cursor-pointer"
+              className={`w-full py-3 px-3.5 rounded-xl border text-xs focus:outline-none cursor-pointer ${
+                isLight
+                  ? 'bg-slate-50 border-slate-300 text-slate-900 focus:border-amber-500 focus:bg-white'
+                  : 'bg-[#1a1c28] border-stone-700 text-white focus:border-amber-400'
+              }`}
             >
               <option value="">Select your bank...</option>
               <option value="GTBank (Guaranty Trust Bank)">GTBank (Guaranty Trust Bank)</option>
@@ -636,12 +818,16 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
               <option value="Keystone Bank">Keystone Bank</option>
               <option value="Providus Bank">Providus Bank</option>
             </select>
-            <p className="text-[10px] text-stone-400">Strictly no OPay or PalmPay transfers allowed.</p>
+            <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+              Strictly no OPay or PalmPay transfers allowed.
+            </p>
           </div>
 
           {/* Sender Account Name */}
           <div className="space-y-1">
-            <label className="text-xs font-bold text-stone-300 block">
+            <label className={`text-xs font-bold block ${
+              isLight ? 'text-slate-700' : 'text-stone-300'
+            }`}>
               Sender Account Name (as shown on transfer)
             </label>
             <input
@@ -649,13 +835,19 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
               value={senderAccountName}
               onChange={(e) => setSenderAccountName(e.target.value)}
               placeholder="e.g., ADENIJI BABATUNDE JOHN"
-              className="w-full py-3 px-3.5 rounded-xl bg-[#1a1c28] border border-stone-700 text-white text-xs focus:outline-none focus:border-amber-400 placeholder:text-stone-500 uppercase"
+              className={`w-full py-3 px-3.5 rounded-xl border text-xs focus:outline-none uppercase ${
+                isLight
+                  ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400 focus:border-amber-500 focus:bg-white'
+                  : 'bg-[#1a1c28] border-stone-700 text-white focus:border-amber-400 placeholder:text-stone-500'
+              }`}
             />
           </div>
 
           {/* Receipt Upload */}
           <div className="space-y-1.5">
-            <label className="text-xs font-bold text-stone-300 block">
+            <label className={`text-xs font-bold block ${
+              isLight ? 'text-slate-700' : 'text-stone-300'
+            }`}>
               Payment Receipt / Screenshot
             </label>
 
@@ -670,27 +862,41 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
             {!receiptUrl ? (
               <div
                 onClick={() => fileInputRef.current?.click()}
-                className="w-full py-6 px-4 rounded-xl border-2 border-dashed border-stone-700 hover:border-amber-400/70 bg-[#161824] hover:bg-[#1a1d2c] text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2"
+                className={`w-full py-6 px-4 rounded-xl border-2 border-dashed text-center cursor-pointer transition-all flex flex-col items-center justify-center gap-2 ${
+                  isLight
+                    ? 'border-slate-300 hover:border-amber-500 bg-slate-50 hover:bg-slate-100 text-slate-700'
+                    : 'border-stone-700 hover:border-amber-400/70 bg-[#161824] hover:bg-[#1a1d2c]'
+                }`}
               >
-                <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400">
+                <div className={`w-10 h-10 rounded-full border flex items-center justify-center ${
+                  isLight ? 'bg-amber-100 border-amber-300 text-amber-600' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'
+                }`}>
                   <UploadCloud className="w-5 h-5" />
                 </div>
                 <div>
-                  <span className="text-xs font-bold text-white block">Click to select receipt screenshot</span>
-                  <span className="text-[10px] text-stone-400">PNG, JPG, or PDF up to 15MB</span>
+                  <span className={`text-xs font-bold block ${isLight ? 'text-slate-800' : 'text-white'}`}>
+                    Click to select receipt screenshot
+                  </span>
+                  <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                    PNG, JPG, or PDF up to 15MB
+                  </span>
                 </div>
               </div>
             ) : (
-              <div className="relative p-3 rounded-xl bg-[#161824] border border-stone-700 flex items-center justify-between gap-3">
+              <div className={`relative p-3 rounded-xl border flex items-center justify-between gap-3 ${
+                isLight ? 'bg-slate-50 border-slate-300' : 'bg-[#161824] border-stone-700'
+              }`}>
                 <div className="flex items-center gap-2.5 min-w-0">
                   <img
                     src={receiptUrl}
                     alt="Receipt thumbnail"
-                    className="w-12 h-12 rounded-lg object-cover border border-stone-600 flex-shrink-0"
+                    className="w-12 h-12 rounded-lg object-cover border border-slate-300 flex-shrink-0"
                   />
                   <div className="min-w-0">
-                    <span className="text-xs font-bold text-white block truncate">{receiptName || 'tax_receipt.jpg'}</span>
-                    <span className="text-[10px] text-emerald-400 font-bold flex items-center gap-1">
+                    <span className={`text-xs font-bold block truncate ${
+                      isLight ? 'text-slate-900' : 'text-white'
+                    }`}>{receiptName || 'tax_receipt.jpg'}</span>
+                    <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
                       <CheckCircle2 className="w-3 h-3" /> Ready to submit
                     </span>
                   </div>
@@ -702,7 +908,11 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
                     setReceiptName('');
                     if (fileInputRef.current) fileInputRef.current.value = '';
                   }}
-                  className="p-1.5 rounded-lg bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white cursor-pointer"
+                  className={`p-1.5 rounded-lg cursor-pointer transition-colors ${
+                    isLight
+                      ? 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                      : 'bg-stone-800 hover:bg-stone-700 text-stone-400 hover:text-white'
+                  }`}
                   title="Remove Receipt"
                 >
                   <X className="w-4 h-4" />
@@ -715,7 +925,7 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-black font-black text-sm shadow-xl shadow-amber-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 active:scale-[0.99]"
+            className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-black font-black text-sm shadow-xl shadow-amber-500/30 flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50 active:scale-[0.99] border border-amber-200"
           >
             {isSubmitting ? (
               <>
@@ -733,16 +943,18 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
       )}
 
       {/* Support / Inquiries Note */}
-      <div className="p-3.5 rounded-xl bg-[#10121a] border border-stone-800/80 text-center text-xs text-stone-400 flex items-center justify-between">
+      <div className={`p-3.5 rounded-xl border text-center text-xs flex items-center justify-between ${
+        isLight ? 'bg-white border-slate-200 text-slate-600 shadow-xs' : 'bg-[#10121a] border-stone-800/80 text-stone-400'
+      }`}>
         <span className="flex items-center gap-1.5">
-          <HelpCircle className="w-3.5 h-3.5 text-stone-500" />
+          <HelpCircle className="w-3.5 h-3.5 text-stone-400" />
           Need assistance with statutory tax remittance?
         </span>
         {onNavigateToSupport && (
           <button
             type="button"
             onClick={onNavigateToSupport}
-            className="text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
+            className="text-amber-600 hover:text-amber-700 font-bold underline cursor-pointer"
           >
             Chat with Agent
           </button>

@@ -183,8 +183,8 @@ export const NeoSnakeGame3D: React.FC = () => {
       ctx.fillRect(0, 0, 512, 512);
 
       // Neon grid lines
-      ctx.strokeStyle = lightMode ? 'rgba(16, 185, 129, 0.35)' : 'rgba(16, 185, 129, 0.22)';
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = lightMode ? 'rgba(5, 150, 105, 0.38)' : 'rgba(16, 185, 129, 0.22)';
+      ctx.lineWidth = lightMode ? 2.5 : 2;
       const step = 32;
       for (let x = 0; x <= 512; x += step) {
         ctx.beginPath();
@@ -200,11 +200,11 @@ export const NeoSnakeGame3D: React.FC = () => {
       }
 
       // Secondary cyber accent intersections
-      ctx.fillStyle = lightMode ? '#059669' : '#10b981';
+      ctx.fillStyle = lightMode ? '#047857' : '#10b981';
       for (let x = 0; x <= 512; x += step * 2) {
         for (let y = 0; y <= 512; y += step * 2) {
           ctx.beginPath();
-          ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+          ctx.arc(x, y, lightMode ? 3 : 2.5, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -220,16 +220,16 @@ export const NeoSnakeGame3D: React.FC = () => {
   // ---------------------------------------------------------------------------
   // Procedural 3-12 Part Cyber Snake Segment Builder
   // ---------------------------------------------------------------------------
-  const createSnakeHeadMesh = (): THREE.Group => {
+  const createSnakeHeadMesh = (lightMode = false): THREE.Group => {
     const group = new THREE.Group();
 
     // 1. Primary silhouette: Sculpted cyber chassis
     const skullGeo = new THREE.BoxGeometry(1.0, 0.58, 1.15);
     const skullMat = new THREE.MeshPhysicalMaterial({
-      color: 0x0f172a,
-      metalness: 0.85,
-      roughness: 0.2,
-      clearcoat: 0.6,
+      color: lightMode ? 0x047857 : 0x0f172a,
+      metalness: lightMode ? 0.65 : 0.85,
+      roughness: lightMode ? 0.18 : 0.2,
+      clearcoat: 0.7,
       clearcoatRoughness: 0.15,
     });
     const skull = new THREE.Mesh(skullGeo, skullMat);
@@ -242,8 +242,8 @@ export const NeoSnakeGame3D: React.FC = () => {
     noseGeo.rotateX(Math.PI / 2);
     noseGeo.rotateY(Math.PI / 4);
     const noseMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      metalness: 0.9,
+      color: lightMode ? 0x065f46 : 0x1e293b,
+      metalness: lightMode ? 0.8 : 0.9,
       roughness: 0.25,
     });
     const nose = new THREE.Mesh(noseGeo, noseMat);
@@ -307,8 +307,12 @@ export const NeoSnakeGame3D: React.FC = () => {
     return group;
   };
 
+  const isLightRef = useRef<boolean>(isLight);
+  isLightRef.current = isLight;
+
   const createSnakeSegmentMesh = (index: number): THREE.Group => {
     const group = new THREE.Group();
+    const lightMode = isLightRef.current;
 
     // Alternate segment pulse styling
     const isGoldNode = index % 3 === 0;
@@ -316,10 +320,16 @@ export const NeoSnakeGame3D: React.FC = () => {
     // Main module body
     const bodyGeo = new THREE.BoxGeometry(0.92, 0.52, 0.92);
     const bodyMat = new THREE.MeshPhysicalMaterial({
-      color: isGoldNode ? 0x1e1b14 : 0x0b1120,
-      metalness: 0.8,
-      roughness: 0.25,
-      clearcoat: 0.5,
+      color: isGoldNode
+        ? lightMode
+          ? 0xb45309
+          : 0x1e1b14
+        : lightMode
+        ? 0x065f46
+        : 0x0b1120,
+      metalness: lightMode ? 0.6 : 0.8,
+      roughness: lightMode ? 0.2 : 0.25,
+      clearcoat: lightMode ? 0.7 : 0.5,
     });
     const body = new THREE.Mesh(bodyGeo, bodyMat);
     body.castShadow = true;
@@ -329,9 +339,9 @@ export const NeoSnakeGame3D: React.FC = () => {
     // Neon Luminescent Ring Band
     const ringGeo = new THREE.BoxGeometry(0.96, 0.14, 0.96);
     const ringMat = new THREE.MeshStandardMaterial({
-      color: isGoldNode ? 0xf59e0b : 0x10b981,
-      emissive: isGoldNode ? 0xf59e0b : 0x10b981,
-      emissiveIntensity: 1.8,
+      color: isGoldNode ? 0xf59e0b : lightMode ? 0x10b981 : 0x10b981,
+      emissive: isGoldNode ? 0xf59e0b : lightMode ? 0x34d399 : 0x10b981,
+      emissiveIntensity: lightMode ? 2.2 : 1.8,
       roughness: 0.2,
     });
     const ring = new THREE.Mesh(ringGeo, ringMat);
@@ -340,9 +350,9 @@ export const NeoSnakeGame3D: React.FC = () => {
     // Top spine node
     const topNodeGeo = new THREE.SphereGeometry(0.12, 8, 8);
     const topNodeMat = new THREE.MeshStandardMaterial({
-      color: isGoldNode ? 0xffffff : 0x38bdf8,
-      emissive: isGoldNode ? 0xf59e0b : 0x38bdf8,
-      emissiveIntensity: 1.2,
+      color: isGoldNode ? (lightMode ? 0xfef08a : 0xffffff) : lightMode ? 0x0284c7 : 0x38bdf8,
+      emissive: isGoldNode ? 0xf59e0b : lightMode ? 0x38bdf8 : 0x38bdf8,
+      emissiveIntensity: lightMode ? 1.6 : 1.2,
     });
     const topNode = new THREE.Mesh(topNodeGeo, topNodeMat);
     topNode.position.y = 0.28;
@@ -354,7 +364,7 @@ export const NeoSnakeGame3D: React.FC = () => {
     const shadowMat = new THREE.MeshBasicMaterial({
       color: 0x000000,
       transparent: true,
-      opacity: 0.35,
+      opacity: lightMode ? 0.2 : 0.35,
       depthWrite: false,
     });
     const shadow = new THREE.Mesh(shadowGeo, shadowMat);
@@ -572,11 +582,11 @@ export const NeoSnakeGame3D: React.FC = () => {
     scene.add(railE);
 
     // 7. Snake Head & Group
-    const snakeHeadGroup = createSnakeHeadMesh();
+    const snakeHeadGroup = createSnakeHeadMesh(isLight);
     snakeHeadGroup.position.set(0, 0.5, 0);
     scene.add(snakeHeadGroup);
 
-    const headEyesLight = new THREE.PointLight(0x00ffcc, 1.5, 5);
+    const headEyesLight = new THREE.PointLight(isLight ? 0x10b981 : 0x00ffcc, isLight ? 1.8 : 1.5, 5);
     headEyesLight.position.set(0, 0.6, -0.6);
     snakeHeadGroup.add(headEyesLight);
 
@@ -1261,9 +1271,15 @@ export const NeoSnakeGame3D: React.FC = () => {
         typeof document !== 'undefined' &&
         createPortal(
           <div className="fixed top-2.5 right-2.5 z-[99999] pointer-events-none select-none">
-            <div className="px-2.5 py-1 rounded-full bg-[#07130e]/95 backdrop-blur-md border border-emerald-400/80 shadow-lg shadow-emerald-500/25 flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-              <span className="text-[11px] font-black text-emerald-300 font-mono tracking-tight whitespace-nowrap">
+            <div className={`px-2.5 py-1 rounded-full backdrop-blur-md border shadow-lg flex items-center gap-1.5 ${
+              isLight
+                ? 'bg-white/95 border-emerald-400 text-emerald-800 shadow-emerald-500/20'
+                : 'bg-[#07130e]/95 border-emerald-400/80 text-emerald-300 shadow-emerald-500/25'
+            }`}>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+              <span className={`text-[11px] font-black font-mono tracking-tight whitespace-nowrap ${
+                isLight ? 'text-emerald-800' : 'text-emerald-300'
+              }`}>
                 {latestRewardToast}
               </span>
             </div>
@@ -1805,18 +1821,18 @@ export const NeoSnakeGame3D: React.FC = () => {
                 {isBoosting ? 'TURBO!' : 'BOOST'}
               </span>
             </button>
-            <span className="text-[9px] text-amber-400 font-extrabold mt-1 tracking-wider uppercase">
+            <span className={`text-[9px] font-extrabold mt-1 tracking-wider uppercase ${isLight ? 'text-amber-800' : 'text-amber-400'}`}>
               Hold for 2X
             </span>
           </div>
         </div>
 
         {/* Desktop Controls Hint */}
-        <p className="text-[10px] text-stone-500 text-center pt-1 border-t border-stone-900">
-          Desktop: Use <kbd className="px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 font-mono">W</kbd>
-          <kbd className="px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 font-mono">A</kbd>
-          <kbd className="px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 font-mono">S</kbd>
-          <kbd className="px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 font-mono">D</kbd> or Arrow Keys • Hold <kbd className="px-1.5 py-0.5 rounded bg-stone-800 text-stone-300 font-mono">Space</kbd> for Turbo
+        <p className={`text-[10px] text-center pt-2 border-t ${isLight ? 'text-slate-600 border-slate-200' : 'text-stone-500 border-stone-900'}`}>
+          Desktop: Use <kbd className={`px-1.5 py-0.5 rounded font-mono border ${isLight ? 'bg-slate-200 text-slate-800 border-slate-300' : 'bg-stone-800 text-stone-300 border-stone-700'}`}>W</kbd>
+          <kbd className={`px-1.5 py-0.5 rounded font-mono border ${isLight ? 'bg-slate-200 text-slate-800 border-slate-300' : 'bg-stone-800 text-stone-300 border-stone-700'}`}>A</kbd>
+          <kbd className={`px-1.5 py-0.5 rounded font-mono border ${isLight ? 'bg-slate-200 text-slate-800 border-slate-300' : 'bg-stone-800 text-stone-300 border-stone-700'}`}>S</kbd>
+          <kbd className={`px-1.5 py-0.5 rounded font-mono border ${isLight ? 'bg-slate-200 text-slate-800 border-slate-300' : 'bg-stone-800 text-stone-300 border-stone-700'}`}>D</kbd> or Arrow Keys • Hold <kbd className={`px-1.5 py-0.5 rounded font-mono border ${isLight ? 'bg-slate-200 text-slate-800 border-slate-300' : 'bg-stone-800 text-stone-300 border-stone-700'}`}>Space</kbd> for Turbo
         </p>
         </div>
       </div>
