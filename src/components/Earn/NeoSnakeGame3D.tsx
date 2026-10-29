@@ -178,13 +178,13 @@ export const NeoSnakeGame3D: React.FC = () => {
     canvas.height = 512;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      // Cyber arena floor background
-      ctx.fillStyle = lightMode ? '#f8fafc' : '#07090e';
+      // Cyber arena floor background - rich dark cyber slate, never white
+      ctx.fillStyle = lightMode ? '#1e293b' : '#07090e';
       ctx.fillRect(0, 0, 512, 512);
 
       // Neon grid lines
-      ctx.strokeStyle = lightMode ? 'rgba(5, 150, 105, 0.38)' : 'rgba(16, 185, 129, 0.22)';
-      ctx.lineWidth = lightMode ? 2.5 : 2;
+      ctx.strokeStyle = lightMode ? 'rgba(52, 211, 153, 0.45)' : 'rgba(16, 185, 129, 0.22)';
+      ctx.lineWidth = 2;
       const step = 32;
       for (let x = 0; x <= 512; x += step) {
         ctx.beginPath();
@@ -200,11 +200,11 @@ export const NeoSnakeGame3D: React.FC = () => {
       }
 
       // Secondary cyber accent intersections
-      ctx.fillStyle = lightMode ? '#047857' : '#10b981';
+      ctx.fillStyle = lightMode ? '#34d399' : '#10b981';
       for (let x = 0; x <= 512; x += step * 2) {
         for (let y = 0; y <= 512; y += step * 2) {
           ctx.beginPath();
-          ctx.arc(x, y, lightMode ? 3 : 2.5, 0, Math.PI * 2);
+          ctx.arc(x, y, 2.8, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -454,11 +454,11 @@ export const NeoSnakeGame3D: React.FC = () => {
     const width = mount.clientWidth || mount.parentElement?.clientWidth || 360;
     const height = mount.clientHeight || Math.min(540, Math.max(380, window.innerHeight * 0.55));
 
-    // 1. Scene & Background Fog
+    // 1. Scene & Background Fog - Deep cyber stadium void (NEVER white)
     const scene = new THREE.Scene();
     sceneRef.current = scene;
-    scene.background = new THREE.Color(isLight ? 0xedf2f7 : 0x06080d);
-    scene.fog = new THREE.FogExp2(isLight ? 0xedf2f7 : 0x06080d, 0.024);
+    scene.background = new THREE.Color(0x0a0f1d);
+    scene.fog = new THREE.FogExp2(0x0a0f1d, 0.022);
 
     // 2. Camera
     const camera = new THREE.PerspectiveCamera(46, width / height, 0.1, 100);
@@ -535,15 +535,98 @@ export const NeoSnakeGame3D: React.FC = () => {
     floor.receiveShadow = true;
     scene.add(floor);
 
-    // Outer Perimeter Cyber Boundary Beams
-    const boundaryPostGeo = new THREE.BoxGeometry(0.3, 1.2, 0.3);
-    const boundaryPostMat = new THREE.MeshStandardMaterial({
-      color: 0x10b981,
-      emissive: 0x10b981,
-      emissiveIntensity: 1.5,
+    // Outer Perimeter Cyber Boundary Walls (Prominent dark titanium walls with glowing neon emerald rails)
+    const bHalf = ARENA_BOUNDS;
+    const wallHeight = 1.15;
+    const wallThick = 0.36;
+    const wallLength = ARENA_SIZE * CELL_SIZE + wallThick;
+
+    // Solid dark cyber titanium armor material - NEVER white
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x0f172a,
+      metalness: 0.88,
+      roughness: 0.22,
     });
 
-    const bHalf = ARENA_BOUNDS;
+    // Glowing Top Laser Crest Rail
+    const laserCrestMat = new THREE.MeshStandardMaterial({
+      color: 0x10b981,
+      emissive: 0x10b981,
+      emissiveIntensity: 2.5,
+      metalness: 0.4,
+      roughness: 0.1,
+    });
+
+    // Inner Glowing Forcefield Warning Strip
+    const innerStripeMat = new THREE.MeshStandardMaterial({
+      color: 0x059669,
+      emissive: 0x10b981,
+      emissiveIntensity: 1.8,
+    });
+
+    // 1. North Wall (Back)
+    const wallNGroup = new THREE.Group();
+    const wallNMesh = new THREE.Mesh(new THREE.BoxGeometry(wallLength, wallHeight, wallThick), wallMat);
+    wallNMesh.castShadow = true;
+    wallNMesh.receiveShadow = true;
+    wallNGroup.add(wallNMesh);
+    const crestN = new THREE.Mesh(new THREE.BoxGeometry(wallLength, 0.12, wallThick * 1.15), laserCrestMat);
+    crestN.position.y = wallHeight / 2 + 0.06;
+    wallNGroup.add(crestN);
+    const stripeN = new THREE.Mesh(new THREE.BoxGeometry(wallLength, 0.14, 0.04), innerStripeMat);
+    stripeN.position.set(0, 0, wallThick / 2 + 0.02);
+    wallNGroup.add(stripeN);
+    wallNGroup.position.set(0, wallHeight / 2, -bHalf);
+    scene.add(wallNGroup);
+
+    // 2. South Wall (Front)
+    const wallSGroup = new THREE.Group();
+    const wallSMesh = new THREE.Mesh(new THREE.BoxGeometry(wallLength, wallHeight, wallThick), wallMat);
+    wallSMesh.castShadow = true;
+    wallSMesh.receiveShadow = true;
+    wallSGroup.add(wallSMesh);
+    const crestS = new THREE.Mesh(new THREE.BoxGeometry(wallLength, 0.12, wallThick * 1.15), laserCrestMat);
+    crestS.position.y = wallHeight / 2 + 0.06;
+    wallSGroup.add(crestS);
+    const stripeS = new THREE.Mesh(new THREE.BoxGeometry(wallLength, 0.14, 0.04), innerStripeMat);
+    stripeS.position.set(0, 0, -wallThick / 2 - 0.02);
+    wallSGroup.add(stripeS);
+    wallSGroup.position.set(0, wallHeight / 2, bHalf);
+    scene.add(wallSGroup);
+
+    // 3. West Wall (Left)
+    const wallWGroup = new THREE.Group();
+    const wallWMesh = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wallHeight, wallLength), wallMat);
+    wallWMesh.castShadow = true;
+    wallWMesh.receiveShadow = true;
+    wallWGroup.add(wallWMesh);
+    const crestW = new THREE.Mesh(new THREE.BoxGeometry(wallThick * 1.15, 0.12, wallLength), laserCrestMat);
+    crestW.position.y = wallHeight / 2 + 0.06;
+    wallWGroup.add(crestW);
+    const stripeW = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, wallLength), innerStripeMat);
+    stripeW.position.set(wallThick / 2 + 0.02, 0, 0);
+    wallWGroup.add(stripeW);
+    wallWGroup.position.set(-bHalf, wallHeight / 2, 0);
+    scene.add(wallWGroup);
+
+    // 4. East Wall (Right)
+    const wallEGroup = new THREE.Group();
+    const wallEMesh = new THREE.Mesh(new THREE.BoxGeometry(wallThick, wallHeight, wallLength), wallMat);
+    wallEMesh.castShadow = true;
+    wallEMesh.receiveShadow = true;
+    wallEGroup.add(wallEMesh);
+    const crestE = new THREE.Mesh(new THREE.BoxGeometry(wallThick * 1.15, 0.12, wallLength), laserCrestMat);
+    crestE.position.y = wallHeight / 2 + 0.06;
+    wallEGroup.add(crestE);
+    const stripeE = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.14, wallLength), innerStripeMat);
+    stripeE.position.set(-wallThick / 2 - 0.02, 0, 0);
+    wallEGroup.add(stripeE);
+    wallEGroup.position.set(bHalf, wallHeight / 2, 0);
+    scene.add(wallEGroup);
+
+    // Corner Defense Pylons with Glowing Emerald Beacons
+    const cornerPylonGeo = new THREE.BoxGeometry(0.55, wallHeight * 1.35, 0.55);
+    const cornerBeaconGeo = new THREE.CylinderGeometry(0.2, 0.25, 0.32, 16);
     const corners = [
       [bHalf, bHalf],
       [-bHalf, bHalf],
@@ -551,35 +634,16 @@ export const NeoSnakeGame3D: React.FC = () => {
       [-bHalf, -bHalf],
     ];
     corners.forEach(([cx, cz]) => {
-      const post = new THREE.Mesh(boundaryPostGeo, boundaryPostMat);
-      post.position.set(cx, 0.6, cz);
-      scene.add(post);
+      const pylonGroup = new THREE.Group();
+      const pylon = new THREE.Mesh(cornerPylonGeo, wallMat);
+      pylon.castShadow = true;
+      pylonGroup.add(pylon);
+      const beacon = new THREE.Mesh(cornerBeaconGeo, laserCrestMat);
+      beacon.position.y = (wallHeight * 1.35) / 2 + 0.16;
+      pylonGroup.add(beacon);
+      pylonGroup.position.set(cx, (wallHeight * 1.35) / 2, cz);
+      scene.add(pylonGroup);
     });
-
-    // Laser Boundary Rails
-    const railXGeo = new THREE.BoxGeometry(ARENA_SIZE * CELL_SIZE, 0.12, 0.12);
-    const railZGeo = new THREE.BoxGeometry(0.12, 0.12, ARENA_SIZE * CELL_SIZE);
-    const laserMat = new THREE.MeshStandardMaterial({
-      color: 0x10b981,
-      emissive: 0x10b981,
-      emissiveIntensity: 2.4,
-    });
-
-    const railN = new THREE.Mesh(railXGeo, laserMat);
-    railN.position.set(0, 0.8, -bHalf);
-    scene.add(railN);
-
-    const railS = new THREE.Mesh(railXGeo, laserMat);
-    railS.position.set(0, 0.8, bHalf);
-    scene.add(railS);
-
-    const railW = new THREE.Mesh(railZGeo, laserMat);
-    railW.position.set(-bHalf, 0.8, 0);
-    scene.add(railW);
-
-    const railE = new THREE.Mesh(railZGeo, laserMat);
-    railE.position.set(bHalf, 0.8, 0);
-    scene.add(railE);
 
     // 7. Snake Head & Group
     const snakeHeadGroup = createSnakeHeadMesh(isLight);
@@ -1291,9 +1355,7 @@ export const NeoSnakeGame3D: React.FC = () => {
         ref={containerRef}
         className={
           isFullscreen
-            ? isLight
-              ? 'fixed inset-0 z-[100] w-screen h-screen bg-[#f8fafc] text-slate-800 flex flex-col justify-between overflow-hidden select-none'
-              : 'fixed inset-0 z-[100] w-screen h-screen bg-[#06080d] text-white flex flex-col justify-between overflow-hidden select-none'
+            ? 'fixed inset-0 z-[100] w-screen h-screen bg-[#070b14] text-white flex flex-col justify-between overflow-hidden select-none'
             : isLight
             ? 'relative w-full rounded-3xl bg-white border-2 border-emerald-400 overflow-hidden shadow-xl select-none text-slate-800'
             : 'relative w-full rounded-3xl bg-[#0b0d13] border border-emerald-500/30 overflow-hidden shadow-2xl select-none text-white'
@@ -1411,8 +1473,8 @@ export const NeoSnakeGame3D: React.FC = () => {
         onTouchEnd={handleTouchEnd}
         className={
           isFullscreen
-            ? 'flex-1 w-full relative cursor-grab active:cursor-grabbing touch-none overflow-hidden min-h-0'
-            : 'w-full relative cursor-grab active:cursor-grabbing touch-none overflow-hidden'
+            ? 'flex-1 w-full relative cursor-grab active:cursor-grabbing touch-none overflow-hidden min-h-0 bg-[#070b14]'
+            : 'w-full relative cursor-grab active:cursor-grabbing touch-none overflow-hidden bg-[#070b14]'
         }
         style={isFullscreen ? undefined : { minHeight: '380px', maxHeight: '540px' }}
       >
@@ -1421,39 +1483,31 @@ export const NeoSnakeGame3D: React.FC = () => {
 
         {/* Start / Idle Screen Overlay */}
         {gameState === 'idle' && (
-          <div className={`absolute inset-0 z-20 flex flex-col items-center justify-center p-6 backdrop-blur-sm text-center space-y-4 animate-in fade-in ${
-            isLight ? 'bg-white/90 text-slate-800' : 'bg-black/80 text-white'
-          }`}>
-            <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shadow-2xl shadow-emerald-500/30">
-              <div className={`w-full h-full rounded-3xl flex items-center justify-center text-emerald-400 ${
-                isLight ? 'bg-white' : 'bg-[#0b0e14]'
-              }`}>
-                <Sparkles className="w-8 h-8 text-emerald-500" />
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 backdrop-blur-md text-center space-y-4 animate-in fade-in bg-slate-950/80 text-white">
+            <div className="w-16 h-16 rounded-3xl bg-gradient-to-tr from-emerald-500 to-teal-400 p-0.5 shadow-2xl shadow-emerald-500/40">
+              <div className="w-full h-full rounded-3xl flex items-center justify-center text-emerald-400 bg-[#090d16]">
+                <Sparkles className="w-8 h-8 text-emerald-400" />
               </div>
             </div>
 
             <div className="space-y-1">
-              <h3 className={`text-xl sm:text-2xl font-black tracking-tight ${isLight ? 'text-slate-900' : 'text-white'}`}>
+              <h3 className="text-xl sm:text-2xl font-black tracking-tight text-white">
                 Neo Snake 3D Cyber Arcade
               </h3>
-              <p className={`text-xs max-w-sm mx-auto leading-relaxed ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
+              <p className="text-xs max-w-sm mx-auto leading-relaxed text-slate-300">
                 Slither in 3D full-screen, eat real Naira coins, and earn instant cash deposited directly to your balance!
               </p>
             </div>
 
             {/* Payout Specs */}
             <div className="grid grid-cols-2 gap-2.5 w-full max-w-xs text-left">
-              <div className={`p-3 rounded-2xl shadow-md border ${
-                isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#141822] border-stone-800'
-              }`}>
-                <span className={`text-[9px] uppercase tracking-wider block font-bold ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Standard Coin</span>
-                <span className="text-sm font-black text-emerald-600 font-mono">+₦500 / Coin</span>
+              <div className="p-3 rounded-2xl shadow-md border bg-slate-900/90 border-slate-700/80">
+                <span className="text-[9px] uppercase tracking-wider block font-bold text-slate-400">Standard Coin</span>
+                <span className="text-sm font-black text-emerald-400 font-mono">+₦500 / Coin</span>
               </div>
-              <div className={`p-3 rounded-2xl shadow-md border ${
-                isLight ? 'bg-purple-50 border-purple-200' : 'bg-[#1d1726] border-purple-500/30'
-              }`}>
-                <span className={`text-[9px] uppercase tracking-wider block font-bold ${isLight ? 'text-purple-700' : 'text-purple-300'}`}>Mega Gold 2X</span>
-                <span className="text-sm font-black text-amber-500 font-mono">+₦1,000 / Coin</span>
+              <div className="p-3 rounded-2xl shadow-md border bg-[#1a1426]/90 border-purple-500/40">
+                <span className="text-[9px] uppercase tracking-wider block font-bold text-purple-300">Mega Gold 2X</span>
+                <span className="text-sm font-black text-amber-400 font-mono">+₦1,000 / Coin</span>
               </div>
             </div>
 
@@ -1484,21 +1538,19 @@ export const NeoSnakeGame3D: React.FC = () => {
 
         {/* Game Over Screen Overlay */}
         {gameState === 'gameover' && (
-          <div className={`absolute inset-0 z-20 flex flex-col items-center justify-center p-6 backdrop-blur-md text-center space-y-4 animate-in zoom-in-95 ${
-            isLight ? 'bg-white/95 text-slate-900' : 'bg-black/85 text-white'
-          }`}>
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 backdrop-blur-md text-center space-y-4 animate-in zoom-in-95 bg-slate-950/85 text-white">
             <div className="w-14 h-14 rounded-2xl bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-500">
               <ShieldAlert className="w-7 h-7 text-red-500" />
             </div>
 
             <div className="space-y-1">
-              <span className="text-[10px] uppercase font-bold tracking-widest text-red-500">
+              <span className="text-[10px] uppercase font-bold tracking-widest text-red-400">
                 Cyber Collision Detected
               </span>
-              <h3 className={`text-xl font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>Game Over</h3>
-              <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
-                You collected <strong className={isLight ? 'text-slate-900' : 'text-white'}>{coinsEaten} coins</strong> and scored{' '}
-                <strong className="text-amber-500">{score} pts</strong>
+              <h3 className="text-xl font-black text-white">Game Over</h3>
+              <p className="text-xs text-slate-300">
+                You collected <strong className="text-white">{coinsEaten} coins</strong> and scored{' '}
+                <strong className="text-amber-400">{score} pts</strong>
               </p>
             </div>
 
