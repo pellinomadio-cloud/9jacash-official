@@ -205,6 +205,8 @@ export const QuickActionModal: React.FC<QuickActionModalProps> = ({ type, onClos
                     <option value="Kuda Bank">Kuda Microfinance Bank</option>
                     <option value="OPay">OPay</option>
                     <option value="Palmpay">Palmpay</option>
+                    <option value="Nomba (Nombank)">Nomba (Nombank)</option>
+                    <option value="PAGA">PAGA</option>
                     <option value="9jacash MFB">9jacash MFB</option>
                   </select>
                 </div>

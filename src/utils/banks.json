@@ -72,6 +72,30 @@
     "popular": true
   },
   {
+    "id": "120004.0",
+    "code": "120004",
+    "name": "Nomba (Nombank)",
+    "popular": true
+  },
+  {
+    "id": "090514.0",
+    "code": "090514",
+    "name": "Nombank (Nomba MFB)",
+    "popular": true
+  },
+  {
+    "id": "100002.0",
+    "code": "100002",
+    "name": "PAGA",
+    "popular": true
+  },
+  {
+    "id": "327.0",
+    "code": "327",
+    "name": "Paga",
+    "popular": true
+  },
+  {
     "id": "9.0",
     "code": "076",
     "name": "Polaris bank",

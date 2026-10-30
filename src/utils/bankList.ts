@@ -3,6 +3,7 @@ export interface BankItem {
   name: string;
   code: string;
   popular?: boolean;
+  aliases?: string[];
 }
 
 export const NIGERIAN_BANKS: BankItem[] = [
@@ -77,6 +78,34 @@ export const NIGERIAN_BANKS: BankItem[] = [
     "code": "100033",
     "name": "PalmPay",
     "popular": true
+  },
+  {
+    "id": "120004.0",
+    "code": "120004",
+    "name": "Nomba (Nombank)",
+    "popular": true,
+    "aliases": ["Nombank", "Nomba", "Nomba MFB", "Nomba Financial Services", "Kudi"]
+  },
+  {
+    "id": "090514.0",
+    "code": "090514",
+    "name": "Nombank (Nomba MFB)",
+    "popular": true,
+    "aliases": ["Nombank", "Nomba", "Nomba Microfinance Bank", "Kudi"]
+  },
+  {
+    "id": "100002.0",
+    "code": "100002",
+    "name": "PAGA",
+    "popular": true,
+    "aliases": ["PAGA", "Paga", "Pagatech", "Paga Mobile Money"]
+  },
+  {
+    "id": "327.0",
+    "code": "327",
+    "name": "Paga",
+    "popular": true,
+    "aliases": ["Paga", "PAGA", "Pagatech", "Paga Mobile Money"]
   },
   {
     "id": "9.0",

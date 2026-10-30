@@ -54,6 +54,7 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
   const [verifiedName, setVerifiedName] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [manualAccountName, setManualAccountName] = useState('');
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const lastVerifiedKey = useRef<string>('');
@@ -69,11 +70,14 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
     return () => document.removeEventListener('mousedown', handleOutsideClick);
   }, []);
 
-  // Filter banks based on search query
+  // Filter banks based on search query and optional aliases
+  const query = searchQuery.trim().toLowerCase();
   const filteredBanks = NIGERIAN_BANKS.filter(
     (b) =>
-      b.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      b.code.includes(searchQuery)
+      !query ||
+      b.name.toLowerCase().includes(query) ||
+      b.code.toLowerCase().includes(query) ||
+      (b.aliases && b.aliases.some((a) => a.toLowerCase().includes(query)))
   );
 
   // Trigger verification
@@ -140,12 +144,14 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
   const handleAccountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
     setAccountNumber(digits);
+    setManualAccountName('');
   };
 
   const handleSelectBank = (bank: BankItem) => {
     setSelectedBank(bank);
     setIsDropdownOpen(false);
     setSearchQuery('');
+    setManualAccountName('');
   };
 
   const handleCopyName = () => {
@@ -364,24 +370,69 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
         </div>
       )}
 
-      {/* Failure State: Error alert message */}
+      {/* Failure State: Error alert message with optional manual account name input */}
       {!isLoading && errorMessage && (
-        <div className="p-3.5 rounded-2xl bg-red-500/10 border border-red-500/40 text-red-300 text-xs flex items-start gap-2.5 animate-in slide-in-from-top-2 duration-150">
-          <AlertCircle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-          <div className="flex-1">
-            <span className="font-bold block text-red-200">Verification Failed</span>
-            <span className="text-[11px] text-red-300/90 leading-tight">
-              {errorMessage}
-            </span>
+        <div className={`p-3.5 rounded-2xl border space-y-3 animate-in slide-in-from-top-2 duration-150 ${
+          isLight ? 'bg-amber-50/70 border-amber-300 text-slate-800' : 'bg-red-500/10 border-red-500/40 text-red-200'
+        }`}>
+          <div className="flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
+            <div className="flex-1">
+              <span className={`font-bold block text-xs ${isLight ? 'text-slate-900' : 'text-white'}`}>Verification Incomplete</span>
+              <span className={`text-[11px] leading-tight block ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
+                {errorMessage}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => executeVerification(selectedBank, accountNumber)}
+              className="p-1 text-stone-400 hover:text-amber-500 flex-shrink-0 cursor-pointer"
+              title="Retry Verification"
+            >
+              <RotateCw className="w-3.5 h-3.5" />
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => executeVerification(selectedBank, accountNumber)}
-            className="p-1 text-stone-400 hover:text-white flex-shrink-0 cursor-pointer"
-            title="Retry Verification"
-          >
-            <RotateCw className="w-3.5 h-3.5" />
-          </button>
+
+          <div className={`pt-2.5 border-t space-y-1.5 ${isLight ? 'border-amber-200/80' : 'border-stone-800'}`}>
+            <label className={`text-[11px] font-semibold block ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+              Enter Account Name Manually:
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                placeholder="e.g. ADEWALE CHUKWU JOHN"
+                value={manualAccountName}
+                onChange={(e) => setManualAccountName(e.target.value)}
+                className={`flex-1 px-3 py-2 rounded-xl text-xs uppercase font-medium focus:outline-none border ${
+                  isLight
+                    ? 'bg-white border-slate-300 text-slate-900 focus:border-amber-500 placeholder-slate-400'
+                    : 'bg-[#181920] border-stone-700 text-white focus:border-amber-500 placeholder-stone-500'
+                }`}
+              />
+              <button
+                type="button"
+                disabled={!manualAccountName.trim()}
+                onClick={() => {
+                  if (!manualAccountName.trim()) return;
+                  const confirmedName = manualAccountName.trim().toUpperCase();
+                  setVerifiedName(confirmedName);
+                  setErrorMessage(null);
+                  const cleanNum = accountNumber.replace(/\D/g, '');
+                  lastVerifiedKey.current = `${selectedBank.code}_${cleanNum}`;
+                  if (onVerified) {
+                    onVerified({
+                      bank: selectedBank,
+                      accountNumber: cleanNum,
+                      accountName: confirmedName,
+                    });
+                  }
+                }}
+                className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-black font-extrabold text-xs cursor-pointer transition-colors shadow-sm"
+              >
+                Use Name
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

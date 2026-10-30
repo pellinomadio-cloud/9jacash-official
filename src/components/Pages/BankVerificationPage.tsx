@@ -162,7 +162,7 @@ export const BankVerificationPage: React.FC<BankVerificationPageProps> = ({
           <span>Supported Banking Networks</span>
         </div>
         <p className="text-[11px] leading-relaxed">
-          Supports all commercial banks (GTBank, Access Bank, Zenith Bank, UBA, FirstBank, etc.) and leading fintech platforms (OPay, PalmPay, Kuda, Moniepoint) licensed by the Central Bank of Nigeria (CBN).
+          Supports all commercial banks (GTBank, Access Bank, Zenith Bank, UBA, FirstBank, etc.) and leading fintech platforms (OPay, PalmPay, Kuda, Moniepoint, Nomba, Paga) licensed by the Central Bank of Nigeria (CBN).
         </p>
       </div>
     </div>
