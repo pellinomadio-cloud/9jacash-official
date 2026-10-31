@@ -98,6 +98,7 @@ export interface FirestoreErrorInfo {
 }
 
 let isQuotaExhaustedState = false;
+let quotaResetTimer: any = null;
 
 export function isFirestoreQuotaExhausted(): boolean {
   return isQuotaExhaustedState;
@@ -109,6 +110,14 @@ export function setFirestoreQuotaExhausted(val: boolean = true) {
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('9jacash_quota_status_change', { detail: { exceeded: val } }));
     }
+  }
+
+  if (val) {
+    if (quotaResetTimer) clearTimeout(quotaResetTimer);
+    // Automatically attempt reconnection after a 20s cooldown so operations don't freeze indefinitely
+    quotaResetTimer = setTimeout(() => {
+      isQuotaExhaustedState = false;
+    }, 20000);
   }
 }
 

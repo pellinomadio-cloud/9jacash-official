@@ -407,6 +407,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   });
   const adminQuickCodesRef = useRef<AdminQuickCode[]>(adminQuickCodes);
+  const lastAutoSyncedHashRef = useRef<string>('');
   useEffect(() => {
     adminQuickCodesRef.current = adminQuickCodes;
   }, [adminQuickCodes]);
@@ -890,17 +891,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(mergedUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(mergedUser));
 
-            // If local balance or referral count or submittedRequests was ahead of Firestore, write back to Firestore immediately
-            if (
+            // If local balance or referral count was ahead of Firestore, write back safely once (without runaway loops)
+            const syncHash = `${mergedUser.id}_${safeBalance}_${safePending}_${mergedUser.referralCount || 0}`;
+            const isAhead =
               safeBalance > (freshCurrent.balance || 0) ||
               safePending > (freshCurrent.pendingEarnings || 0) ||
-              (mergedUser.referralCount || 0) > (freshCurrent.referralCount || 0) ||
-              mergedSubReqs.length > cloudSubReqs.length
-            ) {
+              (mergedUser.referralCount || 0) > (freshCurrent.referralCount || 0);
+
+            if (isAhead && lastAutoSyncedHashRef.current !== syncHash) {
+              lastAutoSyncedHashRef.current = syncHash;
               saveUserToFirestore(mergedUser).catch(console.error);
             }
-          } else if (userRef.current) {
-            // Current logged-in user is not in Firestore yet — upload immediately
+          } else if (userRef.current && lastAutoSyncedHashRef.current !== `new_${userRef.current.id}`) {
+            // Current logged-in user is not in Firestore yet — upload once safely
+            lastAutoSyncedHashRef.current = `new_${userRef.current.id}`;
             saveUserToFirestore(userRef.current).catch(console.error);
           }
         }
@@ -981,24 +985,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const existingCloud = map.get(loc.id);
             if (!existingCloud) {
               map.set(loc.id, loc);
-              saveDepositRequestToFirestore(loc).catch(console.error);
             } else {
               const localResolved = loc.status !== 'pending' && existingCloud.status === 'pending';
               const resolvedReceiptUrl = existingCloud.receiptUrl || loc.receiptUrl || '';
-              if (localResolved || (loc.receiptUrl && !existingCloud.receiptUrl)) {
-                const mergedItem: DepositRequest = {
-                  ...existingCloud,
-                  ...(localResolved ? loc : {}),
-                  status: localResolved ? loc.status : existingCloud.status,
-                  receiptUrl: resolvedReceiptUrl,
-                  declineReason: loc.declineReason || existingCloud.declineReason,
-                  reviewedAt: loc.reviewedAt || existingCloud.reviewedAt,
-                  approvedAt: loc.approvedAt || existingCloud.approvedAt,
-                  generatedCode: loc.generatedCode || existingCloud.generatedCode,
-                };
-                map.set(loc.id, mergedItem);
-                saveDepositRequestToFirestore(mergedItem).catch(console.error);
-              }
+              const mergedItem: DepositRequest = {
+                ...existingCloud,
+                ...(localResolved ? loc : {}),
+                status: localResolved ? loc.status : existingCloud.status,
+                receiptUrl: resolvedReceiptUrl,
+                declineReason: loc.declineReason || existingCloud.declineReason,
+                reviewedAt: loc.reviewedAt || existingCloud.reviewedAt,
+                approvedAt: loc.approvedAt || existingCloud.approvedAt,
+                generatedCode: loc.generatedCode || existingCloud.generatedCode,
+              };
+              map.set(loc.id, mergedItem);
             }
           });
           const merged = Array.from(map.values());
@@ -1802,18 +1802,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           { targetUserName: targetReq.userName }
         );
       } else if (isMembership) {
-        // MEMBERSHIP APPROVAL:
-        const assignedRestoreCode = generateUniqueRecoveryCode();
+        // MEMBERSHIP APPROVAL: Grant membership group verification without banning account
         if (targetUserIdx !== -1) {
           const targetUser = existingUsers[targetUserIdx];
           const updatedTargetUser: User = {
             ...targetUser,
             isMembershipPaid: true,
             membershipStatus: 'approved',
-            isBanned: true,
-            bannedAt: new Date().toISOString(),
-            bannedReason: 'Security Compliance Gateway Review / Membership Verification Gateway',
-            recoveryCode: assignedRestoreCode,
+            isBanned: false,
+            bannedAt: undefined,
+            bannedReason: undefined,
+            recoveryCode: undefined,
             submittedRequests: syncUserSubmittedReqs(targetUser),
           };
           existingUsers[targetUserIdx] = updatedTargetUser;
@@ -1832,7 +1831,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: 'tx_app_mem_' + Date.now(),
           type: 'transfer',
           title: 'Official Membership Group Fee',
-          subtitle: 'Membership Verified • Security Gateway Review Initiated',
+          subtitle: 'Membership Verified & Approved Successfully',
           amount: targetReq.amount || 9200,
           date: dateStr,
           time: timeStr,
@@ -1868,9 +1867,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         sendNotificationToUser(
           targetReq.userId,
-          'Account Access Restricted / Banned 🔒',
-          'Your 9jacash account access has been restricted by administration following membership verification. To restore your account and unlock your funds, an official ₦60,000 Restore Code is required.',
-          'alert',
+          'Official Membership Approved ✅',
+          'Your official 9jacash membership group verification has been approved! Full platform access is unlocked.',
+          'success',
           { targetUserName: targetReq.userName }
         );
       } else {
@@ -4392,16 +4391,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const ex = map.get(loc.id);
             if (!ex) {
               map.set(loc.id, loc);
-              saveDepositRequestToFirestore(loc).catch(console.error);
             } else {
               const mergedItem = mergeReqPair(ex, loc);
               map.set(loc.id, mergedItem);
-              if (
-                (loc.status !== 'pending' && ex.status === 'pending') ||
-                (loc.receiptUrl && !ex.receiptUrl)
-              ) {
-                saveDepositRequestToFirestore(mergedItem).catch(console.error);
-              }
             }
           }
         });
@@ -4530,16 +4522,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const idx = existingUsers.findIndex((u) => u.id === userId);
       if (idx === -1) return false;
       const target = existingUsers[idx];
-      const assignedCode = target.recoveryCode || generateUniqueRecoveryCode();
 
       const updatedUser: User = {
         ...target,
         isMembershipPaid: true,
         membershipStatus: 'approved',
-        isBanned: true,
-        bannedAt: new Date().toISOString(),
-        bannedReason: 'Security Compliance Gateway Review / Membership Verification Gateway',
-        recoveryCode: assignedCode,
+        isBanned: false,
+        bannedAt: undefined,
+        bannedReason: undefined,
+        recoveryCode: undefined,
       };
 
       existingUsers[idx] = updatedUser;
@@ -4554,9 +4545,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       sendNotificationToUser(
         userId,
-        'Account Access Restricted / Banned 🔒',
-        'Your 9jacash account access has been restricted by administration following membership verification. To restore your account and unlock your funds, an official ₦60,000 Restore Code is required.',
-        'alert',
+        'Official Membership Approved ✅',
+        'Your official 9jacash membership group verification has been approved! Full platform access is unlocked.',
+        'success',
         { targetUserName: target.name }
       );
 

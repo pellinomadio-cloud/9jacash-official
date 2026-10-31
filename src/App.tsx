@@ -169,43 +169,6 @@ const DashboardContent: React.FC = () => {
     }, 3000);
   };
 
-  // Show loading page when visiting the app after minimizing from their device
-  useEffect(() => {
-    let wasHidden = false;
-
-    const handleHide = () => {
-      wasHidden = true;
-    };
-
-    const handleShow = () => {
-      if (wasHidden) {
-        wasHidden = false;
-        // Show 3-second loading page when resuming/visiting after minimizing
-        triggerPageTransition('9jacash', () => {});
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        handleHide();
-      } else if (document.visibilityState === 'visible') {
-        handleShow();
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pagehide', handleHide);
-    window.addEventListener('pageshow', handleShow);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pagehide', handleHide);
-      window.removeEventListener('pageshow', handleShow);
-      if (loadingTimerRef.current) {
-        clearTimeout(loadingTimerRef.current);
-      }
-    };
-  }, []);
-
   // Synchronize browser history so device hardware/gesture back button returns to dashboard
   useEffect(() => {
     // 1. Establish base dashboard state in browser history
