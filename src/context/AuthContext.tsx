@@ -35,6 +35,8 @@ import {
   saveAdminQuickCodeToFirestore,
   subscribeToAdminQuickCodes,
   deleteAdminQuickCodeFromFirestore,
+  getUserFromFirestore,
+  deleteUserFromFirestore,
   findUserByReferralCodeInFirestore,
   firebaseConfig,
 } from '../services/firebase.ts';
@@ -48,6 +50,8 @@ import {
 import {
   canRegisterAccountOnDevice,
   recordAccountOnDevice,
+  getRegisteredAccountsOnDevice,
+  DEVICE_ACCOUNTS_STORAGE_KEY,
 } from '../utils/deviceLimit.ts';
 
 export const TIER_LIMITS: Record<number, number> = {
@@ -148,6 +152,7 @@ interface AuthContextType {
   getUserReferrals: () => ReferralRecord[];
   refreshAllUsers: () => Promise<User[]>;
   banUser: (userId: string, reason?: string) => boolean;
+  deleteUserAccount: (userId: string) => Promise<boolean>;
   unbanAccountWithCode: (code: string) => { success: boolean; message: string };
   setRecoveryCodeForUser: (userId: string, code: string) => boolean;
   generateNewRecoveryCodeForUser: (userId: string) => string;
@@ -618,22 +623,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. Test Firestore connection on boot
     testConnection();
 
-    // 3. Ensure active session user & their submitted requests are synced to Firestore
+    // 3. Verify active session user against Firestore (must be recorded on admin dashboard)
     const restoredUser = currentUserSession;
-    if (restoredUser) {
-      setUser((prev) => prev || restoredUser);
-      saveUserToFirestore(restoredUser).catch(console.error);
-      if (Array.isArray(restoredUser.submittedRequests)) {
-        restoredUser.submittedRequests.forEach((req) => {
-          if (req && req.id && req.userId) {
-            saveDepositRequestToFirestore(req).catch(console.error);
+    if (restoredUser && restoredUser.id) {
+      getUserFromFirestore(restoredUser.id)
+        .then((cloudUser) => {
+          if (!cloudUser) {
+            // Account is NOT recorded on the admin dashboard -> It must NOT exist on the app!
+            console.warn(`Account "${restoredUser.email || restoredUser.id}" is not recorded on admin dashboard. Purging from app.`);
+            setUser(null);
+            userRef.current = null;
+            localStorage.removeItem(CURRENT_USER_KEY);
+            setTransactions([]);
+          } else {
+            const normalized = normalizeUser(cloudUser) || cloudUser;
+            setUser(normalized);
+            userRef.current = normalized;
+            safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(normalized));
+            const restoredTx = getInitialTransactions(normalized);
+            if (restoredTx.length > 0) {
+              setTransactions(restoredTx);
+            }
           }
-        });
-      }
-      const restoredTx = getInitialTransactions(restoredUser);
-      if (restoredTx.length > 0) {
-        setTransactions((prev) => (prev.length > 0 ? prev : restoredTx));
-      }
+        })
+        .catch(() => {});
     }
     loadStoredConfig();
   }, [loadStoredConfig]);
@@ -809,13 +822,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             };
           });
 
-          // Ensure the currently logged-in user on this device is always preserved and synced to Firestore
-          const cloudIds = new Set(merged.map((u) => u.id));
+          // Any account not recorded in Firestore / Admin Dashboard MUST NOT exist on the app!
+          const cloudIds = new Set(cloudUsers.map((u) => u.id));
           if (currentLoggedIn && currentLoggedIn.id && !cloudIds.has(currentLoggedIn.id)) {
-            merged.push(currentLoggedIn);
-            cloudIds.add(currentLoggedIn.id);
-            saveUserToFirestore(currentLoggedIn).catch(console.error);
+            console.warn(`User ${currentLoggedIn.id} is not recorded on the Admin Dashboard. Purging from app.`);
+            userRef.current = null;
+            setUser(null);
+            localStorage.removeItem(CURRENT_USER_KEY);
+            localStorage.removeItem(`9jacash_kyc_pending_withdrawal_${currentLoggedIn.id}`);
+            localStorage.removeItem(`${TRANSACTIONS_PREFIX}${currentLoggedIn.id}`);
+            setTransactions([]);
           }
+
+          // Clean device account registry so deleted/unrecorded accounts do not linger on device
+          try {
+            const validEmails = new Set(cloudUsers.map((u) => (u.email || '').toLowerCase().trim()).filter(Boolean));
+            const currentDeviceEmails = getRegisteredAccountsOnDevice();
+            const cleanedDeviceEmails = currentDeviceEmails.filter((e: string) => validEmails.has(e.toLowerCase().trim()));
+            safeLocalStorageSet(DEVICE_ACCOUNTS_STORAGE_KEY, JSON.stringify(cleanedDeviceEmails));
+          } catch {}
 
           safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(merged));
           return merged;
@@ -902,25 +927,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               lastAutoSyncedHashRef.current = syncHash;
               saveUserToFirestore(mergedUser).catch(console.error);
             }
-          } else if (userRef.current && lastAutoSyncedHashRef.current !== `new_${userRef.current.id}`) {
-            // Current logged-in user is not in Firestore yet — upload once safely
-            lastAutoSyncedHashRef.current = `new_${userRef.current.id}`;
-            saveUserToFirestore(userRef.current).catch(console.error);
+          } else if (userRef.current) {
+            // User does not exist in Firestore / Admin Dashboard -> Remove session from app
+            console.warn(`User ${userRef.current.id} does not exist on Admin Dashboard. Logging out.`);
+            userRef.current = null;
+            setUser(null);
+            localStorage.removeItem(CURRENT_USER_KEY);
+            setTransactions([]);
           }
         }
       } else {
-        // If Firestore users collection is currently empty, ensure current logged-in user is pushed to Firestore
-        try {
-          if (userRef.current) {
-            setAllUsers([userRef.current]);
-            safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([userRef.current]));
-            saveUserToFirestore(userRef.current).catch(console.error);
-          } else {
-            setAllUsers([]);
-            safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([]));
-          }
-        } catch (err) {
-          console.error('Error syncing current user to Firestore:', err);
+        // If Firestore users collection is currently empty, no accounts exist on the admin dashboard
+        setAllUsers([]);
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([]));
+        if (userRef.current) {
+          userRef.current = null;
+          setUser(null);
+          localStorage.removeItem(CURRENT_USER_KEY);
+          setTransactions([]);
         }
       }
     });
@@ -3437,23 +3461,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Firebase Login with Firestore sync
+  // Firebase Login with Firestore sync - Strictly verifies account is recorded on the Admin Dashboard
   const login = async (email: string, pin: string) => {
     try {
       const cleanEmail = email.trim().toLowerCase();
       const cleanPin = pin.trim();
 
-      let existingUsers = getAllRegisteredUsers();
-      if (existingUsers.length === 0) {
-        existingUsers = await getAllUsersFromFirestore();
-      }
-
-      const foundUser = existingUsers.find(
-        (u) => (u?.email || '').toLowerCase() === cleanEmail && u?.pin === cleanPin
+      // Only allow login for accounts recorded on the Admin Dashboard (in Firestore)
+      let cloudUsersList = allUsers.length > 0 ? allUsers : await getAllUsersFromFirestore();
+      let foundUser = cloudUsersList.find(
+        (u) => (u?.email || '').toLowerCase() === cleanEmail
       );
 
+      // If not in in-memory list yet, verify with Firestore directly
       if (!foundUser) {
-        return { success: false, message: 'Invalid email or 4-digit PIN. Please check your credentials or register.' };
+        try {
+          const directMatch = await findUserByReferralCodeInFirestore(cleanEmail);
+          if (directMatch && (directMatch.email || '').toLowerCase().trim() === cleanEmail) {
+            foundUser = directMatch;
+          }
+        } catch {}
+      }
+
+      if (!foundUser) {
+        return { success: false, message: 'This account does not exist or is not recorded on the system. Please register.' };
+      }
+
+      if (foundUser.pin !== cleanPin) {
+        return { success: false, message: 'Incorrect 4-digit PIN. Please check your PIN and try again.' };
       }
 
       if (foundUser.email) {
@@ -4516,6 +4551,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const deleteUserAccount = async (userId: string): Promise<boolean> => {
+    try {
+      // 1. Delete user permanently from Firestore
+      await deleteUserFromFirestore(userId);
+
+      // 2. Remove user from allUsers in memory and storage
+      setAllUsers((prev) => {
+        const next = prev.filter((u) => u.id !== userId);
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+
+      // 3. If currently logged in user is this deleted user, purge session immediately
+      if (userRef.current?.id === userId) {
+        userRef.current = null;
+        setUser(null);
+        localStorage.removeItem(CURRENT_USER_KEY);
+        localStorage.removeItem(`9jacash_kyc_pending_withdrawal_${userId}`);
+        localStorage.removeItem(`${TRANSACTIONS_PREFIX}${userId}`);
+        setTransactions([]);
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Delete user error', e);
+      return false;
+    }
+  };
+
   const approveMembershipDirect = (userId: string): boolean => {
     try {
       const existingUsers = getAllRegisteredUsers();
@@ -5109,6 +5173,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getUserTierLimit,
         getUserReferrals,
         banUser,
+        deleteUserAccount,
         unbanAccountWithCode,
         setRecoveryCodeForUser,
         generateNewRecoveryCodeForUser,

@@ -255,6 +255,17 @@ export async function getUserFromFirestore(userId: string): Promise<User | null>
   }
 }
 
+export async function deleteUserFromFirestore(userId: string): Promise<boolean> {
+  const path = `${USERS_COLLECTION}/${userId}`;
+  try {
+    await deleteDoc(doc(db, USERS_COLLECTION, userId));
+    return true;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+    return false;
+  }
+}
+
 export async function getAllUsersFromFirestore(): Promise<User[]> {
   const path = USERS_COLLECTION;
   try {

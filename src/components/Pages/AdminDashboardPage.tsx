@@ -75,6 +75,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     approveDepositRequest,
     declineDepositRequest,
     banUser,
+    deleteUserAccount,
     setRecoveryCodeForUser,
     generateNewRecoveryCodeForUser,
     sendDirectMessageToUser,
@@ -92,6 +93,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   } = useAuth();
 
   const [copiedRecoveryCodeId, setCopiedRecoveryCodeId] = useState<string | null>(null);
+  const [confirmDeleteUserId, setConfirmDeleteUserId] = useState<string | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState<boolean>(false);
 
   const [isAdminAuthenticated, setIsAdminAuthenticated] = useState<boolean>(false);
   const [adminKeyInput, setAdminKeyInput] = useState('');
@@ -2059,6 +2062,54 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                       <Send className="w-3 h-3" />
                       <span>Send Screenshot / Msg</span>
                     </button>
+
+                    {confirmDeleteUserId === u.id ? (
+                      <div className="flex items-center gap-1.5 bg-red-950/60 p-1 rounded-lg border border-red-500/40">
+                        <span className="text-[10px] text-red-300 font-medium px-1">Delete for good?</span>
+                        <button
+                          type="button"
+                          disabled={isDeletingUser}
+                          onClick={async () => {
+                            setIsDeletingUser(true);
+                            try {
+                              const success = await deleteUserAccount(u.id);
+                              if (success) {
+                                setActionSuccessMsg(`User ${u.name || u.email} deleted and removed from the app`);
+                              } else {
+                                setActionSuccessMsg('Error deleting user');
+                              }
+                              setTimeout(() => setActionSuccessMsg(''), 3500);
+                            } catch (e) {
+                              console.error(e);
+                            } finally {
+                              setIsDeletingUser(false);
+                              setConfirmDeleteUserId(null);
+                            }
+                          }}
+                          className="px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold cursor-pointer transition-colors disabled:opacity-50"
+                        >
+                          {isDeletingUser ? 'Deleting...' : 'Confirm'}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={isDeletingUser}
+                          onClick={() => setConfirmDeleteUserId(null)}
+                          className="px-2 py-1 rounded bg-stone-800 hover:bg-stone-700 text-stone-300 text-[10px] font-bold cursor-pointer transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteUserId(u.id)}
+                        className="px-2.5 py-1.5 rounded-lg text-[10px] font-bold bg-rose-500/10 text-rose-400 border border-rose-500/20 hover:bg-rose-500/20 flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Delete user completely so they do not exist on the app"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                        <span>Delete Account</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               ))
