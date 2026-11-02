@@ -36,6 +36,7 @@ import {
   subscribeToAdminQuickCodes,
   deleteAdminQuickCodeFromFirestore,
   getUserFromFirestore,
+  findUserByEmailOrIdInFirestore,
   deleteUserFromFirestore,
   findUserByReferralCodeInFirestore,
   firebaseConfig,
@@ -625,17 +626,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 3. Verify active session user against Firestore (must be recorded on admin dashboard)
     const restoredUser = currentUserSession;
-    if (restoredUser && restoredUser.id) {
-      getUserFromFirestore(restoredUser.id)
+    if (restoredUser && (restoredUser.id || restoredUser.email)) {
+      const userLookupKey = (restoredUser.email || '').trim().toLowerCase() || restoredUser.id;
+      findUserByEmailOrIdInFirestore(userLookupKey)
         .then((cloudUser) => {
-          if (!cloudUser) {
-            // Account is NOT recorded on the admin dashboard -> It must NOT exist on the app!
-            console.warn(`Account "${restoredUser.email || restoredUser.id}" is not recorded on admin dashboard. Purging from app.`);
-            setUser(null);
-            userRef.current = null;
-            localStorage.removeItem(CURRENT_USER_KEY);
-            setTransactions([]);
-          } else {
+          if (cloudUser) {
             const normalized = normalizeUser(cloudUser) || cloudUser;
             setUser(normalized);
             userRef.current = normalized;
@@ -645,6 +640,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setTransactions(restoredTx);
             }
           }
+          // Note: If cloudUser is null on cold start (e.g. initial network lag or offline),
+          // we do not purge immediately to prevent false logouts. The live snapshot listener handles verification.
         })
         .catch(() => {});
     }
@@ -823,15 +820,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
 
           // Any account not recorded in Firestore / Admin Dashboard MUST NOT exist on the app!
-          const cloudIds = new Set(cloudUsers.map((u) => u.id));
-          if (currentLoggedIn && currentLoggedIn.id && !cloudIds.has(currentLoggedIn.id)) {
-            console.warn(`User ${currentLoggedIn.id} is not recorded on the Admin Dashboard. Purging from app.`);
-            userRef.current = null;
-            setUser(null);
-            localStorage.removeItem(CURRENT_USER_KEY);
-            localStorage.removeItem(`9jacash_kyc_pending_withdrawal_${currentLoggedIn.id}`);
-            localStorage.removeItem(`${TRANSACTIONS_PREFIX}${currentLoggedIn.id}`);
-            setTransactions([]);
+          // We verify BOTH by email (case-insensitive) and by ID
+          const currentEmailClean = (currentLoggedIn?.email || '').trim().toLowerCase();
+          const currentId = (currentLoggedIn?.id || '').trim();
+
+          const matchingCloudUser = cloudUsers.find((cu) => {
+            if (!cu) return false;
+            const cuEmail = (cu.email || '').trim().toLowerCase();
+            const cuId = (cu.id || '').trim();
+            return (currentEmailClean && cuEmail === currentEmailClean) || (currentId && cuId === currentId);
+          });
+
+          // Only purge if the user is missing by BOTH email and ID, confirmed via direct query
+          if (currentLoggedIn && (currentLoggedIn.id || currentLoggedIn.email) && !matchingCloudUser) {
+            const searchKey = currentEmailClean || currentId;
+            findUserByEmailOrIdInFirestore(searchKey).then((confirmedUser) => {
+              if (!confirmedUser && userRef.current) {
+                console.warn(`User ${searchKey} is not recorded on the Admin Dashboard. Purging from app.`);
+                userRef.current = null;
+                setUser(null);
+                localStorage.removeItem(CURRENT_USER_KEY);
+                if (currentId) {
+                  localStorage.removeItem(`9jacash_kyc_pending_withdrawal_${currentId}`);
+                  localStorage.removeItem(`${TRANSACTIONS_PREFIX}${currentId}`);
+                }
+                setTransactions([]);
+              }
+            }).catch(() => {});
           }
 
           // Clean device account registry so deleted/unrecorded accounts do not linger on device
@@ -847,9 +862,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         // If current user is logged in, sync their profile SAFELY (never reduce balance on its own!)
-        const currentUid = userRef.current?.id;
-        if (currentUid) {
-          const freshCurrent = cloudUsers.find((u) => u.id === currentUid);
+        const currentUid = (userRef.current?.id || '').trim();
+        const currentEmail = (userRef.current?.email || '').trim().toLowerCase();
+        if (currentUid || currentEmail) {
+          const freshCurrent = cloudUsers.find(
+            (u) =>
+              (currentUid && (u.id || '').trim() === currentUid) ||
+              (currentEmail && (u.email || '').trim().toLowerCase() === currentEmail)
+          );
           if (freshCurrent) {
             const localUser = userRef.current;
             const safeTier = Math.max(freshCurrent.tier || 1, localUser?.tier || 1);
@@ -928,24 +948,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               saveUserToFirestore(mergedUser).catch(console.error);
             }
           } else if (userRef.current) {
-            // User does not exist in Firestore / Admin Dashboard -> Remove session from app
-            console.warn(`User ${userRef.current.id} does not exist on Admin Dashboard. Logging out.`);
-            userRef.current = null;
-            setUser(null);
-            localStorage.removeItem(CURRENT_USER_KEY);
-            setTransactions([]);
+            // Confirm missing status before purging
+            const searchKey = currentEmail || currentUid;
+            findUserByEmailOrIdInFirestore(searchKey).then((confirmedUser) => {
+              if (!confirmedUser && userRef.current) {
+                console.warn(`User ${searchKey} does not exist on Admin Dashboard. Logging out.`);
+                userRef.current = null;
+                setUser(null);
+                localStorage.removeItem(CURRENT_USER_KEY);
+                setTransactions([]);
+              }
+            }).catch(() => {});
           }
         }
       } else {
-        // If Firestore users collection is currently empty, no accounts exist on the admin dashboard
-        setAllUsers([]);
-        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([]));
-        if (userRef.current) {
-          userRef.current = null;
-          setUser(null);
-          localStorage.removeItem(CURRENT_USER_KEY);
-          setTransactions([]);
-        }
+        // If Firestore snapshot returned empty (e.g. connecting or offline), preserve the user session
+        console.log('Users snapshot is empty or reconnecting - maintaining user session.');
       }
     });
 
@@ -3467,18 +3485,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cleanEmail = email.trim().toLowerCase();
       const cleanPin = pin.trim();
 
-      // Only allow login for accounts recorded on the Admin Dashboard (in Firestore)
-      let cloudUsersList = allUsers.length > 0 ? allUsers : await getAllUsersFromFirestore();
-      let foundUser = cloudUsersList.find(
-        (u) => (u?.email || '').toLowerCase() === cleanEmail
+      // Only allow login for accounts recorded on the Admin Dashboard (in Firestore / local database)
+      // 1. Search in-memory allUsers first
+      let foundUser = allUsers.find(
+        (u) => (u?.email || '').trim().toLowerCase() === cleanEmail
       );
 
-      // If not in in-memory list yet, verify with Firestore directly
+      // 2. Search local storage registered users (admin dashboard users cache)
+      if (!foundUser) {
+        const localList = getAllRegisteredUsers();
+        foundUser = localList.find(
+          (u) => (u?.email || '').trim().toLowerCase() === cleanEmail
+        );
+      }
+
+      // 3. Query Firestore directly by email or ID
       if (!foundUser) {
         try {
-          const directMatch = await findUserByReferralCodeInFirestore(cleanEmail);
-          if (directMatch && (directMatch.email || '').toLowerCase().trim() === cleanEmail) {
+          const directMatch = await findUserByEmailOrIdInFirestore(cleanEmail);
+          if (directMatch) {
             foundUser = directMatch;
+          }
+        } catch (e) {
+          console.warn('Direct Firestore email lookup error:', e);
+        }
+      }
+
+      // 4. Query all users from Firestore
+      if (!foundUser) {
+        try {
+          const cloudUsersList = await getAllUsersFromFirestore();
+          if (cloudUsersList && cloudUsersList.length > 0) {
+            foundUser = cloudUsersList.find(
+              (u) => (u?.email || '').trim().toLowerCase() === cleanEmail
+            );
+          }
+        } catch (e) {
+          console.warn('getAllUsersFromFirestore lookup error:', e);
+        }
+      }
+
+      // 5. Final fallback: find by referral code or handle
+      if (!foundUser) {
+        try {
+          const refMatch = await findUserByReferralCodeInFirestore(cleanEmail);
+          if (refMatch && (refMatch.email || '').trim().toLowerCase() === cleanEmail) {
+            foundUser = refMatch;
           }
         } catch {}
       }
@@ -3487,9 +3539,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, message: 'This account does not exist or is not recorded on the system. Please register.' };
       }
 
-      if (foundUser.pin !== cleanPin) {
+      const userPin = (foundUser.pin !== undefined && foundUser.pin !== null) ? String(foundUser.pin).trim() : '';
+      if (userPin !== cleanPin) {
         return { success: false, message: 'Incorrect 4-digit PIN. Please check your PIN and try again.' };
       }
+
+      // Ensure foundUser is in allUsers state
+      setAllUsers((prev) => {
+        const exists = prev.some((u) => u.id === foundUser!.id || (u.email || '').trim().toLowerCase() === cleanEmail);
+        if (!exists) {
+          const updated = [...prev, foundUser!];
+          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(updated));
+          return updated;
+        }
+        return prev;
+      });
 
       if (foundUser.email) {
         const expectedRef = extractReferralCodeFromEmail(foundUser.email);

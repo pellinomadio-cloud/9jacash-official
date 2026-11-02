@@ -241,18 +241,79 @@ export async function saveUserToFirestore(user: User): Promise<void> {
   }
 }
 
-export async function getUserFromFirestore(userId: string): Promise<User | null> {
-  const path = `${USERS_COLLECTION}/${userId}`;
+export async function findUserByEmailOrIdInFirestore(identifier: string): Promise<User | null> {
+  if (!identifier || isFirestoreQuotaExhausted()) return null;
+  const clean = identifier.trim().toLowerCase();
+  const raw = identifier.trim();
+
   try {
-    const snap = await getDoc(doc(db, USERS_COLLECTION, userId));
-    if (snap.exists()) {
-      return snap.data() as User;
+    // 1. Direct document lookup by ID
+    const directSnap = await getDoc(doc(db, USERS_COLLECTION, raw));
+    if (directSnap.exists()) {
+      const data = directSnap.data() as User;
+      return { ...data, id: data.id || directSnap.id };
     }
+
+    // Also check lowercase ID if different
+    if (clean !== raw) {
+      const lowerSnap = await getDoc(doc(db, USERS_COLLECTION, clean));
+      if (lowerSnap.exists()) {
+        const data = lowerSnap.data() as User;
+        return { ...data, id: data.id || lowerSnap.id };
+      }
+    }
+
+    // 2. Query by email
+    const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', clean));
+    const snapEmail = await getDocs(qEmail);
+    if (!snapEmail.empty) {
+      const d = snapEmail.docs[0];
+      const data = d.data() as User;
+      return { ...data, id: data.id || d.id };
+    }
+
+    // Try query with raw email if differing case
+    if (raw !== clean) {
+      const qEmailRaw = query(collection(db, USERS_COLLECTION), where('email', '==', raw));
+      const snapEmailRaw = await getDocs(qEmailRaw);
+      if (!snapEmailRaw.empty) {
+        const d = snapEmailRaw.docs[0];
+        const data = d.data() as User;
+        return { ...data, id: data.id || d.id };
+      }
+    }
+
+    // 3. Query by id field
+    const qId = query(collection(db, USERS_COLLECTION), where('id', '==', raw));
+    const snapId = await getDocs(qId);
+    if (!snapId.empty) {
+      const d = snapId.docs[0];
+      const data = d.data() as User;
+      return { ...data, id: data.id || d.id };
+    }
+
+    // 4. Fallback inspection: scan collection case-insensitively
+    const snapAll = await getDocs(collection(db, USERS_COLLECTION));
+    for (const d of snapAll.docs) {
+      const data = d.data() as User;
+      if (!data) continue;
+      const uEmail = (data.email || '').trim().toLowerCase();
+      const uId = (data.id || d.id || '').trim();
+      if (uEmail === clean || uId === raw || uId === clean) {
+        return { ...data, id: data.id || d.id };
+      }
+    }
+
     return null;
   } catch (error) {
-    handleFirestoreError(error, OperationType.GET, path);
+    handleFirestoreError(error, OperationType.GET, `${USERS_COLLECTION}/${identifier}`);
     return null;
   }
+}
+
+export async function getUserFromFirestore(userId: string): Promise<User | null> {
+  if (!userId) return null;
+  return findUserByEmailOrIdInFirestore(userId);
 }
 
 export async function deleteUserFromFirestore(userId: string): Promise<boolean> {
@@ -344,7 +405,7 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
     }
   })();
 
-  const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 3000));
+  const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
   return Promise.race([searchOperation, timeoutPromise]);
 }
 
