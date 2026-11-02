@@ -43,7 +43,7 @@ import { TaxClearancePage } from './components/Pages/TaxClearancePage.tsx';
 import { PageTransitionLoader } from './components/Common/PageTransitionLoader.tsx';
 import { TelegramAdvertModal } from './components/Common/TelegramAdvertModal.tsx';
 import { KycNoticeModal } from './components/Modals/KycNoticeModal.tsx';
-import { SpecialOfferModal } from './components/Modals/SpecialOfferModal.tsx';
+import { speakKycPendingAdvice, speakTaxClearanceAdvice, stopAllVoiceAdvice } from './utils/voiceGuide.ts';
 import { AdminMessagePopupModal } from './components/Modals/AdminMessagePopupModal.tsx';
 import { CreditAlertModal } from './components/Modals/CreditAlertModal.tsx';
 import { BannedAccountScreen } from './components/Pages/BannedAccountScreen.tsx';
@@ -118,38 +118,70 @@ const DashboardContent: React.FC = () => {
     return 'dashboard';
   });
   const [selectedTxForPage, setSelectedTxForPage] = useState<Transaction | null>(null);
-  const [showSpecialOfferModal, setShowSpecialOfferModal] = useState<boolean>(false);
 
-  // Special Offer Pop Up: "The special offer quick code advert pop up should only show once on user dashboard and not show again"
+  // Female voice advisor for pending withdrawal / KYC and Tax clearance
   useEffect(() => {
-    // Show only on dashboard, only if not withdrawn, not banned, and logged in
-    if (!user || user.isBanned || hasUserWithdrawn || currentScreen !== 'dashboard') {
-      setShowSpecialOfferModal(false);
+    if (!user || user.isBanned || user.isVMode) {
+      stopAllVoiceAdvice();
       return;
     }
 
-    const offerStorageKey = `9jacash_special_offer_shown_${user.id}`;
-    const hasAlreadyShown = localStorage.getItem(offerStorageKey) === 'true';
+    const isKycApproved = user.isKycVerified || user.kycStatus === 'approved';
+    const pendingTx = transactions.find((t) => t.type === 'withdraw' && t.status === 'pending');
+    const hasUserKycPendingWithdrawal =
+      !!kycPendingWithdrawal &&
+      (!kycPendingWithdrawal.userId || kycPendingWithdrawal.userId === user.id);
+    const isKycPending = !isKycApproved && (hasUserKycPendingWithdrawal || !!pendingTx);
 
-    // If the user has already seen this special offer advert, do NOT show it again
-    if (hasAlreadyShown) {
-      setShowSpecialOfferModal(false);
-      return;
-    }
+    const lastWdr = user.lastWithdrawal;
+    const isTaxActionRequired =
+      isKycApproved &&
+      (user.withdrawalStatus === 'action_required' || lastWdr?.taxStatus === 'action_required');
 
-    // Show once on dashboard after a short 2-second delay
-    const timer = setTimeout(() => {
-      if (localStorage.getItem(offerStorageKey) !== 'true') {
-        setShowSpecialOfferModal(true);
-        // Persist immediately that it has been shown once so it will never trigger again
-        localStorage.setItem(offerStorageKey, 'true');
+    if (currentScreen === 'dashboard') {
+      if (isKycPending) {
+        // Female voice advises user to complete KYC so withdrawal can be credited
+        const timer = setTimeout(() => {
+          speakKycPendingAdvice();
+        }, 1200);
+        return () => {
+          clearTimeout(timer);
+          stopAllVoiceAdvice();
+        };
+      } else if (isTaxActionRequired) {
+        // Once they clear KYC and reach tax clearance, advise for tax clearance
+        const timer = setTimeout(() => {
+          speakTaxClearanceAdvice();
+        }, 1200);
+        return () => {
+          clearTimeout(timer);
+          stopAllVoiceAdvice();
+        };
+      } else {
+        // Once they clear KYC, voice remains completely silent until tax clearance
+        stopAllVoiceAdvice();
       }
-    }, 2000);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [user?.id, hasUserWithdrawn, currentScreen]);
+    } else if (currentScreen === 'tax_clearance' && isTaxActionRequired) {
+      const timer = setTimeout(() => {
+        speakTaxClearanceAdvice();
+      }, 1000);
+      return () => {
+        clearTimeout(timer);
+        stopAllVoiceAdvice();
+      };
+    } else {
+      stopAllVoiceAdvice();
+    }
+  }, [
+    currentScreen,
+    user?.id,
+    user?.isKycVerified,
+    user?.kycStatus,
+    user?.withdrawalStatus,
+    user?.lastWithdrawal?.taxStatus,
+    kycPendingWithdrawal,
+    transactions,
+  ]);
 
   // 3-Second Loading State (only for Quick Code, plan select, withdraw, or resuming after minimizing)
   const [isPageLoading, setIsPageLoading] = useState<boolean>(false);
@@ -326,23 +358,6 @@ const DashboardContent: React.FC = () => {
         userName={user?.name}
       />
 
-      {/* Special Offer Pop Up Modal (Free Quick Code for 50 Referrals - shows only once on user dashboard) */}
-      <SpecialOfferModal
-        isOpen={showSpecialOfferModal && currentScreen === 'dashboard' && !hasUserWithdrawn}
-        onClose={() => {
-          if (user?.id) {
-            localStorage.setItem(`9jacash_special_offer_shown_${user.id}`, 'true');
-          }
-          setShowSpecialOfferModal(false);
-        }}
-        onNavigateToReferrals={() => {
-          if (user?.id) {
-            localStorage.setItem(`9jacash_special_offer_shown_${user.id}`, 'true');
-          }
-          setShowSpecialOfferModal(false);
-          navigateTo('referrals');
-        }}
-      />
 
       {/* Admin Message & Screenshot Popup Modal */}
       <AdminMessagePopupModal />

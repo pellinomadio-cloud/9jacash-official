@@ -1,7 +1,9 @@
 import React from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
-import { ShieldAlert, ShieldCheck, ChevronRight, Clock, Sparkles } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ChevronRight, Clock, Sparkles, Volume2 } from 'lucide-react';
+import { speakKycPendingAdvice, speakTaxClearanceAdvice } from '../../utils/voiceGuide.ts';
+import { soundFx } from '../../utils/sound.ts';
 
 interface PendingKycBannerProps {
   onActivateKyc: () => void;
@@ -84,7 +86,7 @@ export const PendingKycBanner: React.FC<PendingKycBannerProps> = ({
                 : `Your 11.9% tax fee (${formatNaira(taxAmount)}) receipt was received and is currently undergoing compliance review.`}
             </p>
 
-            <div className="pt-1.5">
+            <div className="pt-1.5 flex items-center gap-2 flex-wrap">
               <button
                 type="button"
                 onClick={onProceedToTaxClearance}
@@ -93,6 +95,21 @@ export const PendingKycBanner: React.FC<PendingKycBannerProps> = ({
                 <ShieldCheck className="w-3.5 h-3.5 stroke-[2.5]" />
                 <span>{isTaxActionRequired ? 'Complete Tax Clearance (99% Done)' : 'View Tax Clearance Status'}</span>
                 <ChevronRight className="w-3.5 h-3.5 stroke-[3]" />
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundFx.playClick();
+                  speakTaxClearanceAdvice();
+                }}
+                className={`p-2.5 rounded-full border transition-all cursor-pointer shadow-xs active:scale-95 flex items-center justify-center ${
+                  isLight
+                    ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300'
+                    : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40'
+                }`}
+                title="Listen to Voice Advice"
+              >
+                <Volume2 className="w-4 h-4 text-amber-500" />
               </button>
             </div>
           </div>
@@ -151,15 +168,30 @@ export const PendingKycBanner: React.FC<PendingKycBannerProps> = ({
             Your transfer to {destinationBank} requires 1-time KYC account activation ({formatNaira(kycFee)}) to complete and disburse.
           </p>
 
-          <div className="pt-1.5">
+          <div className="pt-1.5 flex items-center gap-2 flex-wrap">
             <button
               type="button"
               onClick={onActivateKyc}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-black font-extrabold text-xs shadow-md shadow-amber-500/25 transition-all active:scale-95 cursor-pointer border border-amber-200"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-black font-extrabold text-xs shadow-md shadow-amber-500/25 transition-all active:scale-95 cursor-pointer border border-amber-200"
             >
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>Activate KYC ({formatNaira(kycFee)})</span>
               <ChevronRight className="w-3.5 h-3.5 stroke-[2.5]" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                soundFx.playClick();
+                speakKycPendingAdvice();
+              }}
+              className={`p-2.5 rounded-full border transition-all cursor-pointer shadow-xs active:scale-95 flex items-center justify-center ${
+                isLight
+                  ? 'bg-amber-100 hover:bg-amber-200 text-amber-900 border-amber-300'
+                  : 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40'
+              }`}
+              title="Listen to Female Voice Advice"
+            >
+              <Volume2 className="w-4 h-4 text-amber-500" />
             </button>
           </div>
         </div>

