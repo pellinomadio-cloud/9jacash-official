@@ -63,7 +63,7 @@ export const TIER_LIMITS: Record<number, number> = {
 
 export const TIER_UPGRADE_PRICES: Record<number, number> = {
   2: 6600, // ₦6,600 to upgrade to Tier 2
-  3: 8000, // ₦8,000 to upgrade to Tier 3
+  3: 15000, // ₦15,000 to upgrade to Tier 3
 };
 
 export const REFERRAL_BONUS_AMOUNT = 15000; // ₦15,000 instant bonus per referral

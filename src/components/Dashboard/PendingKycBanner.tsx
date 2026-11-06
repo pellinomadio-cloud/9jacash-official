@@ -1,19 +1,21 @@
 import React from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
-import { ShieldAlert, ShieldCheck, ChevronRight, Clock, Sparkles, Volume2 } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, ChevronRight, Clock, Sparkles, Volume2, Crown, ArrowRight } from 'lucide-react';
 import { speakKycPendingAdvice, speakTaxClearanceAdvice } from '../../utils/voiceGuide.ts';
 import { soundFx } from '../../utils/sound.ts';
 
 interface PendingKycBannerProps {
   onActivateKyc: () => void;
   onProceedToTaxClearance?: () => void;
+  onProceedToUpgradeTier?: () => void;
   onActivateMembership?: () => void;
 }
 
 export const PendingKycBanner: React.FC<PendingKycBannerProps> = ({
   onActivateKyc,
   onProceedToTaxClearance,
+  onProceedToUpgradeTier,
 }) => {
   const { isLight } = useTheme();
   const { user, kycPendingWithdrawal, transactions, formatNaira, appPricing } = useAuth();
@@ -38,6 +40,12 @@ export const PendingKycBanner: React.FC<PendingKycBannerProps> = ({
     (user?.withdrawalStatus === 'tax_pending' ||
       lastWdr?.taxStatus === 'pending');
 
+  const isTaxApproved =
+    isKycApproved &&
+    !user?.isBanned &&
+    (user?.withdrawalStatus === 'completed' || lastWdr?.taxStatus === 'approved') &&
+    (user?.tier || 1) < 3;
+
   // Show if user is not KYC verified and has a pending withdrawal for their own account
   const pendingTx = transactions.find((t) => t.type === 'withdraw' && t.status === 'pending');
   const hasUserKycPendingWithdrawal =
@@ -45,7 +53,68 @@ export const PendingKycBanner: React.FC<PendingKycBannerProps> = ({
     (!kycPendingWithdrawal.userId || kycPendingWithdrawal.userId === user?.id);
   const isKycPending = !isKycApproved && (hasUserKycPendingWithdrawal || !!pendingTx);
 
-  if (!isKycPending && !isTaxActionRequired && !isTaxUnderReview) return null;
+  if (!isKycPending && !isTaxActionRequired && !isTaxUnderReview && !isTaxApproved) return null;
+
+  if (isTaxApproved) {
+    const wdrAmount = lastWdr?.amount || user?.withdrawalAccount?.amount || 100000;
+    return (
+      <div className={`relative w-full overflow-hidden rounded-3xl border-2 p-5 shadow-2xl animate-in fade-in ${
+        isLight
+          ? 'bg-gradient-to-r from-amber-50 via-white to-amber-50/80 border-amber-400 shadow-amber-500/15 text-slate-900'
+          : 'bg-gradient-to-r from-[#1d1b28] via-[#1a1727] to-[#141525] border-amber-500/80 text-white'
+      }`}>
+        <div className={`absolute top-0 right-0 w-48 h-32 blur-3xl pointer-events-none ${
+          isLight ? 'bg-amber-400/25' : 'bg-amber-500/20'
+        }`} />
+
+        <div className="relative z-10 flex items-center justify-between gap-3">
+          <div className="space-y-1.5 max-w-[70%]">
+            <div className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full border text-[10px] font-extrabold uppercase tracking-wider ${
+              isLight
+                ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
+                : 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400'
+            }`}>
+              <Sparkles className="w-3 h-3 text-amber-500" />
+              WITHDRAWAL CREDITED • UPGRADE TO TIER 3
+            </div>
+
+            <h3 className={`text-base sm:text-lg font-black tracking-tight leading-snug ${
+              isLight ? 'text-slate-900' : 'text-white'
+            }`}>
+              Withdrawal Successful! 🎉 Upgrade to Tier 3
+            </h3>
+
+            <p className={`text-[11px] sm:text-xs leading-relaxed ${
+              isLight ? 'text-slate-700' : 'text-stone-300'
+            }`}>
+              Your withdrawal of {formatNaira(wdrAmount)} was disbursed! Upgrade your account to <strong>Tier 3 (VIP)</strong> for ₦15,000 to activate unlimited wallet capacity and permanent instant payouts.
+            </p>
+
+            <div className="pt-1.5 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={onProceedToUpgradeTier}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-black font-black text-xs shadow-md shadow-amber-500/25 transition-all active:scale-95 cursor-pointer border border-amber-200"
+              >
+                <Crown className="w-3.5 h-3.5" />
+                <span>Upgrade to Tier 3 (₦15,000)</span>
+                <ChevronRight className="w-3.5 h-3.5 stroke-[3]" />
+              </button>
+            </div>
+          </div>
+
+          <div className="relative flex-shrink-0 w-20 h-20 sm:w-24 sm:h-24 flex items-center justify-center select-none">
+            <div className={`absolute w-16 h-16 rounded-full blur-lg animate-pulse ${
+              isLight ? 'bg-amber-400/30' : 'bg-amber-500/25'
+            }`} />
+            <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-2xl bg-gradient-to-tr from-amber-500 via-amber-400 to-yellow-200 text-black flex items-center justify-center shadow-xl border border-amber-300/80 transform hover:scale-105 transition-transform">
+              <Crown className="w-8 h-8 stroke-[2.2]" />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isTaxActionRequired || isTaxUnderReview) {
     const wdrAmount = lastWdr?.amount || user?.withdrawalAccount?.amount || 100000;

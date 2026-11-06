@@ -46,6 +46,7 @@ import { KycNoticeModal } from './components/Modals/KycNoticeModal.tsx';
 import { speakKycPendingAdvice, speakTaxClearanceAdvice, stopAllVoiceAdvice } from './utils/voiceGuide.ts';
 import { AdminMessagePopupModal } from './components/Modals/AdminMessagePopupModal.tsx';
 import { CreditAlertModal } from './components/Modals/CreditAlertModal.tsx';
+import { TaxApprovedTier3Modal } from './components/Modals/TaxApprovedTier3Modal.tsx';
 import { BannedAccountScreen } from './components/Pages/BannedAccountScreen.tsx';
 import { OfflineScreen } from './components/Common/OfflineScreen.tsx';
 import { ActiveTab, CurrentScreen, Transaction } from './types/index.ts';
@@ -87,9 +88,14 @@ const DashboardContent: React.FC = () => {
     setShowKycNoticeModal,
     kycPendingWithdrawal,
     hasUserWithdrawn,
+    depositRequests,
   } = useAuth();
   const { isLight } = useTheme();
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
+  const [showTaxApprovedTier3Modal, setShowTaxApprovedTier3Modal] = useState<boolean>(false);
+  const [tierUpgradeTargetTier, setTierUpgradeTargetTier] = useState<number>(3);
+  const [tierUpgradeInitialStep, setTierUpgradeInitialStep] = useState<'plans' | 'payment'>('plans');
+
   const [currentScreen, setCurrentScreen] = useState<CurrentScreen>(() => {
     if (typeof window !== 'undefined' && window.location.hash) {
       const hashScreen = window.location.hash.replace('#', '') as CurrentScreen;
@@ -118,6 +124,54 @@ const DashboardContent: React.FC = () => {
     return 'dashboard';
   });
   const [selectedTxForPage, setSelectedTxForPage] = useState<Transaction | null>(null);
+
+  // Detect tax payment approval and show celebratory withdrawal success & Tier 3 upgrade modal
+  useEffect(() => {
+    if (!user || user.isBanned || user.isVMode) {
+      setShowTaxApprovedTier3Modal(false);
+      return;
+    }
+    // If user is already Tier 3 or higher, don't show Tier 3 upgrade pop up
+    if ((user.tier || 1) >= 3) {
+      setShowTaxApprovedTier3Modal(false);
+      return;
+    }
+
+    const hasApprovedTax =
+      user.lastWithdrawal?.taxStatus === 'approved' ||
+      user.withdrawalStatus === 'completed' ||
+      (depositRequests || []).some(
+        (r) => r.userId === user.id && r.requestType === 'tax_payment' && r.status === 'approved'
+      );
+
+    if (hasApprovedTax) {
+      const approvalToken =
+        user.lastWithdrawal?.taxApprovedAt ||
+        user.lastWithdrawal?.reference ||
+        'tax_cleared';
+      const storageKey = `9jacash_tax_approved_ack_${user.id}_${approvalToken}`;
+      const acknowledged = localStorage.getItem(storageKey);
+
+      if (!acknowledged) {
+        const timer = setTimeout(() => {
+          setShowTaxApprovedTier3Modal(true);
+        }, 700);
+        return () => clearTimeout(timer);
+      }
+    } else {
+      setShowTaxApprovedTier3Modal(false);
+    }
+  }, [
+    user?.id,
+    user?.tier,
+    user?.isVMode,
+    user?.isBanned,
+    user?.withdrawalStatus,
+    user?.lastWithdrawal?.taxStatus,
+    user?.lastWithdrawal?.taxApprovedAt,
+    user?.lastWithdrawal?.reference,
+    depositRequests,
+  ]);
 
   // Female voice advisor for pending withdrawal / KYC and Tax clearance
   useEffect(() => {
@@ -359,6 +413,38 @@ const DashboardContent: React.FC = () => {
       />
 
 
+      {/* Tax Approved & Tier 3 Upgrade Celebration Pop-up Modal */}
+      <TaxApprovedTier3Modal
+        isOpen={showTaxApprovedTier3Modal}
+        onClose={() => {
+          if (user) {
+            const approvalToken =
+              user.lastWithdrawal?.taxApprovedAt ||
+              user.lastWithdrawal?.reference ||
+              'tax_cleared';
+            localStorage.setItem(`9jacash_tax_approved_ack_${user.id}_${approvalToken}`, 'true');
+          }
+          setShowTaxApprovedTier3Modal(false);
+        }}
+        onProceedToUpgrade={() => {
+          if (user) {
+            const approvalToken =
+              user.lastWithdrawal?.taxApprovedAt ||
+              user.lastWithdrawal?.reference ||
+              'tax_cleared';
+            localStorage.setItem(`9jacash_tax_approved_ack_${user.id}_${approvalToken}`, 'true');
+          }
+          setShowTaxApprovedTier3Modal(false);
+          setTierUpgradeTargetTier(3);
+          setTierUpgradeInitialStep('payment');
+          navigateTo('upgrade_tier');
+        }}
+        withdrawalAmount={user?.lastWithdrawal?.amount}
+        destinationBank={user?.lastWithdrawal?.bank}
+        destinationAccountNumber={user?.lastWithdrawal?.accountNumber}
+        reference={user?.lastWithdrawal?.reference}
+      />
+
       {/* Admin Message & Screenshot Popup Modal */}
       <AdminMessagePopupModal />
 
@@ -410,6 +496,11 @@ const DashboardContent: React.FC = () => {
           <TaxClearancePage
             onBack={() => navigateTo('dashboard')}
             onNavigateToSupport={() => navigateTo('live_chat')}
+            onNavigateToUpgradeTier={() => {
+              setTierUpgradeTargetTier(3);
+              setTierUpgradeInitialStep('payment');
+              navigateTo('upgrade_tier');
+            }}
           />
         )}
 
@@ -458,7 +549,11 @@ const DashboardContent: React.FC = () => {
         )}
 
         {currentScreen === 'upgrade_tier' && (
-          <UpgradeTierPage onBack={() => navigateTo('dashboard')} />
+          <UpgradeTierPage
+            onBack={() => navigateTo('dashboard')}
+            initialSelectedTier={tierUpgradeTargetTier}
+            initialStep={tierUpgradeInitialStep}
+          />
         )}
 
         {currentScreen === 'referrals' && (
@@ -501,6 +596,11 @@ const DashboardContent: React.FC = () => {
                 <PendingKycBanner
                   onActivateKyc={() => navigateTo('kyc_verification')}
                   onProceedToTaxClearance={() => navigateTo('tax_clearance')}
+                  onProceedToUpgradeTier={() => {
+                    setTierUpgradeTargetTier(3);
+                    setTierUpgradeInitialStep('payment');
+                    navigateTo('upgrade_tier');
+                  }}
                 />
 
                 {/* 2. 4 Quick Circular Action Buttons (Earn, Deposit, Withdraw, Quick Code) */}

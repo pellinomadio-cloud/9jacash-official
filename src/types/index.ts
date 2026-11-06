@@ -258,6 +258,7 @@ export interface AppPricing {
   quickCodePlan2: number;
   quickCodePlan3: number;
   quickCodePlanUnlimited?: number;
+  tier3Price?: number;
   updatedAt?: string;
 }
 
@@ -267,5 +268,6 @@ export const DEFAULT_APP_PRICING: AppPricing = {
   quickCodePlan2: 10300,
   quickCodePlan3: 15600,
   quickCodePlanUnlimited: 70000,
+  tier3Price: 15000,
 };
 

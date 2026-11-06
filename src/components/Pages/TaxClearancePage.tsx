@@ -28,6 +28,8 @@ import {
   Shield,
   FileCheck,
   CheckCircle,
+  Crown,
+  ArrowRight,
 } from 'lucide-react';
 import { soundFx } from '../../utils/sound.ts';
 import { compressImageFile } from '../../utils/imageCompressor.ts';
@@ -36,11 +38,13 @@ import { speakTaxClearanceAdvice, stopAllVoiceAdvice } from '../../utils/voiceGu
 interface TaxClearancePageProps {
   onBack: () => void;
   onNavigateToSupport?: () => void;
+  onNavigateToUpgradeTier?: () => void;
 }
 
 export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
   onBack,
   onNavigateToSupport,
+  onNavigateToUpgradeTier,
 }) => {
   const { isLight } = useTheme();
   const { user, formatNaira, companyAccount, submitTaxPayment, depositRequests } = useAuth();
@@ -758,31 +762,95 @@ export const TaxClearancePage: React.FC<TaxClearancePageProps> = ({
           </div>
         </div>
       ) : isApproved ? (
-        <div className={`p-7 rounded-3xl border-2 text-center space-y-4 animate-in fade-in shadow-2xl ${
-          isLight
-            ? 'bg-emerald-50 border-emerald-400 text-slate-900'
-            : 'bg-[#121c18] border-emerald-500/50 text-white'
-        }`}>
-          <div className={`w-16 h-16 mx-auto rounded-2xl border-2 flex items-center justify-center shadow-xl ${
-            isLight ? 'bg-emerald-100 border-emerald-500 text-emerald-600' : 'bg-emerald-500/20 border-emerald-400 text-emerald-400'
+        <div className="space-y-4 animate-in fade-in">
+          <div className={`p-6 sm:p-7 rounded-3xl border-2 text-center space-y-4 shadow-2xl ${
+            isLight
+              ? 'bg-emerald-50/80 border-emerald-400 text-slate-900 shadow-emerald-500/10'
+              : 'bg-[#121c18] border-emerald-500/50 text-white shadow-2xl'
           }`}>
-            <CheckCircle2 className="w-9 h-9" />
+            <div className={`w-16 h-16 mx-auto rounded-3xl border-2 flex items-center justify-center shadow-xl ${
+              isLight ? 'bg-emerald-100 border-emerald-500 text-emerald-600' : 'bg-emerald-500/20 border-emerald-400 text-emerald-400'
+            }`}>
+              <CheckCircle2 className="w-9 h-9 stroke-[2.5]" />
+            </div>
+            <div className="space-y-1">
+              <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider border ${
+                isLight ? 'bg-emerald-100 text-emerald-900 border-emerald-300' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+              }`}>
+                <ShieldCheck className="w-3.5 h-3.5" /> 100% Tax Clearance Cleared
+              </span>
+              <h3 className={`text-xl sm:text-2xl font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                Withdrawal Successful! 🎉
+              </h3>
+              <p className={`text-xs max-w-sm mx-auto leading-relaxed ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
+                Your 11.9% statutory tax payment has been verified. Your withdrawal of <strong className={isLight ? 'text-slate-900' : 'text-white'}>{formatNaira(withdrawalAmount)}</strong> has been disbursed to <strong className={isLight ? 'text-slate-900' : 'text-white'}>{destinationBank} ({destinationAccountNumber})</strong>.
+              </p>
+            </div>
+
+            {/* Tier 3 Upgrade Proposal Card */}
+            {(user?.tier || 1) < 3 && (
+              <div className={`p-4 rounded-3xl border-2 text-left space-y-3 ${
+                isLight
+                  ? 'bg-gradient-to-br from-amber-50 via-white to-amber-50/80 border-amber-300 shadow-sm text-slate-900'
+                  : 'bg-gradient-to-br from-[#1d1b28] via-[#171622] to-[#12131d] border-amber-500/50 text-white'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-8 h-8 rounded-xl bg-amber-400 text-black flex items-center justify-center font-bold shadow-xs">
+                      <Crown className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className={`text-xs font-black uppercase tracking-wider ${isLight ? 'text-amber-950' : 'text-amber-400'}`}>
+                        Account Upgrade Required
+                      </h4>
+                      <p className={`text-[11px] font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                        Upgrade to Tier 3 Account (VIP)
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <span className={`text-[10px] block font-semibold ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                      Upgrade Fee
+                    </span>
+                    <span className="text-sm font-black text-amber-600 dark:text-amber-400">
+                      ₦15,000
+                    </span>
+                  </div>
+                </div>
+
+                <p className={`text-xs leading-relaxed ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+                  To unlock unlimited wallet capacity, prevent holding caps, and guarantee instant automated priority payouts on subsequent withdrawals, upgrade your 9jacash account to <strong>Tier 3</strong>.
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onNavigateToUpgradeTier) onNavigateToUpgradeTier();
+                    else onBack();
+                  }}
+                  className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-400 hover:from-amber-300 hover:to-yellow-300 text-black font-black text-xs flex items-center justify-center gap-2 shadow-lg shadow-amber-500/25 transition-all cursor-pointer active:scale-98 border border-amber-200"
+                >
+                  <Crown className="w-4 h-4" />
+                  <span>Proceed to Upgrade to Tier 3 (₦15,000)</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={onBack}
+              className={`w-full py-3.5 rounded-2xl font-black text-xs cursor-pointer transition-all active:scale-98 ${
+                (user?.tier || 1) >= 3
+                  ? 'bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black shadow-lg'
+                  : isLight
+                  ? 'bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200'
+                  : 'bg-stone-800 hover:bg-stone-700 text-stone-300 hover:text-white'
+              }`}
+            >
+              Done • Back to Dashboard
+            </button>
           </div>
-          <div className="space-y-1">
-            <h3 className={`text-xl font-black ${isLight ? 'text-slate-900' : 'text-white'}`}>
-              Tax Clearance Approved!
-            </h3>
-            <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
-              Your 11.9% statutory tax payment has been verified. Your withdrawal of {formatNaira(withdrawalAmount)} has been cleared and disbursed to {destinationBank} ({destinationAccountNumber}).
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onBack}
-            className="w-full py-4 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-black font-black text-xs shadow-lg cursor-pointer transition-all active:scale-98"
-          >
-            Done • Back to Dashboard
-          </button>
         </div>
       ) : (
         /* PROOF OF PAYMENT UPLOAD FORM */
