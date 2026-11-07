@@ -248,7 +248,7 @@ const DashboardContent: React.FC = () => {
       } else if (needsNewUserQuickCodeAdvice && !showTelegramAdvert) {
         // Cheering female voice advises new user without a withdrawal or quick code to buy a quick code and earn
         const timer = setTimeout(() => {
-          speakNewUserQuickCodeAdvice();
+          speakNewUserQuickCodeAdvice(user.id);
         }, 800);
         return () => {
           clearTimeout(timer);
