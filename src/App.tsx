@@ -43,7 +43,12 @@ import { TaxClearancePage } from './components/Pages/TaxClearancePage.tsx';
 import { PageTransitionLoader } from './components/Common/PageTransitionLoader.tsx';
 import { TelegramAdvertModal } from './components/Common/TelegramAdvertModal.tsx';
 import { KycNoticeModal } from './components/Modals/KycNoticeModal.tsx';
-import { speakKycPendingAdvice, speakTaxClearanceAdvice, stopAllVoiceAdvice } from './utils/voiceGuide.ts';
+import {
+  speakNewUserQuickCodeAdvice,
+  speakKycPendingAdvice,
+  speakTaxClearanceAdvice,
+  stopAllVoiceAdvice,
+} from './utils/voiceGuide.ts';
 import { AdminMessagePopupModal } from './components/Modals/AdminMessagePopupModal.tsx';
 import { CreditAlertModal } from './components/Modals/CreditAlertModal.tsx';
 import { TaxApprovedTier3Modal } from './components/Modals/TaxApprovedTier3Modal.tsx';
@@ -173,7 +178,7 @@ const DashboardContent: React.FC = () => {
     depositRequests,
   ]);
 
-  // Female voice advisor for pending withdrawal / KYC and Tax clearance
+  // Female voice advisor for new user Quick Code guidance, pending withdrawal / KYC, and Tax clearance
   useEffect(() => {
     if (!user || user.isBanned || user.isVMode) {
       stopAllVoiceAdvice();
@@ -192,7 +197,36 @@ const DashboardContent: React.FC = () => {
       isKycApproved &&
       (user.withdrawalStatus === 'action_required' || lastWdr?.taxStatus === 'action_required');
 
-    if (currentScreen === 'dashboard') {
+    // Check if user has ever made a withdrawal
+    const hasMadeWithdrawal =
+      hasUserWithdrawn ||
+      !!user.lastWithdrawal ||
+      !!user.withdrawalAccount ||
+      hasUserKycPendingWithdrawal ||
+      (!!user.withdrawalStatus && user.withdrawalStatus !== 'none') ||
+      transactions.some((t) => t.type === 'withdraw');
+
+    // Check if user already has an active quick code OR has purchased / has a pending quick code purchase
+    const hasQuickCodeOrPendingPurchase =
+      (Array.isArray(user.quickCodes) && user.quickCodes.length > 0) ||
+      (depositRequests || []).some(
+        (r) =>
+          r.userId === user.id &&
+          r.requestType === 'quickcode' &&
+          (r.status === 'pending' || r.status === 'approved')
+      ) ||
+      (user.submittedRequests || []).some(
+        (r) =>
+          r.requestType === 'quickcode' &&
+          (r.status === 'pending' || r.status === 'approved')
+      ) ||
+      transactions.some(
+        (t) => t.type === 'quickcode' && (t.status === 'pending' || t.status === 'successful')
+      );
+
+    const needsNewUserQuickCodeAdvice = !hasMadeWithdrawal && !hasQuickCodeOrPendingPurchase;
+
+    if (currentScreen === 'dashboard' && activeTab === 'home') {
       if (isKycPending) {
         // Female voice advises user to complete KYC so withdrawal can be credited
         const timer = setTimeout(() => {
@@ -211,8 +245,17 @@ const DashboardContent: React.FC = () => {
           clearTimeout(timer);
           stopAllVoiceAdvice();
         };
+      } else if (needsNewUserQuickCodeAdvice && !showTelegramAdvert) {
+        // Cheering female voice advises new user without a withdrawal or quick code to buy a quick code and earn
+        const timer = setTimeout(() => {
+          speakNewUserQuickCodeAdvice();
+        }, 800);
+        return () => {
+          clearTimeout(timer);
+          stopAllVoiceAdvice();
+        };
       } else {
-        // Once they clear KYC, voice remains completely silent until tax clearance
+        // Silence once code is purchased / pending, or after KYC until tax clearance
         stopAllVoiceAdvice();
       }
     } else if (currentScreen === 'tax_clearance' && isTaxActionRequired) {
@@ -228,12 +271,18 @@ const DashboardContent: React.FC = () => {
     }
   }, [
     currentScreen,
+    activeTab,
+    showTelegramAdvert,
+    hasUserWithdrawn,
     user?.id,
     user?.isKycVerified,
     user?.kycStatus,
     user?.withdrawalStatus,
     user?.lastWithdrawal?.taxStatus,
+    user?.quickCodes,
+    user?.submittedRequests,
     kycPendingWithdrawal,
+    depositRequests,
     transactions,
   ]);
 

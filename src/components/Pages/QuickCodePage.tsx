@@ -27,7 +27,7 @@ import {
 
 import { PageTransitionLoader } from '../Common/PageTransitionLoader.tsx';
 import { compressImageFile } from '../../utils/imageCompressor.ts';
-import { voiceGuide, VOICE_GUIDE_TEXT } from '../../utils/voiceGuide.ts';
+import { voiceGuide, VOICE_GUIDE_TEXT, stopAllVoiceAdvice } from '../../utils/voiceGuide.ts';
 import { sendCodePurchasedDeviceNotification } from '../../utils/deviceNotifications.ts';
 
 interface QuickCodePageProps {
@@ -74,6 +74,13 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
     (r) => r.userId === user?.id && r.requestType === 'quickcode' && r.status === 'pending'
   );
 
+  const hasPurchasedOrPendingCode =
+    !!pendingQuickCodeReq ||
+    (Array.isArray(user?.quickCodes) && user.quickCodes.length > 0) ||
+    depositRequests.some(
+      (r) => r.userId === user?.id && r.requestType === 'quickcode' && r.status === 'approved'
+    );
+
   const copyToClipboard = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
     setCopied(field);
@@ -92,13 +99,16 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
     return () => {
       unsub();
       voiceGuide.stop();
+      stopAllVoiceAdvice();
     };
   }, []);
 
   const handleSelectPlan = (plan: Plan) => {
     if (pendingQuickCodeReq) return;
-    // Play female voice explanation immediately on plan selection click
-    voiceGuide.play();
+    // Play female voice explanation on plan selection only if user hasn't purchased or submitted a pending code
+    if (!hasPurchasedOrPendingCode) {
+      voiceGuide.play();
+    }
     setLoadingPlanTitle(plan.name);
     setIsPlanLoading(true);
     setTimeout(() => {
@@ -160,6 +170,10 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
       setIsUploading(false);
       return;
     }
+
+    // Immediately stop any quick code purchase voice once they submit a code purchase
+    voiceGuide.stop();
+    stopAllVoiceAdvice();
 
     setTimeout(() => {
       setIsUploading(false);
