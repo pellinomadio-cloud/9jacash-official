@@ -434,6 +434,124 @@ class SoundEffects {
       // Ignore
     }
   }
+
+  // Block Blast specific sound effects
+  playBlockPlace() {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.exponentialRampToValueAtTime(160, now + 0.05);
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.05);
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.05);
+    } catch {
+      // Ignore
+    }
+  }
+
+  playBlockBlastClear(lines = 1, combo = 1) {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+
+      // Base pentatonic scale with pitch ascending with lines and combo
+      const baseFreqs = [523.25, 659.25, 783.99, 1046.5, 1318.51, 1567.98];
+      const pitchOffset = Math.min(3, combo - 1);
+      const notesToPlay = Math.min(baseFreqs.length, 3 + lines);
+
+      for (let i = 0; i < notesToPlay; i++) {
+        const freqIdx = Math.min(baseFreqs.length - 1, i + pitchOffset);
+        const freq = baseFreqs[freqIdx];
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sine';
+        const start = now + i * 0.045;
+        osc.frequency.setValueAtTime(freq, start);
+        osc.frequency.exponentialRampToValueAtTime(freq * 1.05, start + 0.18);
+        gain.gain.setValueAtTime(0.22, start);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.22);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.22);
+      }
+
+      // Add a crisp glass explosion sparkle
+      const sparkleOsc = this.ctx.createOscillator();
+      const sparkleGain = this.ctx.createGain();
+      sparkleOsc.type = 'triangle';
+      sparkleOsc.frequency.setValueAtTime(1400 + combo * 100, now);
+      sparkleOsc.frequency.exponentialRampToValueAtTime(300, now + 0.15);
+      sparkleGain.gain.setValueAtTime(0.15, now);
+      sparkleGain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      sparkleOsc.connect(sparkleGain);
+      sparkleGain.connect(this.ctx.destination);
+      sparkleOsc.start(now);
+      sparkleOsc.stop(now + 0.15);
+    } catch {
+      // Ignore
+    }
+  }
+
+  playComboFanfare(combo = 2) {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      const notes = [440, 554.37, 659.25, 880, 1108.73];
+      notes.forEach((freq, idx) => {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'triangle';
+        const start = now + idx * 0.06;
+        osc.frequency.setValueAtTime(freq * (1 + combo * 0.05), start);
+        gain.gain.setValueAtTime(0.2, start);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.35);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.35);
+      });
+    } catch {
+      // Ignore
+    }
+  }
+
+  playBlockGameOver() {
+    try {
+      this.init();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      const notes = [587.33, 523.25, 440, 349.23];
+      notes.forEach((freq, idx) => {
+        if (!this.ctx) return;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        const start = now + idx * 0.1;
+        osc.frequency.setValueAtTime(freq, start);
+        osc.frequency.linearRampToValueAtTime(freq * 0.9, start + 0.25);
+        gain.gain.setValueAtTime(0.18, start);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.3);
+        osc.connect(gain);
+        gain.connect(this.ctx.destination);
+        osc.start(start);
+        osc.stop(start + 0.3);
+      });
+    } catch {
+      // Ignore
+    }
+  }
 }
 
 export const soundFx = new SoundEffects();

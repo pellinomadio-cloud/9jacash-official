@@ -208,6 +208,18 @@ interface AuthContextType {
     message: string;
     newBalance: number;
   };
+  claimBlockBlastReward: (
+    linesCleared: number,
+    comboCount?: number,
+    scorePoints?: number
+  ) => {
+    success: boolean;
+    amount: number;
+    creditedAmount: number;
+    pendingAmount: number;
+    message: string;
+    newBalance: number;
+  };
   hasUserWithdrawn: boolean;
   claimFreeReferralQuickCode: () => {
     success: boolean;
@@ -4213,6 +4225,137 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
   };
 
+  // Block Blast Puzzle reward engine:
+  // 1 line = ₦500, 2 lines = ₦1,200, 3 lines = ₦2,000, 4+ lines = ₦3,500
+  // Combo streak adds +₦300 * combo
+  const claimBlockBlastReward = (
+    linesCleared: number,
+    comboCount = 1,
+    scorePoints = 0
+  ): {
+    success: boolean;
+    amount: number;
+    creditedAmount: number;
+    pendingAmount: number;
+    message: string;
+    newBalance: number;
+  } => {
+    const currentUser = userRef.current || user;
+    if (!currentUser) {
+      return {
+        success: false,
+        amount: 0,
+        creditedAmount: 0,
+        pendingAmount: 0,
+        message: 'Please log in to claim earnings.',
+        newBalance: 0,
+      };
+    }
+
+    // Determine prize amount based on lines cleared and combo
+    let prizeAmount = 500;
+    if (linesCleared === 1) {
+      prizeAmount = 500;
+    } else if (linesCleared === 2) {
+      prizeAmount = 1200;
+    } else if (linesCleared === 3) {
+      prizeAmount = 2000;
+    } else if (linesCleared >= 4) {
+      prizeAmount = 3500;
+    }
+
+    if (comboCount > 1) {
+      prizeAmount += Math.min(2000, (comboCount - 1) * 350);
+    }
+
+    // High score bonus (e.g., if milestone triggered)
+    if (scorePoints >= 5000) {
+      prizeAmount += 1000;
+    }
+
+    // Cap at ₦5,000 max per single blast event
+    prizeAmount = Math.min(5000, Math.max(250, prizeAmount));
+
+    const currentTier = currentUser.tier || 1;
+    const tierLimit = getUserTierLimit(currentTier);
+    const currentBalance = currentUser.balance || 0;
+
+    let creditedAmount = 0;
+    let newBalance = currentBalance;
+
+    if (currentTier >= 3) {
+      creditedAmount = prizeAmount;
+      newBalance = currentBalance + creditedAmount;
+    } else if (currentBalance >= tierLimit) {
+      creditedAmount = 0;
+      newBalance = tierLimit;
+    } else if (currentBalance + prizeAmount > tierLimit) {
+      creditedAmount = tierLimit - currentBalance;
+      newBalance = tierLimit;
+    } else {
+      creditedAmount = prizeAmount;
+      newBalance = currentBalance + creditedAmount;
+    }
+
+    if (newBalance < currentBalance) {
+      newBalance = currentBalance;
+    }
+
+    const now = Date.now();
+    const nowObj = new Date(now);
+    const dateStr = nowObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeStr = nowObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    const reference = 'BLST' + Math.floor(10000000 + Math.random() * 90000000);
+
+    const comboLabel = comboCount > 1 ? ` • Combo x${comboCount} 🔥` : '';
+    const lineLabel = linesCleared > 1 ? `${linesCleared} Lines Cleared` : '1 Line Cleared';
+
+    const newTx: Transaction = {
+      id: 'tx_blast_' + now + '_' + Math.random().toString(36).substring(2, 6),
+      type: 'earn',
+      title: 'Block Blast Puzzle Reward',
+      subtitle: `${lineLabel}${comboLabel} (+₦${prizeAmount.toLocaleString()} won)`,
+      amount: prizeAmount,
+      date: dateStr,
+      time: timeStr,
+      isCredit: true,
+      status: 'successful',
+      reference,
+      timestamp: now,
+      createdAt: nowObj.toISOString(),
+    };
+
+    const updatedTxList = sortTransactionsNewestFirst([newTx, ...transactions]);
+    setTransactions(updatedTxList);
+    safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${currentUser.id}`, JSON.stringify(updatedTxList));
+    saveTransactionToFirestore(newTx, currentUser.id).catch(console.error);
+
+    const rawUpdatedUser: User = {
+      ...currentUser,
+      balance: newBalance,
+      availableBalance: newBalance,
+      tier: currentTier,
+      pendingEarnings: 0,
+    };
+    const updatedUser = normalizeUser(rawUpdatedUser) || rawUpdatedUser;
+
+    userRef.current = updatedUser;
+    setUser(updatedUser);
+    safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+    saveUserToFirestore(updatedUser).catch(console.error);
+
+    setAllUsers((prev) => prev.map((u) => (u.id === currentUser.id ? updatedUser : u)));
+
+    return {
+      success: true,
+      amount: prizeAmount,
+      creditedAmount,
+      pendingAmount: 0,
+      message: `💥 Blast! +₦${prizeAmount.toLocaleString()} credited to your balance!`,
+      newBalance,
+    };
+  };
+
   // Admin dynamic pricing update (KYC & Quick Code prices)
   const updateAppPricing = async (newPricing: Partial<AppPricing>): Promise<boolean> => {
     try {
@@ -5258,6 +5401,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         getDailySpinsLeft,
         claimCandyMatchReward,
         claimSnakeCoinReward,
+        claimBlockBlastReward,
         hasUserWithdrawn,
         claimFreeReferralQuickCode,
         appPricing,

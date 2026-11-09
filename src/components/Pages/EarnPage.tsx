@@ -19,6 +19,7 @@ import {
   Lock,
   Crown,
   ArrowRight,
+  Blocks,
 } from 'lucide-react';
 import { soundFx } from '../../utils/sound.ts';
 import {
@@ -30,6 +31,7 @@ import {
 import { LuckySpinWheel } from '../Earn/LuckySpinWheel.tsx';
 import { CandyCrushGame } from '../Earn/CandyCrushGame.tsx';
 import { NeoSnakeGame3D } from '../Earn/NeoSnakeGame3D.tsx';
+import { BlockBlastGame } from '../Earn/BlockBlastGame.tsx';
 import { safeLocalStorageSet } from '../../utils/storage.ts';
 import { useTheme } from '../../context/ThemeContext.tsx';
 
@@ -45,7 +47,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
   const spinsLeft = getDailySpinsLeft ? getDailySpinsLeft() : 3;
 
   // Active sub-tab inside Earn Page: null initially so user selects a game first before playing
-  const [activeEarnTab, setActiveEarnTab] = useState<'candy' | 'snake' | 'wheel' | 'claim' | 'quiz' | null>(null);
+  const [activeEarnTab, setActiveEarnTab] = useState<'candy' | 'snake' | 'blockblast' | 'wheel' | 'claim' | 'quiz' | null>(null);
 
   // Helper to determine the true last claim time strictly isolated for THIS user
   const getResolvedLastClaimTime = (): number | null => {
@@ -466,7 +468,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
             <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
               {activeEarnTab === null
                 ? 'Select a game below first to start playing & earning cash'
-                : 'Play Candy Crush Saga, Neo Snake 3D, spin the Lucky Wheel, claim daily cash & solve trivia quizzes'}
+                : 'Play Candy Crush Saga, Neo Snake 3D, Block Blast, spin the Lucky Wheel, claim daily cash & solve trivia quizzes'}
             </p>
           </div>
         </div>
@@ -512,9 +514,9 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
         </div>
       )}
 
-      {/* Navigation Switcher Tabs (5 Tabs: 1st Candy Crush, 2nd Snake 3D, 3rd Wheel, 4th Daily, 5th Quiz) */}
+      {/* Navigation Switcher Tabs (6 Tabs: 1st Candy Crush, 2nd Snake 3D, 3rd Block Blast, 4th Wheel, 5th Daily, 6th Quiz) */}
       <div
-        className={`grid grid-cols-5 gap-1 p-1 rounded-2xl text-center border ${
+        className={`grid grid-cols-6 gap-1 p-1 rounded-2xl text-center border ${
           isLight ? 'bg-slate-100/90 border-slate-200 shadow-sm' : 'bg-[#14151b] border-stone-800'
         }`}
       >
@@ -535,7 +537,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
         >
           <div className="flex items-center gap-0.5">
             <Sparkles className={`w-3.5 h-3.5 ${activeEarnTab === 'candy' ? 'fill-white text-white' : 'text-pink-500'}`} />
-            <span className="truncate text-[11px]">Candy</span>
+            <span className="truncate text-[10px] sm:text-[11px]">Candy</span>
           </div>
           <span className={`text-[8px] font-bold ${activeEarnTab === 'candy' ? 'text-white/90' : isLight ? 'text-pink-600' : 'text-pink-400'}`}>
             ₦16k Win
@@ -559,10 +561,34 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
         >
           <div className="flex items-center gap-0.5">
             <Coins className={`w-3.5 h-3.5 ${activeEarnTab === 'snake' ? 'fill-black text-black' : 'text-emerald-500'}`} />
-            <span className="truncate text-[11px]">Snake 3D</span>
+            <span className="truncate text-[10px] sm:text-[11px]">Snake 3D</span>
           </div>
           <span className={`text-[8px] font-bold ${activeEarnTab === 'snake' ? 'text-black/80' : isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
-            ₦500 / Coin
+            ₦500/Coin
+          </span>
+        </button>
+
+        {/* Tab 3: Block Blast (3rd Place) */}
+        <button
+          type="button"
+          onClick={() => {
+            soundFx.playClick();
+            setActiveEarnTab('blockblast');
+          }}
+          className={`py-2 px-0.5 rounded-xl text-xs font-extrabold flex flex-col items-center justify-center gap-1 transition-all cursor-pointer ${
+            activeEarnTab === 'blockblast'
+              ? 'bg-gradient-to-r from-amber-400 via-orange-500 to-amber-500 text-black shadow-lg shadow-amber-500/25'
+              : isLight
+              ? 'text-slate-600 hover:text-slate-900 hover:bg-white/80'
+              : 'text-stone-400 hover:text-white hover:bg-stone-800/40'
+          }`}
+        >
+          <div className="flex items-center gap-0.5">
+            <Blocks className={`w-3.5 h-3.5 ${activeEarnTab === 'blockblast' ? 'text-black fill-black' : 'text-amber-500'}`} />
+            <span className="truncate text-[10px] sm:text-[11px]">Blocks</span>
+          </div>
+          <span className={`text-[8px] font-bold ${activeEarnTab === 'blockblast' ? 'text-black/80' : isLight ? 'text-amber-700' : 'text-amber-400'}`}>
+            ₦3.5k Blast
           </span>
         </button>
 
@@ -774,7 +800,59 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
             </div>
           </button>
 
-          {/* 3rd Place: Lucky Spin Wheel */}
+          {/* 3rd Place: Block Blast Puzzle */}
+          <button
+            type="button"
+            onClick={() => {
+              soundFx.playClick();
+              setActiveEarnTab('blockblast');
+            }}
+            className={`w-full p-4 rounded-3xl border-2 text-left flex items-center justify-between gap-3 transition-all cursor-pointer active:scale-[0.99] group ${
+              isLight
+                ? 'bg-gradient-to-r from-amber-50 via-orange-50/60 to-white border-amber-300 hover:border-amber-400 shadow-md shadow-amber-500/10'
+                : 'bg-gradient-to-r from-[#24170d] via-[#1d1618] to-[#14151c] border-amber-500/50 hover:border-amber-400 shadow-xl shadow-amber-500/15'
+            }`}
+          >
+            <div className="flex items-center gap-3.5 min-w-0">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-amber-500 via-orange-500 to-yellow-400 p-0.5 shadow-lg shadow-amber-500/30 flex-shrink-0">
+                <div
+                  className={`w-full h-full rounded-[14px] flex items-center justify-center ${
+                    isLight ? 'bg-white' : 'bg-[#181315]'
+                  }`}
+                >
+                  <Blocks className="w-7 h-7 text-amber-500 group-hover:scale-110 transition-transform" />
+                </div>
+              </div>
+              <div className="space-y-1 min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span
+                    className={`px-2 py-0.5 rounded-md text-[9px] font-black uppercase tracking-wider border ${
+                      isLight
+                        ? 'bg-amber-100 border-amber-300 text-amber-700'
+                        : 'bg-amber-500/25 border-amber-400/40 text-amber-300'
+                    }`}
+                  >
+                    #3 Block Puzzle
+                  </span>
+                  <span className={`text-[10px] font-mono font-bold ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
+                    Up to ₦3,500 / Blast
+                  </span>
+                </div>
+                <h3 className={`text-base font-black truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  Block Blast Puzzle
+                </h3>
+                <p className={`text-xs line-clamp-1 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  Fit jewel blocks on 8x8 grid &amp; blast full lines for instant wallet cash
+                </p>
+              </div>
+            </div>
+            <div className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-400 text-black font-black text-xs flex items-center gap-1 flex-shrink-0 shadow-md">
+              <span>Play</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </div>
+          </button>
+
+          {/* 4th Place: Lucky Spin Wheel */}
           <button
             type="button"
             onClick={() => {
@@ -922,7 +1000,14 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
         </div>
       )}
 
-      {/* ================= TAB 3: LUCKY SPIN WHEEL ================= */}
+      {/* ================= TAB 3: BLOCK BLAST PUZZLE (3RD PLACE) ================= */}
+      {activeEarnTab === 'blockblast' && (
+        <div className="space-y-4">
+          <BlockBlastGame />
+        </div>
+      )}
+
+      {/* ================= TAB 4: LUCKY SPIN WHEEL ================= */}
       {activeEarnTab === 'wheel' && (
         <div className="space-y-4">
           <LuckySpinWheel />
