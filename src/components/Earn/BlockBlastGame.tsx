@@ -1,305 +1,220 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { useTheme } from '../../context/ThemeContext.tsx';
 import { soundFx } from '../../utils/sound.ts';
 import {
-  Sparkles,
-  Trophy,
   RotateCcw,
   Volume2,
   VolumeX,
-  Zap,
-  Flame,
-  Award,
   HelpCircle,
   X,
-  Crown,
-  ChevronRight,
-  TrendingUp,
+  Trophy,
+  Settings,
+  Play,
 } from 'lucide-react';
 
 // ==========================================
-// BLOCK SHAPES DEFINITION
+// CLASSIC BLOCK BLAST 5 JEWEL COLORS (MATCHING SCREENSHOT)
 // ==========================================
-
-export interface BlockShape {
-  id: string;
-  name: string;
-  matrix: number[][]; // 2D array of 0s and 1s
-  colorId: string;
-  colorName: string;
-  gradient: string;
-  borderColor: string;
-  shadowColor: string;
-  lightGradient: string;
+export interface BlockColorTheme {
+  id: 'blue' | 'yellow' | 'green' | 'red' | 'purple';
+  mainBg: string;
+  topHighlight: string;
+  bottomShade: string;
+  innerFace: string;
+  hex: string;
 }
 
-// 7 Vibrant, Jewel-Tone Block Palettes
-const BLOCK_THEMES = [
-  {
-    id: 'emerald',
-    name: 'Emerald',
-    gradient: 'from-emerald-400 via-emerald-500 to-teal-600',
-    lightGradient: 'from-emerald-400 via-emerald-500 to-teal-600',
-    borderColor: 'border-emerald-300',
-    shadowColor: 'rgba(16, 185, 129, 0.45)',
-    fillHex: '#10b981',
+const BLOCK_COLORS: Record<BlockColorTheme['id'], BlockColorTheme> = {
+  blue: {
+    id: 'blue',
+    mainBg: '#1c74f5',
+    topHighlight: '#63a8ff',
+    bottomShade: '#0d47a8',
+    innerFace: 'linear-gradient(180deg, #3288ff 0%, #1766e0 100%)',
+    hex: '#257bf7',
   },
-  {
-    id: 'amber',
-    name: 'Gold Amber',
-    gradient: 'from-amber-300 via-amber-400 to-yellow-600',
-    lightGradient: 'from-amber-400 via-yellow-500 to-amber-600',
-    borderColor: 'border-amber-200',
-    shadowColor: 'rgba(245, 158, 11, 0.45)',
-    fillHex: '#f59e0b',
+  yellow: {
+    id: 'yellow',
+    mainBg: '#ffc812',
+    topHighlight: '#ffe875',
+    bottomShade: '#c98e00',
+    innerFace: 'linear-gradient(180deg, #ffd633 0%, #f5b400 100%)',
+    hex: '#ffcc14',
   },
-  {
-    id: 'cyan',
-    name: 'Electric Cyan',
-    gradient: 'from-cyan-400 via-sky-500 to-blue-600',
-    lightGradient: 'from-cyan-400 via-sky-500 to-blue-600',
-    borderColor: 'border-cyan-200',
-    shadowColor: 'rgba(6, 182, 212, 0.45)',
-    fillHex: '#06b6d4',
+  green: {
+    id: 'green',
+    mainBg: '#24d424',
+    topHighlight: '#72f572',
+    bottomShade: '#118f11',
+    innerFace: 'linear-gradient(180deg, #35e035 0%, #1bb81b 100%)',
+    hex: '#28d928',
   },
-  {
-    id: 'pink',
-    name: 'Ruby Pink',
-    gradient: 'from-pink-400 via-rose-500 to-rose-600',
-    lightGradient: 'from-pink-400 via-rose-500 to-rose-600',
-    borderColor: 'border-pink-200',
-    shadowColor: 'rgba(244, 63, 94, 0.45)',
-    fillHex: '#f43f5e',
+  red: {
+    id: 'red',
+    mainBg: '#eb2d23',
+    topHighlight: '#ff7a73',
+    bottomShade: '#a3130b',
+    innerFace: 'linear-gradient(180deg, #f73e34 0%, #d42017 100%)',
+    hex: '#ed3026',
   },
-  {
-    id: 'violet',
-    name: 'Amethyst',
-    gradient: 'from-purple-400 via-violet-500 to-indigo-600',
-    lightGradient: 'from-purple-400 via-violet-500 to-indigo-600',
-    borderColor: 'border-violet-200',
-    shadowColor: 'rgba(139, 92, 246, 0.45)',
-    fillHex: '#8b5cf6',
+  purple: {
+    id: 'purple',
+    mainBg: '#9e33ff',
+    topHighlight: '#ce8aff',
+    bottomShade: '#6612b8',
+    innerFace: 'linear-gradient(180deg, #ad4dff 0%, #8922eb 100%)',
+    hex: '#a238ff',
   },
-  {
-    id: 'orange',
-    name: 'Solar Flare',
-    gradient: 'from-orange-400 via-orange-500 to-red-600',
-    lightGradient: 'from-orange-400 via-orange-500 to-red-600',
-    borderColor: 'border-orange-200',
-    shadowColor: 'rgba(249, 115, 22, 0.45)',
-    fillHex: '#f97316',
-  },
-  {
-    id: 'lime',
-    name: 'Neon Lime',
-    gradient: 'from-lime-300 via-lime-500 to-emerald-600',
-    lightGradient: 'from-lime-400 via-lime-500 to-emerald-600',
-    borderColor: 'border-lime-200',
-    shadowColor: 'rgba(132, 204, 22, 0.45)',
-    fillHex: '#84cc16',
-  },
-];
+};
 
-// Block Shape Templates
-const RAW_SHAPES: { name: string; matrix: number[][] }[] = [
-  // 1x1 Single
-  { name: 'Dot', matrix: [[1]] },
+const COLOR_KEYS: BlockColorTheme['id'][] = ['blue', 'yellow', 'green', 'red', 'purple'];
 
-  // 1x2, 2x1
-  { name: 'Domino H', matrix: [[1, 1]] },
-  { name: 'Domino V', matrix: [[1], [1]] },
+export interface BlockPiece {
+  id: string;
+  name: string;
+  matrix: number[][];
+  color: BlockColorTheme['id'];
+}
 
-  // 1x3, 3x1
-  { name: 'Trio H', matrix: [[1, 1, 1]] },
-  { name: 'Trio V', matrix: [[1], [1], [1]] },
-
-  // 1x4, 4x1
-  { name: 'Tetra H', matrix: [[1, 1, 1, 1]] },
-  { name: 'Tetra V', matrix: [[1], [1], [1], [1]] },
-
-  // 1x5, 5x1
-  { name: 'Penta H', matrix: [[1, 1, 1, 1, 1]] },
-  { name: 'Penta V', matrix: [[1], [1], [1], [1], [1]] },
-
-  // 2x2 Square
+// Easy, fun, compact shapes (matching screenshot tray: small L-corner, 2x2 square, 1x4 bar, etc.)
+const EASY_SHAPES: { name: string; matrix: number[][]; preferredColor?: BlockColorTheme['id'] }[] = [
+  // 3-block L-Corners (like the blue piece on the left of screenshot)
+  {
+    name: 'Corner BL',
+    matrix: [
+      [1, 0],
+      [1, 1],
+    ],
+    preferredColor: 'blue',
+  },
+  {
+    name: 'Corner BR',
+    matrix: [
+      [0, 1],
+      [1, 1],
+    ],
+    preferredColor: 'blue',
+  },
+  {
+    name: 'Corner TL',
+    matrix: [
+      [1, 1],
+      [1, 0],
+    ],
+    preferredColor: 'purple',
+  },
+  {
+    name: 'Corner TR',
+    matrix: [
+      [1, 1],
+      [0, 1],
+    ],
+    preferredColor: 'red',
+  },
+  // 2x2 Square (like the yellow piece in the middle of screenshot)
   {
     name: 'Square 2x2',
     matrix: [
       [1, 1],
       [1, 1],
     ],
+    preferredColor: 'yellow',
   },
-
-  // 3x3 Big Square (rare rewarding piece)
+  // 1x4 Horizontal Bar (like the green piece on the right of screenshot)
   {
-    name: 'Big Square 3x3',
-    matrix: [
-      [1, 1, 1],
-      [1, 1, 1],
-      [1, 1, 1],
-    ],
+    name: 'Bar 4H',
+    matrix: [[1, 1, 1, 1]],
+    preferredColor: 'green',
   },
-
-  // Corner Small (2x2 with 1 missing)
+  // 4x1 Vertical Bar
   {
-    name: 'Corner Top-Left',
-    matrix: [
-      [1, 1],
-      [1, 0],
-    ],
+    name: 'Bar 4V',
+    matrix: [[1], [1], [1], [1]],
+    preferredColor: 'green',
   },
+  // 1x3 Horizontal & Vertical Bars
   {
-    name: 'Corner Top-Right',
-    matrix: [
-      [1, 1],
-      [0, 1],
-    ],
+    name: 'Bar 3H',
+    matrix: [[1, 1, 1]],
+    preferredColor: 'red',
   },
   {
-    name: 'Corner Bottom-Left',
-    matrix: [
-      [1, 0],
-      [1, 1],
-    ],
+    name: 'Bar 3V',
+    matrix: [[1], [1], [1]],
+    preferredColor: 'blue',
+  },
+  // 1x2 Dominoes (super easy gap fillers)
+  {
+    name: 'Domino H',
+    matrix: [[1, 1]],
+    preferredColor: 'yellow',
   },
   {
-    name: 'Corner Bottom-Right',
-    matrix: [
-      [0, 1],
-      [1, 1],
-    ],
+    name: 'Domino V',
+    matrix: [[1], [1]],
+    preferredColor: 'purple',
   },
-
-  // 3x3 Big Corner
+  // Single Dot (rescues tight boards)
   {
-    name: 'Big Corner TL',
-    matrix: [
-      [1, 1, 1],
-      [1, 0, 0],
-      [1, 0, 0],
-    ],
+    name: 'Dot',
+    matrix: [[1]],
+    preferredColor: 'yellow',
   },
+  // Small T-Shape
   {
-    name: 'Big Corner BR',
-    matrix: [
-      [0, 0, 1],
-      [0, 0, 1],
-      [1, 1, 1],
-    ],
-  },
-
-  // L-Shapes (3x2)
-  {
-    name: 'L-Shape Normal',
-    matrix: [
-      [1, 0],
-      [1, 0],
-      [1, 1],
-    ],
-  },
-  {
-    name: 'J-Shape Normal',
-    matrix: [
-      [0, 1],
-      [0, 1],
-      [1, 1],
-    ],
-  },
-  {
-    name: 'L-Shape Rotated',
-    matrix: [
-      [1, 1, 1],
-      [1, 0, 0],
-    ],
-  },
-  {
-    name: 'J-Shape Rotated',
-    matrix: [
-      [1, 1, 1],
-      [0, 0, 1],
-    ],
-  },
-
-  // T-Shapes
-  {
-    name: 'T-Shape Up',
+    name: 'Mini T',
     matrix: [
       [1, 1, 1],
       [0, 1, 0],
     ],
-  },
-  {
-    name: 'T-Shape Down',
-    matrix: [
-      [0, 1, 0],
-      [1, 1, 1],
-    ],
-  },
-
-  // Z and S Shapes
-  {
-    name: 'Z-Shape',
-    matrix: [
-      [1, 1, 0],
-      [0, 1, 1],
-    ],
-  },
-  {
-    name: 'S-Shape',
-    matrix: [
-      [0, 1, 1],
-      [1, 1, 0],
-    ],
-  },
-
-  // Plus Shape
-  {
-    name: 'Plus Shape',
-    matrix: [
-      [0, 1, 0],
-      [1, 1, 1],
-      [0, 1, 0],
-    ],
+    preferredColor: 'purple',
   },
 ];
 
-// Helper to generate a random shape
-const generateRandomPiece = (slotIndex: number): BlockShape => {
-  const template = RAW_SHAPES[Math.floor(Math.random() * RAW_SHAPES.length)];
-  const theme = BLOCK_THEMES[Math.floor(Math.random() * BLOCK_THEMES.length)];
-  return {
-    id: `piece_${Date.now()}_${slotIndex}_${Math.random().toString(36).substring(2, 7)}`,
-    name: template.name,
-    matrix: template.matrix,
-    colorId: theme.id,
-    colorName: theme.name,
-    gradient: theme.gradient,
-    lightGradient: theme.lightGradient,
-    borderColor: theme.borderColor,
-    shadowColor: theme.shadowColor,
-  };
-};
-
-// Generates 3 pieces for the tray
-const generatePieceTray = (): (BlockShape | null)[] => {
-  return [generateRandomPiece(0), generateRandomPiece(1), generateRandomPiece(2)];
-};
-
-// 8x8 Grid
-const GRID_SIZE = 8;
+// Board dimensions matching the screenshot: 6 rows x 8 columns (compact, fast & fun!)
+const GRID_ROWS = 6;
+const GRID_COLS = 8;
 
 interface CellState {
   filled: boolean;
-  colorId?: string;
-  gradient?: string;
-  borderColor?: string;
-  shadowColor?: string;
+  color?: BlockColorTheme['id'];
 }
 
-// Particle for blast bursts
+// Empty 6x8 board so the player always starts with a clean board and lays the first block themselves
+const createEmptyGrid = (): CellState[][] =>
+  Array.from({ length: GRID_ROWS }, () =>
+    Array.from({ length: GRID_COLS }, () => ({ filled: false }))
+  );
+
+// Initial 3 pieces matching the screenshot tray: Blue L-corner, Yellow 2x2 square, Green 1x4 bar
+const createScreenshotStarterTray = (): (BlockPiece | null)[] => [
+  {
+    id: 'init_0',
+    name: 'Corner BL',
+    matrix: [
+      [1, 0],
+      [1, 1],
+    ],
+    color: 'blue',
+  },
+  {
+    id: 'init_1',
+    name: 'Square 2x2',
+    matrix: [
+      [1, 1],
+      [1, 1],
+    ],
+    color: 'yellow',
+  },
+  {
+    id: 'init_2',
+    name: 'Bar 4H',
+    matrix: [[1, 1, 1, 1]],
+    color: 'green',
+  },
+];
+
 interface Particle {
-  id: number;
   x: number;
   y: number;
   vx: number;
@@ -310,69 +225,106 @@ interface Particle {
   decay: number;
 }
 
-interface ToastNotification {
-  id: number;
-  text: string;
-  subtext?: string;
-  type: 'blast' | 'combo' | 'cash';
-}
+// Reusable 3D Beveled Glossy Block Tile (matches screenshot blocks)
+const GlossyBlockTile: React.FC<{
+  color: BlockColorTheme['id'];
+  isClearing?: boolean;
+  isGhost?: boolean;
+  isInvalidGhost?: boolean;
+  sizeClass?: string;
+}> = ({ color, isClearing = false, isGhost = false, isInvalidGhost = false, sizeClass = 'w-full h-full' }) => {
+  const theme = BLOCK_COLORS[color] || BLOCK_COLORS.blue;
+
+  if (isInvalidGhost) {
+    return (
+      <div
+        className={`${sizeClass} rounded-[6px] bg-rose-500/35 border-2 border-dashed border-rose-300/80 animate-pulse`}
+      />
+    );
+  }
+
+  return (
+    <div
+      className={`relative ${sizeClass} rounded-[6px] select-none overflow-hidden transition-transform duration-150 ${
+        isClearing ? 'scale-110 brightness-150 animate-ping' : ''
+      } ${isGhost ? 'opacity-65 scale-95 ring-2 ring-white/80 animate-pulse' : ''}`}
+      style={{
+        backgroundColor: theme.mainBg,
+        boxShadow: isGhost
+          ? 'none'
+          : `inset 0 3px 0 ${theme.topHighlight}, inset 3px 0 0 ${theme.topHighlight}88, inset 0 -3.5px 0 ${theme.bottomShade}, inset -3px 0 0 ${theme.bottomShade}aa, 0 2px 4px rgba(0,0,0,0.45)`,
+      }}
+    >
+      {/* Inner recessed glossy face */}
+      <div
+        className="absolute inset-[3px] rounded-[3.5px]"
+        style={{
+          background: theme.innerFace,
+          boxShadow: 'inset 0 1px 1px rgba(255,255,255,0.4)',
+        }}
+      />
+      {/* Top specular highlight bar */}
+      <div
+        className="absolute top-[3.5px] left-[5px] right-[5px] h-[3px] rounded-full opacity-55 pointer-events-none"
+        style={{
+          background: 'linear-gradient(90deg, rgba(255,255,255,0.7), rgba(255,255,255,0.15))',
+        }}
+      />
+    </div>
+  );
+};
 
 export const BlockBlastGame: React.FC = () => {
-  const { isLight } = useTheme();
-  const { user, formatNaira, claimBlockBlastReward } = useAuth();
+  const { formatNaira, claimBlockBlastReward } = useAuth();
 
-  // Grid state: 8x8
-  const [grid, setGrid] = useState<CellState[][]>(() => {
-    return Array.from({ length: GRID_SIZE }, () =>
-      Array.from({ length: GRID_SIZE }, () => ({ filled: false }))
-    );
-  });
+  // Game Board State (6 rows x 8 cols) — starts completely empty
+  const [grid, setGrid] = useState<CellState[][]>(() => createEmptyGrid());
 
-  // 3 Pieces in Tray
-  const [trayPieces, setTrayPieces] = useState<(BlockShape | null)[]>(() => generatePieceTray());
+  // 3 Tray Pieces
+  const [trayPieces, setTrayPieces] = useState<(BlockPiece | null)[]>(() => createScreenshotStarterTray());
 
-  // Selected piece for Tap-to-Place or active drag
+  // Selected piece index (for tap or drag)
   const [selectedPieceIndex, setSelectedPieceIndex] = useState<number | null>(null);
-
-  // Hover position on grid [row, col] (top-left offset of the piece)
   const [hoverPos, setHoverPos] = useState<[number, number] | null>(null);
 
-  // Game Stats
+  // Score & Best Score
   const [score, setScore] = useState<number>(0);
   const [combo, setCombo] = useState<number>(0);
-  const [maxCombo, setMaxCombo] = useState<number>(0);
-  const [linesClearedTotal, setLinesClearedTotal] = useState<number>(0);
   const [sessionEarnings, setSessionEarnings] = useState<number>(0);
   const [highScore, setHighScore] = useState<number>(() => {
     const saved = localStorage.getItem('9jacash_blockblast_highscore');
     return saved ? parseInt(saved, 10) : 0;
   });
 
-  // Game Over state
+  // UI Modals & Audio
   const [isGameOver, setIsGameOver] = useState<boolean>(false);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showHowToPlay, setShowHowToPlay] = useState<boolean>(false);
 
-  // Active clearing animation lines: indices of rows and columns being blasted
+  // Clearing rows/cols animation
   const [clearingRows, setClearingRows] = useState<number[]>([]);
   const [clearingCols, setClearingCols] = useState<number[]>([]);
 
-  // Floating notifications
-  const [toasts, setToasts] = useState<ToastNotification[]>([]);
-  const toastIdRef = useRef(1);
+  // Floating Praise / Cash Popups
+  const [floatingBanner, setFloatingBanner] = useState<{
+    id: number;
+    title: string;
+    cashText?: string;
+  } | null>(null);
 
-  // Canvas for 60fps explosion particle effects
+  // Particle Canvas
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const particlesRef = useRef<Particle[]>([]);
-  const animFrameRef = useRef<number | null>(null);
+  const animRef = useRef<number | null>(null);
 
-  // Dragging state tracking
+  // Dragging refs
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const dragPieceIndexRef = useRef<number | null>(null);
-  const boardContainerRef = useRef<HTMLDivElement | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
 
   // -------------------------------------------------------------
-  // Particle System Animation Loop
+  // Particle Explosion Loop
   // -------------------------------------------------------------
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -380,22 +332,21 @@ export const BlockBlastGame: React.FC = () => {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let running = true;
-
+    let active = true;
     const render = () => {
-      if (!running) return;
+      if (!active) return;
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      const particles = particlesRef.current;
-      for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
+      const list = particlesRef.current;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const p = list[i];
         p.x += p.vx;
         p.y += p.vy;
-        p.vy += 0.15; // gentle gravity
+        p.vy += 0.16;
         p.alpha -= p.decay;
 
         if (p.alpha <= 0) {
-          particles.splice(i, 1);
+          list.splice(i, 1);
           continue;
         }
 
@@ -403,106 +354,81 @@ export const BlockBlastGame: React.FC = () => {
         ctx.globalAlpha = Math.max(0, p.alpha);
         ctx.fillStyle = p.color;
         ctx.shadowColor = p.color;
-        ctx.shadowBlur = 8;
+        ctx.shadowBlur = 6;
         ctx.beginPath();
-        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.roundRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size, 2);
         ctx.fill();
         ctx.restore();
       }
 
-      animFrameRef.current = requestAnimationFrame(render);
+      animRef.current = requestAnimationFrame(render);
     };
 
-    animFrameRef.current = requestAnimationFrame(render);
-
+    animRef.current = requestAnimationFrame(render);
     return () => {
-      running = false;
-      if (animFrameRef.current) {
-        cancelAnimationFrame(animFrameRef.current);
-      }
+      active = false;
+      if (animRef.current) cancelAnimationFrame(animRef.current);
     };
   }, []);
 
-  // Spawn blast particles from cell coordinates
-  const triggerCellBlastParticles = useCallback((row: number, col: number, colorHex: string) => {
-    const canvas = canvasRef.current;
-    const board = boardContainerRef.current;
-    if (!canvas || !board) return;
-
+  const spawnCellParticles = useCallback((r: number, c: number, colorId?: BlockColorTheme['id']) => {
+    const board = boardRef.current;
+    if (!board) return;
     const rect = board.getBoundingClientRect();
-    const cellWidth = rect.width / GRID_SIZE;
-    const cellHeight = rect.height / GRID_SIZE;
+    const cellW = rect.width / GRID_COLS;
+    const cellH = rect.height / GRID_ROWS;
 
-    const centerX = col * cellWidth + cellWidth / 2;
-    const centerY = row * cellHeight + cellHeight / 2;
+    const cx = c * cellW + cellW / 2;
+    const cy = r * cellH + cellH / 2;
+    const hex = colorId ? BLOCK_COLORS[colorId].hex : '#ffd633';
 
-    const particleCount = 14;
-    for (let i = 0; i < particleCount; i++) {
+    for (let i = 0; i < 10; i++) {
       const angle = Math.random() * Math.PI * 2;
-      const speed = 2 + Math.random() * 5.5;
+      const speed = 1.8 + Math.random() * 4.5;
       particlesRef.current.push({
-        id: Math.random(),
-        x: centerX,
-        y: centerY,
+        x: cx,
+        y: cy,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        color: colorHex,
-        size: 3 + Math.random() * 3.5,
+        color: hex,
+        size: 5 + Math.random() * 4,
         alpha: 1,
-        decay: 0.02 + Math.random() * 0.025,
+        decay: 0.025 + Math.random() * 0.02,
       });
     }
   }, []);
 
-  const addToast = (text: string, subtext?: string, type: 'blast' | 'combo' | 'cash' = 'blast') => {
-    const id = toastIdRef.current++;
-    setToasts((prev) => [...prev.slice(-3), { id, text, subtext, type }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 2400);
-  };
-
   // -------------------------------------------------------------
-  // Shape Validation & Placement Checks
+  // Placement Validation Helpers
   // -------------------------------------------------------------
   const canPlacePiece = useCallback(
-    (board: CellState[][], shape: BlockShape, startRow: number, startCol: number): boolean => {
-      const matrix = shape.matrix;
-      const rows = matrix.length;
-      const cols = matrix[0].length;
+    (board: CellState[][], piece: BlockPiece, startR: number, startC: number): boolean => {
+      const rows = piece.matrix.length;
+      const cols = piece.matrix[0].length;
 
-      // Check bounds
-      if (startRow < 0 || startCol < 0 || startRow + rows > GRID_SIZE || startCol + cols > GRID_SIZE) {
+      if (startR < 0 || startC < 0 || startR + rows > GRID_ROWS || startC + cols > GRID_COLS) {
         return false;
       }
 
-      // Check overlapping with filled cells
       for (let r = 0; r < rows; r++) {
         for (let c = 0; c < cols; c++) {
-          if (matrix[r][c] === 1) {
-            if (board[startRow + r][startCol + c].filled) {
-              return false;
-            }
+          if (piece.matrix[r][c] === 1 && board[startR + r][startC + c].filled) {
+            return false;
           }
         }
       }
-
       return true;
     },
     []
   );
 
-  // Check if a piece can fit ANYWHERE on the board
   const canPieceFitAnywhere = useCallback(
-    (board: CellState[][], piece: BlockShape): boolean => {
+    (board: CellState[][], piece: BlockPiece): boolean => {
       const rows = piece.matrix.length;
       const cols = piece.matrix[0].length;
-
-      for (let r = 0; r <= GRID_SIZE - rows; r++) {
-        for (let c = 0; c <= GRID_SIZE - cols; c++) {
-          if (canPlacePiece(board, piece, r, c)) {
-            return true;
-          }
+      for (let r = 0; r <= GRID_ROWS - rows; r++) {
+        for (let c = 0; c <= GRID_COLS - cols; c++) {
+          if (canPlacePiece(board, piece, r, c)) return true;
         }
       }
       return false;
@@ -510,170 +436,195 @@ export const BlockBlastGame: React.FC = () => {
     [canPlacePiece]
   );
 
-  // Check if any available pieces in tray can still fit on board
-  const checkGameOverCondition = useCallback(
-    (board: CellState[][], pieces: (BlockShape | null)[]) => {
-      const activePieces = pieces.filter((p): p is BlockShape => p !== null);
-      if (activePieces.length === 0) return false;
+  // Smart, easy-mode tray generator: ensures pieces fit on the current board so gameplay stays fun!
+  const generateSmartTray = useCallback(
+    (board: CellState[][]): (BlockPiece | null)[] => {
+      const fittingTemplates = EASY_SHAPES.filter((tpl) => {
+        const testPiece: BlockPiece = {
+          id: 'test',
+          name: tpl.name,
+          matrix: tpl.matrix,
+          color: 'blue',
+        };
+        return canPieceFitAnywhere(board, testPiece);
+      });
 
-      const hasValidMove = activePieces.some((piece) => canPieceFitAnywhere(board, piece));
-      if (!hasValidMove) {
-        if (!isMuted) soundFx.playBlockGameOver();
-        setIsGameOver(true);
-        return true;
-      }
-      return false;
+      const pool = fittingTemplates.length > 0 ? fittingTemplates : EASY_SHAPES;
+
+      return [0, 1, 2].map((slot) => {
+        // Guarantee at least the first two pieces come from the fitting pool
+        const sourcePool = slot < 2 ? pool : EASY_SHAPES;
+        const tpl = sourcePool[Math.floor(Math.random() * sourcePool.length)];
+        const color =
+          tpl.preferredColor && Math.random() > 0.35
+            ? tpl.preferredColor
+            : COLOR_KEYS[Math.floor(Math.random() * COLOR_KEYS.length)];
+
+        return {
+          id: `piece_${Date.now()}_${slot}_${Math.random().toString(36).substring(2, 6)}`,
+          name: tpl.name,
+          matrix: tpl.matrix,
+          color,
+        };
+      });
     },
-    [canPieceFitAnywhere, isMuted]
+    [canPieceFitAnywhere]
+  );
+
+  // Find nearest valid position around clicked cell for effortless tap-to-place
+  const findBestPlacementNear = useCallback(
+    (board: CellState[][], piece: BlockPiece, clickR: number, clickC: number): [number, number] | null => {
+      const pRows = piece.matrix.length;
+      const pCols = piece.matrix[0].length;
+
+      // 1. Try centered on clicked cell
+      const centerR = Math.max(0, Math.min(GRID_ROWS - pRows, clickR - Math.floor(pRows / 2)));
+      const centerC = Math.max(0, Math.min(GRID_COLS - pCols, clickC - Math.floor(pCols / 2)));
+      if (canPlacePiece(board, piece, centerR, centerC)) {
+        return [centerR, centerC];
+      }
+
+      // 2. Try exact top-left at clicked cell
+      if (canPlacePiece(board, piece, clickR, clickC)) {
+        return [clickR, clickC];
+      }
+
+      // 3. Search within 1-cell radius for forgiving placement
+      for (let dr = -1; dr <= 1; dr++) {
+        for (let dc = -1; dc <= 1; dc++) {
+          const nr = centerR + dr;
+          const nc = centerC + dc;
+          if (canPlacePiece(board, piece, nr, nc)) {
+            return [nr, nc];
+          }
+        }
+      }
+
+      return null;
+    },
+    [canPlacePiece]
   );
 
   // -------------------------------------------------------------
-  // Place Piece on Grid Logic
+  // Execute Piece Placement & Line Blast
   // -------------------------------------------------------------
-  const placePieceAt = (pieceIndex: number, targetRow: number, targetCol: number) => {
-    const piece = trayPieces[pieceIndex];
+  const placePieceAt = (pieceIdx: number, startR: number, startC: number) => {
+    const piece = trayPieces[pieceIdx];
     if (!piece) return;
 
-    if (!canPlacePiece(grid, piece, targetRow, targetCol)) {
+    if (!canPlacePiece(grid, piece, startR, startC)) {
       if (!isMuted) soundFx.playLoseSound();
       return;
     }
 
-    // Play tactile placement snap sound
     if (!isMuted) soundFx.playBlockPlace();
 
-    // 1. Create updated grid with new piece filled
     const nextGrid = grid.map((row) => row.map((cell) => ({ ...cell })));
-    const matrix = piece.matrix;
-    let placedCellCount = 0;
+    let blocksPlaced = 0;
 
-    for (let r = 0; r < matrix.length; r++) {
-      for (let c = 0; c < matrix[r].length; c++) {
-        if (matrix[r][c] === 1) {
-          nextGrid[targetRow + r][targetCol + c] = {
+    for (let r = 0; r < piece.matrix.length; r++) {
+      for (let c = 0; c < piece.matrix[r].length; c++) {
+        if (piece.matrix[r][c] === 1) {
+          nextGrid[startR + r][startC + c] = {
             filled: true,
-            colorId: piece.colorId,
-            gradient: piece.gradient,
-            borderColor: piece.borderColor,
-            shadowColor: piece.shadowColor,
+            color: piece.color,
           };
-          placedCellCount++;
+          blocksPlaced++;
         }
       }
     }
 
-    // Add points for placing piece (10 points per cell)
-    const placePoints = placedCellCount * 10;
-    const newScore = score + placePoints;
-    setScore(newScore);
+    const basePoints = blocksPlaced * 10;
+    const updatedScoreAfterPlace = score + basePoints;
+    setScore(updatedScoreAfterPlace);
 
-    // 2. Consume piece from tray
     const nextTray = [...trayPieces];
-    nextTray[pieceIndex] = null;
-
-    // Reset selection and hover
+    nextTray[pieceIdx] = null;
     setSelectedPieceIndex(null);
     setHoverPos(null);
 
-    // 3. Check for full rows and full columns
+    // Check completed rows & columns
     const fullRows: number[] = [];
     const fullCols: number[] = [];
 
-    // Check rows
-    for (let r = 0; r < GRID_SIZE; r++) {
+    for (let r = 0; r < GRID_ROWS; r++) {
       if (nextGrid[r].every((cell) => cell.filled)) {
         fullRows.push(r);
       }
     }
 
-    // Check columns
-    for (let c = 0; c < GRID_SIZE; c++) {
-      let isColFull = true;
-      for (let r = 0; r < GRID_SIZE; r++) {
+    for (let c = 0; c < GRID_COLS; c++) {
+      let colComplete = true;
+      for (let r = 0; r < GRID_ROWS; r++) {
         if (!nextGrid[r][c].filled) {
-          isColFull = false;
+          colComplete = false;
           break;
         }
       }
-      if (isColFull) {
-        fullCols.push(c);
-      }
+      if (colComplete) fullCols.push(c);
     }
 
-    const totalLinesCleared = fullRows.length + fullCols.length;
+    const linesCount = fullRows.length + fullCols.length;
 
-    if (totalLinesCleared > 0) {
-      // Line Clears!
+    if (linesCount > 0) {
       setClearingRows(fullRows);
       setClearingCols(fullCols);
 
-      const nextCombo = combo + 1;
-      setCombo(nextCombo);
-      if (nextCombo > maxCombo) {
-        setMaxCombo(nextCombo);
-      }
+      const newCombo = combo + 1;
+      setCombo(newCombo);
 
-      // Audio feedback
       if (!isMuted) {
-        soundFx.playBlockBlastClear(totalLinesCleared, nextCombo);
-        if (nextCombo >= 2) {
-          setTimeout(() => soundFx.playComboFanfare(nextCombo), 120);
+        soundFx.playBlockBlastClear(linesCount, newCombo);
+        if (newCombo >= 2) {
+          setTimeout(() => soundFx.playComboFanfare(newCombo), 100);
         }
       }
 
-      // Trigger particle explosions for all cleared cells
-      const clearedSet = new Set<string>();
+      const cellsToClear = new Set<string>();
       fullRows.forEach((r) => {
-        for (let c = 0; c < GRID_SIZE; c++) {
-          clearedSet.add(`${r},${c}`);
-        }
+        for (let c = 0; c < GRID_COLS; c++) cellsToClear.add(`${r},${c}`);
       });
       fullCols.forEach((c) => {
-        for (let r = 0; r < GRID_SIZE; r++) {
-          clearedSet.add(`${r},${c}`);
-        }
+        for (let r = 0; r < GRID_ROWS; r++) cellsToClear.add(`${r},${c}`);
       });
 
-      clearedSet.forEach((key) => {
+      cellsToClear.forEach((key) => {
         const [r, c] = key.split(',').map(Number);
-        const cell = nextGrid[r][c];
-        const theme = BLOCK_THEMES.find((t) => t.id === cell.colorId) || BLOCK_THEMES[0];
-        triggerCellBlastParticles(r, c, theme.fillHex);
+        spawnCellParticles(r, c, nextGrid[r][c].color);
       });
 
-      // Score calculation: 100 points per line + combo bonus
-      const lineScore = totalLinesCleared * 100 * (1 + nextCombo * 0.5);
-      const totalScoreWithLines = Math.floor(newScore + lineScore);
-      setScore(totalScoreWithLines);
-      setLinesClearedTotal((prev) => prev + totalLinesCleared);
+      const blastBonus = linesCount * 120 * newCombo;
+      const finalScore = updatedScoreAfterPlace + blastBonus;
+      setScore(finalScore);
 
-      // Update High Score
-      if (totalScoreWithLines > highScore) {
-        setHighScore(totalScoreWithLines);
-        localStorage.setItem('9jacash_blockblast_highscore', totalScoreWithLines.toString());
+      if (finalScore > highScore) {
+        setHighScore(finalScore);
+        localStorage.setItem('9jacash_blockblast_highscore', finalScore.toString());
       }
 
-      // Credit real 9jacash reward
-      const rewardResult = claimBlockBlastReward(totalLinesCleared, nextCombo, totalScoreWithLines);
-      if (rewardResult && rewardResult.success) {
-        setSessionEarnings((prev) => prev + rewardResult.amount);
-        addToast(
-          `+${formatNaira(rewardResult.amount)} Won!`,
-          `${totalLinesCleared} ${totalLinesCleared > 1 ? 'Lines' : 'Line'} Blasted${nextCombo > 1 ? ` • x${nextCombo} Streak` : ''}`,
-          'cash'
-        );
+      // Credit real 9jacash balance
+      const reward = claimBlockBlastReward(linesCount, newCombo, finalScore);
+      const praiseWords = [' SWEET!', 'GREAT!', 'AMAZING!', 'UNBELIEVABLE!', 'SUPER BLAST!'];
+      const praise = praiseWords[Math.min(praiseWords.length - 1, linesCount + newCombo - 2)];
+
+      if (reward && reward.success) {
+        setSessionEarnings((prev) => prev + reward.amount);
+        setFloatingBanner({
+          id: Date.now(),
+          title: `${praise} ${newCombo > 1 ? `x${newCombo}` : ''}`,
+          cashText: `+${formatNaira(reward.amount)}`,
+        });
       } else {
-        addToast(
-          `💥 ${totalLinesCleared} ${totalLinesCleared > 1 ? 'Lines' : 'Line'} Blasted!`,
-          nextCombo > 1 ? `Combo Streak x${nextCombo} 🔥` : undefined,
-          'blast'
-        );
+        setFloatingBanner({
+          id: Date.now(),
+          title: `${praise}! +${blastBonus}`,
+        });
       }
 
-      // Delay clearing to allow blast animation to play
+      setTimeout(() => setFloatingBanner(null), 1600);
+
       setTimeout(() => {
-        // Clear cells on grid
-        clearedSet.forEach((key) => {
+        cellsToClear.forEach((key) => {
           const [r, c] = key.split(',').map(Number);
           nextGrid[r][c] = { filled: false };
         });
@@ -681,67 +632,61 @@ export const BlockBlastGame: React.FC = () => {
         setGrid(nextGrid);
         setClearingRows([]);
         setClearingCols([]);
-
-        // Check if tray is empty -> refill
-        handleTrayReplenishAndCheck(nextGrid, nextTray);
-      }, 350);
+        finishTurn(nextGrid, nextTray);
+      }, 300);
     } else {
-      // No lines cleared this turn, reset combo streak
       setCombo(0);
       setGrid(nextGrid);
-
-      // Update High Score for placed piece
-      if (newScore > highScore) {
-        setHighScore(newScore);
-        localStorage.setItem('9jacash_blockblast_highscore', newScore.toString());
+      if (updatedScoreAfterPlace > highScore) {
+        setHighScore(updatedScoreAfterPlace);
+        localStorage.setItem('9jacash_blockblast_highscore', updatedScoreAfterPlace.toString());
       }
-
-      handleTrayReplenishAndCheck(nextGrid, nextTray);
+      finishTurn(nextGrid, nextTray);
     }
   };
 
-  // Helper to refill tray when all 3 pieces are used & check game over
-  const handleTrayReplenishAndCheck = (currentGrid: CellState[][], currentTray: (BlockShape | null)[]) => {
+  const finishTurn = (currentGrid: CellState[][], currentTray: (BlockPiece | null)[]) => {
     let activeTray = currentTray;
     if (currentTray.every((p) => p === null)) {
-      activeTray = generatePieceTray();
+      activeTray = generateSmartTray(currentGrid);
       setTrayPieces(activeTray);
-      if (!isMuted) soundFx.playWheelPegTick(1.2);
     } else {
       setTrayPieces(activeTray);
     }
 
-    // Check if player has any legal moves left
+    // Check if any remaining piece fits
     setTimeout(() => {
-      checkGameOverCondition(currentGrid, activeTray);
-    }, 150);
+      const remaining = activeTray.filter((p): p is BlockPiece => p !== null);
+      if (remaining.length > 0 && !remaining.some((p) => canPieceFitAnywhere(currentGrid, p))) {
+        if (!isMuted) soundFx.playBlockGameOver();
+        setIsGameOver(true);
+      }
+    }, 120);
   };
 
   // -------------------------------------------------------------
-  // Drag & Drop Handlers (Touch + Mouse)
+  // Pointer / Touch Dragging & Tap-to-Place
   // -------------------------------------------------------------
-  const handlePieceTouchStart = (pieceIdx: number, e: React.TouchEvent | React.MouseEvent) => {
-    if (isGameOver || !trayPieces[pieceIdx]) return;
-    dragPieceIndexRef.current = pieceIdx;
-    setSelectedPieceIndex(pieceIdx);
+  const handleTrayPieceStart = (idx: number, e: React.TouchEvent | React.MouseEvent) => {
+    if (isGameOver || !trayPieces[idx]) return;
+    dragPieceIndexRef.current = idx;
+    setSelectedPieceIndex(idx);
     setIsDragging(true);
-    updateHoverFromPointer(e, pieceIdx);
+    updateHoverFromPointer(e, idx);
   };
 
-  const updateHoverFromPointer = (e: React.TouchEvent | React.MouseEvent, pieceIdxOverride?: number) => {
-    const pieceIdx = pieceIdxOverride ?? dragPieceIndexRef.current ?? selectedPieceIndex;
-    if (pieceIdx === null || !trayPieces[pieceIdx]) return;
+  const updateHoverFromPointer = (e: React.TouchEvent | React.MouseEvent, idxOverride?: number) => {
+    const idx = idxOverride ?? dragPieceIndexRef.current ?? selectedPieceIndex;
+    if (idx === null || !trayPieces[idx]) return;
 
-    const board = boardContainerRef.current;
+    const board = boardRef.current;
     if (!board) return;
 
     let clientX = 0;
     let clientY = 0;
-
     if ('touches' in e && e.touches.length > 0) {
       clientX = e.touches[0].clientX;
-      // Apply vertical touch offset (60px above finger) so the piece isn't hidden under user's thumb
-      clientY = e.touches[0].clientY - 60;
+      clientY = e.touches[0].clientY - 55; // Slight lift above finger
     } else if ('clientX' in e) {
       clientX = e.clientX;
       clientY = e.clientY;
@@ -749,32 +694,28 @@ export const BlockBlastGame: React.FC = () => {
 
     const rect = board.getBoundingClientRect();
     if (
-      clientX < rect.left - 20 ||
-      clientX > rect.right + 20 ||
-      clientY < rect.top - 20 ||
-      clientY > rect.bottom + 20
+      clientX < rect.left - 16 ||
+      clientX > rect.right + 16 ||
+      clientY < rect.top - 16 ||
+      clientY > rect.bottom + 16
     ) {
       setHoverPos(null);
       return;
     }
 
-    const cellWidth = rect.width / GRID_SIZE;
-    const cellHeight = rect.height / GRID_SIZE;
+    const cellW = rect.width / GRID_COLS;
+    const cellH = rect.height / GRID_ROWS;
+    const piece = trayPieces[idx]!;
+    const pRows = piece.matrix.length;
+    const pCols = piece.matrix[0].length;
 
-    const shape = trayPieces[pieceIdx];
-    if (!shape) return;
+    const rawC = Math.floor((clientX - rect.left) / cellW - pCols / 2 + 0.5);
+    const rawR = Math.floor((clientY - rect.top) / cellH - pRows / 2 + 0.5);
 
-    // Center the piece around pointer
-    const shapeRows = shape.matrix.length;
-    const shapeCols = shape.matrix[0].length;
+    const clampedR = Math.max(0, Math.min(GRID_ROWS - pRows, rawR));
+    const clampedC = Math.max(0, Math.min(GRID_COLS - pCols, rawC));
 
-    const targetCol = Math.floor((clientX - rect.left) / cellWidth - shapeCols / 2 + 0.5);
-    const targetRow = Math.floor((clientY - rect.top) / cellHeight - shapeRows / 2 + 0.5);
-
-    const clampedRow = Math.max(0, Math.min(GRID_SIZE - shapeRows, targetRow));
-    const clampedCol = Math.max(0, Math.min(GRID_SIZE - shapeCols, targetCol));
-
-    setHoverPos([clampedRow, clampedCol]);
+    setHoverPos([clampedR, clampedC]);
   };
 
   const handlePointerMove = (e: React.TouchEvent | React.MouseEvent) => {
@@ -786,554 +727,492 @@ export const BlockBlastGame: React.FC = () => {
     if (!isDragging) return;
     setIsDragging(false);
 
-    const pieceIdx = dragPieceIndexRef.current;
-    if (pieceIdx !== null && hoverPos !== null && trayPieces[pieceIdx]) {
-      const shape = trayPieces[pieceIdx]!;
-      if (canPlacePiece(grid, shape, hoverPos[0], hoverPos[1])) {
-        placePieceAt(pieceIdx, hoverPos[0], hoverPos[1]);
+    const idx = dragPieceIndexRef.current;
+    if (idx !== null && hoverPos !== null && trayPieces[idx]) {
+      const piece = trayPieces[idx]!;
+      if (canPlacePiece(grid, piece, hoverPos[0], hoverPos[1])) {
+        placePieceAt(idx, hoverPos[0], hoverPos[1]);
       } else {
         setHoverPos(null);
       }
     } else {
       setHoverPos(null);
     }
-
     dragPieceIndexRef.current = null;
   };
 
-  // -------------------------------------------------------------
-  // Tap-to-Place Logic (Mobile & Desktop friendly alternative)
-  // -------------------------------------------------------------
-  const handleBoardCellClick = (r: number, c: number) => {
+  const handleCellClick = (r: number, c: number) => {
     if (isGameOver) return;
-    if (selectedPieceIndex === null || !trayPieces[selectedPieceIndex]) {
-      return;
+    // Auto-select first available piece if user taps board directly
+    let activeIdx = selectedPieceIndex;
+    if (activeIdx === null || !trayPieces[activeIdx]) {
+      const firstAvailable = trayPieces.findIndex((p) => p !== null);
+      if (firstAvailable === -1) return;
+      activeIdx = firstAvailable;
+      setSelectedPieceIndex(activeIdx);
     }
 
-    const shape = trayPieces[selectedPieceIndex];
-    if (!shape) return;
+    const piece = trayPieces[activeIdx];
+    if (!piece) return;
 
-    // Place piece with top-left anchor at clicked cell or adjusted center
-    const shapeRows = shape.matrix.length;
-    const shapeCols = shape.matrix[0].length;
-
-    // Test exact cell first
-    if (canPlacePiece(grid, shape, r, c)) {
-      placePieceAt(selectedPieceIndex, r, c);
-      return;
+    const bestSpot = findBestPlacementNear(grid, piece, r, c);
+    if (bestSpot) {
+      placePieceAt(activeIdx, bestSpot[0], bestSpot[1]);
+    } else {
+      if (!isMuted) soundFx.playLoseSound();
     }
-
-    // If exact doesn't fit, test centered around clicked cell
-    const centeredRow = Math.max(0, Math.min(GRID_SIZE - shapeRows, r - Math.floor(shapeRows / 2)));
-    const centeredCol = Math.max(0, Math.min(GRID_SIZE - shapeCols, c - Math.floor(shapeCols / 2)));
-    if (canPlacePiece(grid, shape, centeredRow, centeredCol)) {
-      placePieceAt(selectedPieceIndex, centeredRow, centeredCol);
-      return;
-    }
-
-    if (!isMuted) soundFx.playLoseSound();
   };
 
-  // -------------------------------------------------------------
-  // Restart Game
-  // -------------------------------------------------------------
-  const handleRestartGame = () => {
+  const handleRestart = () => {
     if (!isMuted) soundFx.playClick();
-    setGrid(
-      Array.from({ length: GRID_SIZE }, () =>
-        Array.from({ length: GRID_SIZE }, () => ({ filled: false }))
-      )
-    );
-    setTrayPieces(generatePieceTray());
+    const freshGrid = createEmptyGrid();
+    setGrid(freshGrid);
+    setTrayPieces(generateSmartTray(freshGrid));
     setSelectedPieceIndex(null);
     setHoverPos(null);
     setScore(0);
     setCombo(0);
     setIsGameOver(false);
+    setShowSettingsModal(false);
     setClearingRows([]);
     setClearingCols([]);
-    addToast('🎮 Fresh Game Started!', 'Fill rows & columns to blast blocks', 'blast');
   };
 
-  // -------------------------------------------------------------
-  // Compute Ghost Preview Cells
-  // -------------------------------------------------------------
-  const ghostCellsMap = useMemo(() => {
-    const map = new Map<string, { isValid: boolean; colorId: string }>();
+  // Compute Ghost cells map
+  const ghostMap = useMemo(() => {
+    const map = new Map<string, { valid: boolean; color: BlockColorTheme['id'] }>();
     if (selectedPieceIndex === null || hoverPos === null) return map;
-
     const piece = trayPieces[selectedPieceIndex];
     if (!piece) return map;
 
-    const [startR, startC] = hoverPos;
-    const isValid = canPlacePiece(grid, piece, startR, startC);
+    const [sr, sc] = hoverPos;
+    const valid = canPlacePiece(grid, piece, sr, sc);
 
-    const matrix = piece.matrix;
-    for (let r = 0; r < matrix.length; r++) {
-      for (let c = 0; c < matrix[r].length; c++) {
-        if (matrix[r][c] === 1) {
-          const boardR = startR + r;
-          const boardC = startC + c;
-          if (boardR >= 0 && boardR < GRID_SIZE && boardC >= 0 && boardC < GRID_SIZE) {
-            map.set(`${boardR},${boardC}`, { isValid, colorId: piece.colorId });
+    for (let r = 0; r < piece.matrix.length; r++) {
+      for (let c = 0; c < piece.matrix[r].length; c++) {
+        if (piece.matrix[r][c] === 1) {
+          const br = sr + r;
+          const bc = sc + c;
+          if (br >= 0 && br < GRID_ROWS && bc >= 0 && bc < GRID_COLS) {
+            map.set(`${br},${bc}`, { valid, color: piece.color });
           }
         }
       }
     }
-
     return map;
   }, [selectedPieceIndex, hoverPos, trayPieces, grid, canPlacePiece]);
 
   return (
     <div
-      className="space-y-4 select-none touch-none animate-in fade-in duration-200"
+      className="mx-auto max-w-[345px] w-full select-none touch-none"
       onTouchMove={handlePointerMove}
       onTouchEnd={handlePointerEnd}
       onMouseMove={handlePointerMove}
       onMouseUp={handlePointerEnd}
     >
-      {/* ================= TOP SCORE BAR ================= */}
+      {/* ================= ROYAL BLUE ARCADE CABINET CARD (MATCHING SCREENSHOT) ================= */}
       <div
-        className={`p-3.5 rounded-3xl border shadow-xl flex items-center justify-between gap-2 ${
-          isLight
-            ? 'bg-gradient-to-r from-amber-50/80 via-white to-pink-50/60 border-amber-300 shadow-amber-500/10'
-            : 'bg-gradient-to-r from-[#171322] via-[#14151f] to-[#121c24] border-stone-800 shadow-2xl'
-        }`}
+        className="relative overflow-hidden rounded-[28px] p-3.5 shadow-2xl border-2 border-[#3b62d9]/60"
+        style={{
+          background: 'linear-gradient(165deg, #2145bd 0%, #1b38a3 55%, #162d87 100%)',
+        }}
       >
-        {/* Score & High Score */}
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-amber-400 to-yellow-500 p-0.5 shadow-md flex-shrink-0">
-            <div
-              className={`w-full h-full rounded-[14px] flex items-center justify-center ${
-                isLight ? 'bg-white' : 'bg-[#15121c]'
-              }`}
-            >
-              <Trophy className="w-5 h-5 text-amber-500" />
-            </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <span className={`text-[10px] font-bold uppercase tracking-wider ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
-                Score
-              </span>
-              {combo > 1 && (
-                <span className="px-1.5 py-0.2 rounded-full text-[9px] font-black bg-gradient-to-r from-orange-500 to-amber-500 text-white animate-pulse">
-                  x{combo} Streak 🔥
-                </span>
-              )}
-            </div>
-            <div className={`text-2xl font-black font-mono tracking-tight leading-none ${isLight ? 'text-slate-900' : 'text-white'}`}>
-              {score.toLocaleString()}
-            </div>
-            <div className={`text-[10px] font-medium flex items-center gap-1 mt-0.5 ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
-              <span>Best:</span>
-              <span className="font-mono font-bold text-amber-500">{highScore.toLocaleString()}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Live Earnings & Controls */}
-        <div className="flex items-center gap-2">
-          {/* Real Wallet Balance Earned */}
-          <div
-            className={`px-3 py-1.5 rounded-2xl border text-right ${
-              isLight
-                ? 'bg-emerald-50 border-emerald-300 shadow-sm'
-                : 'bg-emerald-500/15 border-emerald-500/30'
-            }`}
-          >
-            <span className={`text-[9px] uppercase font-black block tracking-wider ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
-              Cash Won
-            </span>
-            <span className={`text-sm font-black font-mono leading-none ${isLight ? 'text-emerald-800' : 'text-emerald-300'}`}>
-              +{formatNaira(sessionEarnings)}
-            </span>
-          </div>
-
-          {/* Audio Mute Button */}
-          <button
-            type="button"
-            onClick={() => setIsMuted(!isMuted)}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer border ${
-              isLight
-                ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
-                : 'bg-stone-800/80 hover:bg-stone-700 border-stone-700 text-stone-300'
-            }`}
-            title={isMuted ? 'Unmute Sound' : 'Mute Sound'}
-          >
-            {isMuted ? <VolumeX className="w-4 h-4 text-rose-500" /> : <Volume2 className="w-4 h-4 text-amber-500" />}
-          </button>
-
-          {/* How to play */}
-          <button
-            type="button"
-            onClick={() => setShowHowToPlay(true)}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer border ${
-              isLight
-                ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
-                : 'bg-stone-800/80 hover:bg-stone-700 border-stone-700 text-stone-300'
-            }`}
-            title="How to Play"
-          >
-            <HelpCircle className="w-4 h-4 text-sky-500" />
-          </button>
-
-          {/* Restart */}
-          <button
-            type="button"
-            onClick={handleRestartGame}
-            className={`w-9 h-9 rounded-xl flex items-center justify-center transition-colors cursor-pointer border ${
-              isLight
-                ? 'bg-slate-100 hover:bg-slate-200 border-slate-200 text-slate-700'
-                : 'bg-stone-800/80 hover:bg-stone-700 border-stone-700 text-stone-300'
-            }`}
-            title="Restart Game"
-          >
-            <RotateCcw className="w-4 h-4 text-emerald-500" />
-          </button>
-        </div>
-      </div>
-
-      {/* ================= FLOATING TOASTS ================= */}
-      {toasts.length > 0 && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 flex flex-col items-center gap-1.5 pointer-events-none">
-          {toasts.map((toast) => (
-            <div
-              key={toast.id}
-              className={`px-4 py-2 rounded-2xl shadow-2xl border text-center animate-in fade-in zoom-in-95 duration-200 backdrop-blur-md ${
-                toast.type === 'cash'
-                  ? 'bg-emerald-600/95 text-white border-emerald-300 shadow-emerald-500/30'
-                  : toast.type === 'combo'
-                  ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-black font-black border-amber-300 shadow-amber-500/30'
-                  : 'bg-gradient-to-r from-pink-600 to-violet-600 text-white border-pink-300 shadow-pink-500/30'
-              }`}
-            >
-              <div className="text-sm font-black tracking-tight">{toast.text}</div>
-              {toast.subtext && <div className="text-[11px] opacity-90 font-medium">{toast.subtext}</div>}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* ================= MAIN 8x8 BOARD CONTAINER ================= */}
-      <div className="relative mx-auto max-w-[390px] w-full">
-        {/* Explosion Canvas Overlay */}
-        <canvas
-          ref={canvasRef}
-          width={390}
-          height={390}
-          className="absolute inset-0 z-20 pointer-events-none rounded-3xl"
+        {/* Subtle decorative background wave shapes like screenshot */}
+        <div
+          className="
+            pointer-events-none absolute -top-12 -right-12 w-40 h-40 rounded-full opacity-25
+          "
+          style={{ background: '#112473' }}
+        />
+        <div
+          className="
+            pointer-events-none absolute -bottom-16 -left-12 w-44 h-44 rounded-full opacity-25
+          "
+          style={{ background: '#2c54db' }}
         />
 
-        {/* Board Surface */}
+        {/* ================= TOP HEADER (LOGO + CROWN SCORE + SETTINGS GEAR) ================= */}
+        <div className="relative z-10 flex items-center justify-between mb-3 px-1">
+          {/* Left: BLOCK BLAST 3D Cartoon Logo with Crown */}
+          <div className="flex flex-col items-start leading-none">
+            <div className="relative flex items-center tracking-tighter font-black text-[22px] drop-shadow-[0_3px_0_#0b1646]">
+              <span className="text-[#ff6a1a] -rotate-6 inline-block">B</span>
+              <span className="text-[#36e024] -rotate-2 inline-block">L</span>
+              <span className="relative text-[#ffc812] inline-block mx-0.5">
+                {/* Little Golden Crown perched above the O */}
+                <svg
+                  viewBox="0 0 24 18"
+                  className="w-4 h-3.5 absolute -top-3 left-1/2 -translate-x-1/2 -rotate-6 drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]"
+                >
+                  <path
+                    d="M2 15L4 5L9 10L12 3L15 10L20 5L22 15H2Z"
+                    fill="#ffd426"
+                    stroke="#b87d00"
+                    strokeWidth="1.5"
+                  />
+                </svg>
+                O
+              </span>
+              <span className="text-[#ff4791] rotate-3 inline-block">C</span>
+              <span className="text-[#b042ff] rotate-6 inline-block">K</span>
+            </div>
+            <div
+              className="text-[14px] font-black tracking-wider uppercase -mt-1 px-1 rounded"
+              style={{
+                color: '#2be4ff',
+                textShadow: '0 2px 0 #091340, 0 0 6px rgba(43,228,255,0.4)',
+              }}
+            >
+              BLAST
+            </div>
+          </div>
+
+          {/* Center: Golden Crown + Big Score + Best */}
+          <div className="flex flex-col items-center">
+            {/* Golden Crown SVG */}
+            <svg
+              viewBox="0 0 32 24"
+              className="w-7 h-5 mb-0.5 drop-shadow-[0_0_8px_rgba(255,200,18,0.6)]"
+            >
+              <path
+                d="M3 20L6 7L12 13L16 4L20 13L26 7L29 20H3Z"
+                fill="url(#crownGrad)"
+                stroke="#d48800"
+                strokeWidth="1.5"
+              />
+              <circle cx="6" cy="5.5" r="2" fill="#ffe66d" />
+              <circle cx="16" cy="2.5" r="2.2" fill="#fff099" />
+              <circle cx="26" cy="5.5" r="2" fill="#ffe66d" />
+              <defs>
+                <linearGradient id="crownGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#ffe34d" />
+                  <stop offset="100%" stopColor="#f59e0b" />
+                </linearGradient>
+              </defs>
+            </svg>
+
+            <div className="text-[28px] font-black text-white leading-none tracking-tight drop-shadow-[0_2px_4px_rgba(0,0,0,0.45)]">
+              {score}
+            </div>
+            <div className="text-[11px] font-extrabold mt-0.5 tracking-tight">
+              <span className="text-[#ffc812]">Best: </span>
+              <span className="text-white">{highScore}</span>
+            </div>
+          </div>
+
+          {/* Right: Cash Won Badge + Settings Gear */}
+          <div className="flex flex-col items-end gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                if (!isMuted) soundFx.playClick();
+                setShowSettingsModal(true);
+              }}
+              className="w-9 h-9 rounded-full flex items-center justify-center text-[#cfe0ff] hover:text-white hover:bg-white/10 transition-transform active:scale-90 cursor-pointer"
+              title="Game Settings"
+            >
+              <Settings className="w-6 h-6 stroke-[2.2]" />
+            </button>
+
+            <div className="px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/50 text-[10px] font-black text-emerald-300 font-mono">
+              +{formatNaira(sessionEarnings)}
+            </div>
+          </div>
+        </div>
+
+        {/* ================= FLOATING PRAISE / CASH BANNER ================= */}
+        {floatingBanner && (
+          <div className="pointer-events-none absolute top-24 left-1/2 -translate-x-1/2 z-30 flex flex-col items-center animate-in zoom-in-90 fade-in duration-150">
+            <div
+              className="px-3.5 py-1 rounded-2xl font-black text-base tracking-wide text-white shadow-xl border border-amber-300/80"
+              style={{
+                background: 'linear-gradient(90deg, #f59e0b, #ef4444, #ec4899)',
+                textShadow: '0 2px 0 rgba(0,0,0,0.4)',
+              }}
+            >
+              {floatingBanner.title}
+            </div>
+            {floatingBanner.cashText && (
+              <div className="mt-1 px-2.5 py-0.5 rounded-full bg-emerald-500 text-black font-black text-xs shadow-lg">
+                {floatingBanner.cashText}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ================= COMPACT 6x8 PUZZLE GRID (MATCHING SCREENSHOT) ================= */}
+        <div className="relative z-10">
+          {/* Particle Canvas Overlay */}
+          <canvas
+            ref={canvasRef}
+            width={320}
+            height={240}
+            className="pointer-events-none absolute inset-0 w-full h-full z-20"
+          />
+
+          <div
+            ref={boardRef}
+            className="p-2 rounded-[16px] border-[3px] border-[#263f9c] shadow-[inset_0_4px_10px_rgba(0,0,0,0.65)]"
+            style={{ backgroundColor: '#0b1542' }}
+          >
+            <div
+              className="grid grid-cols-8 gap-[3.5px] w-full"
+              style={{ aspectRatio: '8 / 6' }}
+            >
+              {grid.map((row, r) =>
+                row.map((cell, c) => {
+                  const ghost = ghostMap.get(`${r},${c}`);
+                  const isClearing = clearingRows.includes(r) || clearingCols.includes(c);
+
+                  return (
+                    <div
+                      key={`${r}-${c}`}
+                      onClick={() => handleCellClick(r, c)}
+                      onMouseEnter={() => {
+                        if (selectedPieceIndex !== null && !isDragging) {
+                          const piece = trayPieces[selectedPieceIndex];
+                          if (piece) {
+                            const best = findBestPlacementNear(grid, piece, r, c);
+                            setHoverPos(best || [r, c]);
+                          }
+                        }
+                      }}
+                      className="relative rounded-[6px] p-[0.5px] cursor-pointer transition-colors"
+                      style={{
+                        backgroundColor: '#12205c',
+                        boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.55)',
+                      }}
+                    >
+                      {cell.filled && cell.color ? (
+                        <GlossyBlockTile color={cell.color} isClearing={isClearing} />
+                      ) : ghost ? (
+                        <GlossyBlockTile
+                          color={ghost.color}
+                          isGhost={ghost.valid}
+                          isInvalidGhost={!ghost.valid}
+                        />
+                      ) : null}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* ================= BOTTOM UNIFIED PIECE TRAY (MATCHING SCREENSHOT) ================= */}
         <div
-          ref={boardContainerRef}
-          className={`relative p-3 rounded-3xl border-2 shadow-2xl transition-all ${
-            isLight
-              ? 'bg-slate-100/90 border-slate-300/80 shadow-slate-300/60'
-              : 'bg-[#101118] border-stone-800 shadow-black'
-          }`}
+          className="relative z-10 mt-3 rounded-[18px] px-2 py-3 border border-[#3252bd]/60 shadow-[inset_0_2px_6px_rgba(0,0,0,0.45)]"
+          style={{
+            background: 'linear-gradient(180deg, #162b82 0%, #12236e 100%)',
+          }}
         >
-          {/* 8x8 Grid Cells */}
-          <div className="grid grid-cols-8 gap-1.5 aspect-square w-full">
-            {grid.map((row, r) =>
-              row.map((cell, c) => {
-                const ghost = ghostCellsMap.get(`${r},${c}`);
-                const isClearingRow = clearingRows.includes(r);
-                const isClearingCol = clearingCols.includes(c);
-                const isClearing = isClearingRow || isClearingCol;
+          <div className="grid grid-cols-3 items-center justify-items-center min-h-[74px]">
+            {trayPieces.map((piece, idx) => {
+              if (!piece) {
+                return <div key={`empty_${idx}`} className="w-16 h-16" />;
+              }
 
-                // Color Theme lookup
-                const cellTheme = BLOCK_THEMES.find((t) => t.id === cell.colorId) || BLOCK_THEMES[0];
-                const ghostTheme = ghost ? BLOCK_THEMES.find((t) => t.id === ghost.colorId) || BLOCK_THEMES[0] : null;
+              const isSelected = selectedPieceIndex === idx;
+              const fits = canPieceFitAnywhere(grid, piece);
 
-                return (
+              return (
+                <div
+                  key={piece.id}
+                  onTouchStart={(e) => handleTrayPieceStart(idx, e)}
+                  onMouseDown={(e) => handleTrayPieceStart(idx, e)}
+                  onClick={() => {
+                    if (selectedPieceIndex === idx) {
+                      setSelectedPieceIndex(null);
+                      setHoverPos(null);
+                    } else {
+                      setSelectedPieceIndex(idx);
+                      if (!isMuted) soundFx.playClick();
+                    }
+                  }}
+                  className={`flex flex-col items-center justify-center p-1.5 rounded-xl cursor-pointer transition-transform duration-150 ${
+                    !fits
+                      ? 'opacity-35 grayscale'
+                      : isSelected
+                      ? 'scale-110 ring-2 ring-[#ffc812] bg-white/10 shadow-lg'
+                      : 'hover:scale-105 active:scale-95'
+                  }`}
+                >
                   <div
-                    key={`${r}-${c}`}
-                    onClick={() => handleBoardCellClick(r, c)}
-                    onMouseEnter={() => {
-                      if (selectedPieceIndex !== null && !isDragging) {
-                        setHoverPos([r, c]);
-                      }
+                    className="grid gap-[2.5px]"
+                    style={{
+                      gridTemplateColumns: `repeat(${piece.matrix[0].length}, 18px)`,
+                      gridAutoRows: '18px',
                     }}
-                    className={`relative rounded-xl flex items-center justify-center transition-all duration-150 cursor-pointer overflow-hidden ${
-                      // 1. Filled Cell
-                      cell.filled
-                        ? `bg-gradient-to-br ${
-                            isLight ? cellTheme.lightGradient : cellTheme.gradient
-                          } border-t-2 border-l border-white/50 border-b-2 border-r border-black/40 shadow-sm ${
-                            isClearing ? 'scale-110 brightness-150 animate-ping' : ''
-                          }`
-                        : // 2. Ghost Preview Cell (Hovering / Dragging)
-                        ghost
-                        ? ghost.isValid
-                          ? `bg-gradient-to-br ${
-                              isLight ? ghostTheme?.lightGradient : ghostTheme?.gradient
-                            } opacity-60 border-2 border-dashed border-white animate-pulse`
-                          : 'bg-rose-500/30 border-2 border-dashed border-rose-400 opacity-70'
-                        : // 3. Empty Board Cell
-                        isLight
-                        ? 'bg-white/80 hover:bg-white border border-slate-200/90 shadow-inner'
-                        : 'bg-[#181924] hover:bg-[#1f2030] border border-stone-800/80'
-                    }`}
                   >
-                    {/* Inner 3D Gloss Sheen on Filled Cell */}
-                    {cell.filled && (
-                      <div className="absolute inset-0 pointer-events-none">
-                        <div className="absolute top-0.5 left-0.5 right-0.5 h-1/3 bg-white/30 rounded-t-lg backdrop-blur-xs" />
-                        <div className="absolute bottom-1 right-1 w-1.5 h-1.5 rounded-full bg-white/40" />
-                      </div>
+                    {piece.matrix.map((row, r) =>
+                      row.map((val, c) => (
+                        <div key={`${r}-${c}`} className="w-[18px] h-[18px]">
+                          {val === 1 ? <GlossyBlockTile color={piece.color} /> : null}
+                        </div>
+                      ))
                     )}
                   </div>
-                );
-              })
-            )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Subtle helper hint */}
+          <div className="text-center text-[10px] font-bold text-[#9cb8ff] mt-1">
+            {selectedPieceIndex !== null
+              ? 'Tap any spot on the board to place block!'
+              : 'Tap or drag a block above onto the board'}
           </div>
         </div>
       </div>
 
-      {/* ================= TRAY: 3 SHAPES SELECTION ================= */}
-      <div className="space-y-2">
-        <div className="flex items-center justify-between px-1">
-          <span className={`text-[11px] font-bold uppercase tracking-wider ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
-            {selectedPieceIndex !== null ? 'Tap Board to Place or Drag Block' : 'Choose a Block to Place'}
-          </span>
-          <span className={`text-[11px] font-mono ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
-            Lines Cleared: <strong className="text-amber-500">{linesClearedTotal}</strong>
-          </span>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2.5">
-          {trayPieces.map((piece, idx) => {
-            if (!piece) {
-              return (
-                <div
-                  key={`empty_${idx}`}
-                  className={`h-28 rounded-2xl border-2 border-dashed flex items-center justify-center opacity-30 ${
-                    isLight ? 'border-slate-300 bg-slate-50' : 'border-stone-800 bg-[#12131b]'
-                  }`}
-                >
-                  <Sparkles className="w-5 h-5 text-stone-500" />
-                </div>
-              );
-            }
-
-            const isSelected = selectedPieceIndex === idx;
-            const pieceTheme = BLOCK_THEMES.find((t) => t.id === piece.colorId) || BLOCK_THEMES[0];
-            const canFit = canPieceFitAnywhere(grid, piece);
-
-            return (
-              <div
-                key={piece.id}
-                onTouchStart={(e) => handlePieceTouchStart(idx, e)}
-                onMouseDown={(e) => handlePieceTouchStart(idx, e)}
-                onClick={() => {
-                  if (selectedPieceIndex === idx) {
-                    setSelectedPieceIndex(null);
-                    setHoverPos(null);
-                  } else {
-                    setSelectedPieceIndex(idx);
-                    if (!isMuted) soundFx.playClick();
-                  }
-                }}
-                className={`h-28 rounded-2xl border-2 flex flex-col items-center justify-center p-2 cursor-pointer transition-all active:scale-95 group relative ${
-                  !canFit
-                    ? 'opacity-40 grayscale cursor-not-allowed border-rose-500/40'
-                    : isSelected
-                    ? isLight
-                      ? 'bg-amber-50 border-amber-400 shadow-lg shadow-amber-500/20 scale-105 ring-2 ring-amber-400'
-                      : 'bg-[#201c2b] border-amber-400 shadow-xl shadow-amber-500/25 scale-105 ring-2 ring-amber-400'
-                    : isLight
-                    ? 'bg-white hover:bg-slate-50 border-slate-200/90 shadow-md hover:border-amber-400/60'
-                    : 'bg-[#151622] hover:bg-[#1a1b2a] border-stone-800 shadow-lg hover:border-stone-700'
-                }`}
-              >
-                {/* Visual Mini Matrix of the Block */}
-                <div
-                  className="grid gap-1"
-                  style={{
-                    gridTemplateColumns: `repeat(${piece.matrix[0].length}, minmax(0, 1fr))`,
-                  }}
-                >
-                  {piece.matrix.map((row, r) =>
-                    row.map((val, c) => (
-                      <div
-                        key={`${r}-${c}`}
-                        className={`w-4 h-4 sm:w-5 sm:h-5 rounded-md transition-all ${
-                          val === 1
-                            ? `bg-gradient-to-br ${
-                                isLight ? pieceTheme.lightGradient : pieceTheme.gradient
-                              } border-t border-l border-white/60 border-b border-r border-black/30 shadow-sm`
-                            : 'opacity-0'
-                        }`}
-                      />
-                    ))
-                  )}
-                </div>
-
-                {/* Status indicator badge */}
-                <div className="mt-1.5 flex items-center gap-1">
-                  <span
-                    className={`text-[9px] font-black uppercase tracking-wider ${
-                      isSelected ? 'text-amber-500' : isLight ? 'text-slate-500' : 'text-stone-400'
-                    }`}
-                  >
-                    {isSelected ? 'Ready' : piece.name.split(' ')[0]}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* ================= EARNINGS INFO FOOTER ================= */}
-      <div
-        className={`p-3.5 rounded-2xl border flex items-center justify-between text-xs ${
-          isLight
-            ? 'bg-amber-50/70 border-amber-200 text-amber-900 shadow-sm'
-            : 'bg-[#181622] border-amber-500/30 text-amber-300'
-        }`}
-      >
-        <div className="flex items-center gap-2">
-          <Zap className="w-4 h-4 text-amber-500 flex-shrink-0" />
-          <span>
-            Blasts credit up to <strong>₦3,500</strong> per multi-line clear + streak bonuses straight to your wallet.
-          </span>
-        </div>
-        <span className="font-mono font-bold text-amber-500 whitespace-nowrap">₦500/Line</span>
-      </div>
-
-      {/* ================= GAME OVER MODAL ================= */}
-      {isGameOver && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+      {/* ================= SETTINGS / PAUSE MODAL (FROM GEAR ICON) ================= */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150">
           <div
-            className={`w-full max-w-sm rounded-3xl p-6 border-2 text-center space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 ${
-              isLight
-                ? 'bg-white border-amber-300 text-slate-900'
-                : 'bg-gradient-to-b from-[#1e1728] via-[#141520] to-[#101018] border-amber-500/50 text-white'
-            }`}
+            className="w-full max-w-[300px] rounded-3xl p-5 border-2 border-[#3b62d9] text-white space-y-3.5 shadow-2xl"
+            style={{ background: 'linear-gradient(180deg, #1e3fae 0%, #132878 100%)' }}
           >
-            <div className="w-16 h-16 mx-auto rounded-3xl bg-gradient-to-tr from-rose-500 via-amber-500 to-yellow-400 p-0.5 shadow-xl shadow-amber-500/30 flex items-center justify-center">
-              <div
-                className={`w-full h-full rounded-3xl flex items-center justify-center ${
-                  isLight ? 'bg-amber-50' : 'bg-[#14111d]'
-                }`}
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black tracking-wide uppercase text-[#ffc812]">
+                Game Menu
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowSettingsModal(false)}
+                className="w-7 h-7 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center cursor-pointer"
               >
-                <Trophy className="w-8 h-8 text-amber-500" />
-              </div>
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            <div className="space-y-1">
-              <span className="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-rose-500/20 text-rose-400 border border-rose-500/30">
-                No Moves Left
-              </span>
-              <h2 className="text-2xl font-black tracking-tight">Game Complete!</h2>
-              <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
-                Great puzzle run! Here are your block blast achievements:
-              </p>
-            </div>
-
-            {/* Score & Rewards Breakdown */}
-            <div
-              className={`p-4 rounded-2xl border text-left space-y-2.5 ${
-                isLight ? 'bg-slate-50 border-slate-200' : 'bg-[#191924] border-stone-800'
-              }`}
-            >
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Final Score</span>
-                <span className="text-base font-black font-mono text-amber-500">{score.toLocaleString()}</span>
-              </div>
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Total Lines Blasted</span>
-                <span className="text-xs font-bold font-mono">{linesClearedTotal} lines</span>
-              </div>
-              <div className="flex items-center justify-between pb-2 border-b border-white/10">
-                <span className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Highest Combo Streak</span>
-                <span className="text-xs font-bold text-orange-400">x{maxCombo} Streak 🔥</span>
-              </div>
-              <div className="flex items-center justify-between pt-1">
-                <span className={`text-xs font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                  Cash Credited to Wallet
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={() => setIsMuted(!isMuted)}
+                className="w-full py-2.5 px-3.5 rounded-2xl bg-[#102061] hover:bg-[#162b80] border border-white/15 flex items-center justify-between text-xs font-bold cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  {isMuted ? (
+                    <VolumeX className="w-4 h-4 text-rose-400" />
+                  ) : (
+                    <Volume2 className="w-4 h-4 text-emerald-400" />
+                  )}
+                  Sound Effects
                 </span>
-                <span className="text-base font-black font-mono text-emerald-500">
-                  +{formatNaira(sessionEarnings)}
+                <span className={isMuted ? 'text-rose-400' : 'text-emerald-400'}>
+                  {isMuted ? 'OFF' : 'ON'}
                 </span>
-              </div>
-            </div>
+              </button>
 
-            {/* Play Again Button */}
-            <button
-              type="button"
-              onClick={handleRestartGame}
-              className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 hover:from-amber-300 hover:to-yellow-400 text-black font-black text-sm shadow-xl shadow-amber-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
-            >
-              <RotateCcw className="w-4 h-4 stroke-[2.5]" />
-              <span>Play Again</span>
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSettingsModal(false);
+                  setShowHowToPlay(true);
+                }}
+                className="w-full py-2.5 px-3.5 rounded-2xl bg-[#102061] hover:bg-[#162b80] border border-white/15 flex items-center justify-between text-xs font-bold cursor-pointer"
+              >
+                <span className="flex items-center gap-2">
+                  <HelpCircle className="w-4 h-4 text-sky-400" />
+                  How to Play
+                </span>
+                <span className="text-white/60">View</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleRestart}
+                className="w-full py-2.5 px-3.5 rounded-2xl bg-amber-500 hover:bg-amber-400 text-black font-black text-xs flex items-center justify-center gap-1.5 shadow-lg cursor-pointer"
+              >
+                <RotateCcw className="w-4 h-4 stroke-[2.5]" />
+                Restart Game
+              </button>
+            </div>
           </div>
         </div>
       )}
 
       {/* ================= HOW TO PLAY MODAL ================= */}
       {showHowToPlay && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-in fade-in duration-150">
           <div
-            className={`w-full max-w-sm rounded-3xl p-6 border-2 space-y-4 shadow-2xl animate-in zoom-in-95 duration-200 ${
-              isLight
-                ? 'bg-white border-sky-300 text-slate-900'
-                : 'bg-gradient-to-b from-[#151c28] via-[#121620] to-[#0f1118] border-sky-500/50 text-white'
-            }`}
+            className="w-full max-w-[310px] rounded-3xl p-5 border-2 border-[#3b62d9] text-white space-y-3.5 shadow-2xl"
+            style={{ background: 'linear-gradient(180deg, #1e3fae 0%, #132878 100%)' }}
           >
             <div className="flex items-center justify-between">
-              <h3 className="text-lg font-black flex items-center gap-2">
-                <HelpCircle className="w-5 h-5 text-sky-400" />
-                How to Play Block Blast
-              </h3>
+              <h3 className="text-base font-black text-[#ffc812]">How to Play</h3>
               <button
                 type="button"
                 onClick={() => setShowHowToPlay(false)}
-                className={`w-8 h-8 rounded-full flex items-center justify-center cursor-pointer ${
-                  isLight ? 'bg-slate-100 hover:bg-slate-200' : 'bg-stone-800 hover:bg-stone-700'
-                }`}
+                className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className={`space-y-3 text-xs leading-relaxed ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
-              <div className="flex items-start gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center flex-shrink-0 font-bold text-[10px]">
-                  1
-                </div>
-                <span>
-                  <strong>Pick a block:</strong> Tap or drag any of the 3 polyomino shapes from the tray below onto the 8x8 grid.
-                </span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center flex-shrink-0 font-bold text-[10px]">
-                  2
-                </div>
-                <span>
-                  <strong>Blast Rows &amp; Columns:</strong> Fill complete horizontal rows or vertical columns to blast them off the board.
-                </span>
-              </div>
-              <div className="flex items-start gap-2.5">
-                <div className="w-5 h-5 rounded-full bg-sky-500/20 text-sky-400 flex items-center justify-center flex-shrink-0 font-bold text-[10px]">
-                  3
-                </div>
-                <span>
-                  <strong>Combos &amp; Real Cash:</strong> Clear consecutive lines or multiple lines together for explosive combo multipliers and instant Naira cash credited to your balance!
-                </span>
-              </div>
+            <div className="space-y-2.5 text-xs text-blue-100 leading-relaxed">
+              <p>
+                <strong>1. Place Blocks:</strong> Drag or tap any of the 3 blocks at the bottom onto the grid.
+              </p>
+              <p>
+                <strong>2. Blast Full Lines:</strong> Fill any horizontal row (8 blocks) or vertical column (6 blocks) to blast it!
+              </p>
+              <p>
+                <strong>3. Earn Instant Naira:</strong> Every line blast credits <strong>₦500 – ₦3,500+</strong> straight to your 9jacash wallet!
+              </p>
             </div>
 
             <button
               type="button"
               onClick={() => setShowHowToPlay(false)}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-sky-500 to-blue-500 text-white font-bold text-xs cursor-pointer shadow-lg"
+              className="w-full py-2.5 rounded-2xl bg-[#ffc812] text-black font-black text-xs cursor-pointer"
             >
-              Got it, Let's Play!
+              Let's Play!
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ================= GAME OVER MODAL ================= */}
+      {isGameOver && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className="w-full max-w-[310px] rounded-3xl p-6 border-2 border-[#ffc812] text-center text-white space-y-4 shadow-2xl"
+            style={{ background: 'linear-gradient(180deg, #1e3fae 0%, #112266 100%)' }}
+          >
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-[#ffc812] flex items-center justify-center shadow-lg">
+              <Trophy className="w-8 h-8 text-black" />
+            </div>
+
+            <div>
+              <h2 className="text-xl font-black text-white">Round Complete!</h2>
+              <p className="text-xs text-blue-200 mt-0.5">No more spaces left for remaining blocks</p>
+            </div>
+
+            <div className="p-3.5 rounded-2xl bg-[#0b1542] border border-white/15 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-blue-200">Score</span>
+                <span className="font-black text-[#ffc812]">{score}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-blue-200">Best Score</span>
+                <span className="font-bold text-white">{highScore}</span>
+              </div>
+              <div className="flex justify-between pt-1 border-t border-white/10">
+                <span className="text-emerald-300 font-bold">Cash Won</span>
+                <span className="font-black text-emerald-400">+{formatNaira(sessionEarnings)}</span>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleRestart}
+              className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[#ffc812] to-[#ff9900] text-black font-black text-sm flex items-center justify-center gap-2 shadow-xl cursor-pointer active:scale-95"
+            >
+              <RotateCcw className="w-4 h-4 stroke-[2.5]" />
+              Play Again
             </button>
           </div>
         </div>
