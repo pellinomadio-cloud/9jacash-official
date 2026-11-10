@@ -91,7 +91,7 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({
     },
     2: {
       title: 'Tier 2 Account',
-      price: 6600,
+      price: 4500,
       holdingLimit: 2000000,
       holdingLimitFormatted: '₦2,000,000 (2 Million)',
       badge: 'Tier 2 Upgrade',
@@ -410,7 +410,7 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({
                 </p>
               </div>
               <div className="text-right">
-                <span className="text-base font-extrabold text-amber-600 dark:text-amber-400">₦6,600</span>
+                <span className="text-base font-extrabold text-amber-600 dark:text-amber-400">₦4,500</span>
                 <span className={`block text-[10px] ${isLight ? 'text-slate-500' : 'text-stone-500'}`}>
                   Pay to Company
                 </span>
@@ -447,7 +447,7 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({
                   }}
                   className="px-4 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs flex items-center gap-1.5 transition-colors cursor-pointer shadow-xs active:scale-95"
                 >
-                  <span>Pay &amp; Upgrade to Tier 2 (₦6,600)</span>
+                  <span>Pay &amp; Upgrade to Tier 2 (₦4,500)</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>

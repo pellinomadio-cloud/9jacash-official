@@ -193,7 +193,7 @@ export const MoreTab: React.FC<MoreTabProps> = ({
               className="w-full py-2.5 px-3 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-md"
             >
               <Crown className="w-4 h-4" />
-              <span>Upgrade to Tier 2 (₦6,600)</span>
+              <span>Upgrade to Tier 2 (₦4,500)</span>
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>

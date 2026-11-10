@@ -62,7 +62,7 @@ export const TIER_LIMITS: Record<number, number> = {
 };
 
 export const TIER_UPGRADE_PRICES: Record<number, number> = {
-  2: 6600, // ₦6,600 to upgrade to Tier 2
+  2: 4500, // ₦4,500 to upgrade to Tier 2
   3: 15000, // ₦15,000 to upgrade to Tier 3
 };
 

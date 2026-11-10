@@ -381,7 +381,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
                 <Crown className="w-3.5 h-3.5 text-amber-500" />
                 Tier 2 Account Benefits
               </span>
-              <span className="text-xs font-black text-amber-500 font-mono">₦6,600 Upgrade Fee</span>
+              <span className="text-xs font-black text-amber-500 font-mono">₦4,500 Upgrade Fee</span>
             </div>
             <div className={`space-y-2 text-xs ${isLight ? 'text-slate-600' : 'text-stone-300'}`}>
               <div className="flex items-start gap-2">
@@ -415,7 +415,7 @@ export const EarnPage: React.FC<EarnPageProps> = ({ onBack, onUpgradeTier }) => 
             className="w-full py-4 rounded-2xl bg-gradient-to-r from-amber-400 via-yellow-500 to-amber-500 hover:from-amber-300 hover:to-yellow-400 text-black font-black text-sm shadow-xl shadow-amber-500/25 flex items-center justify-center gap-2 transition-all cursor-pointer active:scale-95"
           >
             <Crown className="w-4 h-4 fill-black" />
-            <span>Upgrade to Tier 2 (₦6,600)</span>
+            <span>Upgrade to Tier 2 (₦4,500)</span>
             <ArrowRight className="w-4 h-4 stroke-[2.5]" />
           </button>
 
