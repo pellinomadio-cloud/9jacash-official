@@ -7,6 +7,7 @@ import {
   cleanReferralCodeInput,
   buildReferralLink,
   getDisplayReferralLink,
+  getIncomingReferralCode,
 } from '../utils/referral.ts';
 import {
   testConnection,
@@ -3264,7 +3265,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const myReferralCode = extractReferralCodeFromEmail(cleanEmail);
-      const rawRefInput = inputReferralCode ? inputReferralCode.trim().toLowerCase() : '';
+      // If a user accessed via a referral link, preserve the incoming referral code permanently
+      const storedIncoming = getIncomingReferralCode();
+      const rawRefInput = (storedIncoming || inputReferralCode || '').trim().toLowerCase();
       const cleanRefCode = rawRefInput ? (cleanReferralCodeInput(rawRefInput) || rawRefInput) : undefined;
       let matchedReferrer: User | undefined;
 

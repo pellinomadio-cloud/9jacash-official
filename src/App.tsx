@@ -758,9 +758,15 @@ const MainApp: React.FC = () => {
     }
   };
 
-  // If registered users already exist on this device, default to 'login' rather than 'register'
+  // If registered users already exist on this device, default to 'login' rather than 'register', UNLESS arriving via referral link
   const [authView, setAuthView] = useState<'register' | 'login'>(() => {
     try {
+      if (typeof window !== 'undefined') {
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('ref') || urlParams.get('referral') || urlParams.get('r') || urlParams.get('code') || window.location.href.includes('ref=')) {
+          return 'register';
+        }
+      }
       const savedUsers = localStorage.getItem('9jacash_users_db');
       if (savedUsers) {
         const users = JSON.parse(savedUsers);
