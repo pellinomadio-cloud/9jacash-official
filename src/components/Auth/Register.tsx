@@ -23,7 +23,6 @@ import {
   Gift,
   Sparkles,
   ShieldAlert,
-  Lock,
 } from 'lucide-react';
 
 interface RegisterProps {
@@ -321,12 +320,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
             <div className="flex items-center justify-between mb-1.5">
               <label className={`text-xs font-semibold flex items-center gap-1.5 ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
                 <span>Referral Code or Link</span>
-                {hasIncomingRef ? (
-                  <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                    <Lock className="w-3 h-3 text-amber-500" />
-                    (Locked from Referral Link)
-                  </span>
-                ) : (
+                {!hasIncomingRef && (
                   <span className={`text-[10px] font-normal ${isLight ? 'text-slate-500' : 'text-stone-500'}`}>(Optional)</span>
                 )}
               </label>
@@ -336,68 +330,52 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
             </div>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-500">
-                {hasIncomingRef ? (
-                  <Lock className="w-4 h-4 text-amber-500" />
-                ) : (
-                  <Gift className="w-4 h-4 text-amber-500/80" />
-                )}
+                <Gift className="w-4 h-4 text-amber-500/80" />
               </div>
               <input
                 type="text"
                 readOnly={hasIncomingRef}
-                placeholder={hasIncomingRef ? referralCode : "Enter referral code or link"}
+                placeholder="Enter referral code or link"
                 value={referralCode}
                 onChange={(e) => handleReferralInput(e.target.value)}
+                onPaste={(e) => {
+                  if (hasIncomingRef) {
+                    e.preventDefault();
+                  }
+                }}
+                onCut={(e) => {
+                  if (hasIncomingRef) {
+                    e.preventDefault();
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (hasIncomingRef) {
                     e.preventDefault();
                   }
                 }}
-                className={`w-full pl-10 pr-16 py-3 rounded-xl text-xs lowercase tracking-wider font-mono font-semibold transition-all border ${
+                className={`w-full pl-10 pr-4 py-3 rounded-xl text-xs lowercase tracking-wider font-mono font-semibold transition-all border ${
                   hasIncomingRef
                     ? isLight
-                      ? 'bg-amber-500/10 border-amber-300 text-amber-950 cursor-not-allowed select-none font-bold'
-                      : 'bg-amber-500/15 border-amber-500/40 text-amber-300 cursor-not-allowed select-none font-bold'
+                      ? 'bg-slate-50 border-slate-300 text-slate-900 focus:outline-none select-none'
+                      : 'bg-[#1c1e24] border-stone-800 text-white focus:outline-none select-none'
                     : isLight
                     ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50'
                     : 'bg-[#1c1e24] border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-amber-500/80 focus:ring-1 focus:ring-amber-500/50'
                 }`}
               />
-              {hasIncomingRef && (
-                <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
-                  <span className="inline-flex items-center gap-1 text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500 text-black shadow-xs">
-                    <Lock className="w-2.5 h-2.5 stroke-[3]" />
-                    Locked
-                  </span>
-                </div>
-              )}
             </div>
 
-            {/* Referral confirmation badge if code is applied */}
-            {referralCode && (
-              <div className={`mt-1.5 px-3 py-2 rounded-xl border flex items-center justify-between text-[11px] ${
-                hasIncomingRef
-                  ? isLight
-                    ? 'bg-amber-50 border-amber-300 text-amber-950'
-                    : 'bg-amber-500/15 border-amber-500/35 text-amber-300'
-                  : isLight
-                  ? 'bg-amber-50 border-amber-300 text-amber-900'
-                  : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+            {/* Referral confirmation badge only when manually typed */}
+            {referralCode && !hasIncomingRef && (
+              <div className={`mt-1.5 px-3 py-1.5 rounded-lg border flex items-center justify-between text-[11px] ${
+                isLight ? 'bg-amber-50 border-amber-300 text-amber-900' : 'bg-amber-500/10 border-amber-500/30 text-amber-300'
               }`}>
-                <div className="flex flex-col">
-                  <span className="flex items-center gap-1 font-bold">
-                    {hasIncomingRef ? <Lock className="w-3.5 h-3.5 text-amber-500 shrink-0" /> : <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-                    {hasIncomingRef ? 'Referral Link Applied (Permanent):' : 'Referral code active:'}{' '}
-                    <strong className={`font-mono ${isLight ? 'text-amber-950' : 'text-white'}`}>{referralCode}</strong>
-                  </span>
-                  {hasIncomingRef && (
-                    <span className={`text-[10px] mt-0.5 ${isLight ? 'text-amber-800' : 'text-amber-300/80'}`}>
-                      Locked to your inviter so you receive your ₦7,000 welcome bonus on registration.
-                    </span>
-                  )}
-                </div>
-                <span className={`text-[10px] font-mono font-bold shrink-0 ml-2 ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
-                  +₦7,000 Bonus
+                <span className="flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-amber-500" />
+                  Referral code active: <strong className={`font-mono ${isLight ? 'text-amber-900' : 'text-white'}`}>{referralCode}</strong>
+                </span>
+                <span className={`text-[10px] font-mono ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                  {SITE_DOMAIN}?ref={referralCode}
                 </span>
               </div>
             )}
