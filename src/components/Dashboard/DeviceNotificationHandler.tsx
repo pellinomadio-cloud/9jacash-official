@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Bell, ShieldAlert, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { useTheme } from '../../context/ThemeContext.tsx';
 import {
   getDeviceNotificationPermission,
   requestDeviceNotificationPermission,
@@ -17,6 +18,7 @@ interface DeviceNotificationHandlerProps {
 
 export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps> = ({ isActive: _isActive }) => {
   const { user } = useAuth();
+  const { isLight } = useTheme();
   const [permission, setPermission] = useState<NotificationPermissionState>('default');
   const [isSupported, setIsSupported] = useState<boolean>(true);
   const [isPromptDismissed, setIsPromptDismissed] = useState<boolean>(() => {
@@ -96,21 +98,37 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
   }
 
   return (
-    <div className="relative mx-1 my-2 overflow-hidden rounded-2xl bg-gradient-to-r from-emerald-950/70 via-[#101915] to-[#0e1612] border border-emerald-500/30 p-3.5 shadow-xl shadow-emerald-950/20 animate-in fade-in slide-in-from-top-2 duration-300">
+    <div
+      className={`relative mx-1 my-2 overflow-hidden rounded-2xl border p-3.5 animate-in fade-in slide-in-from-top-2 duration-300 transition-colors ${
+        isLight
+          ? 'bg-gradient-to-r from-emerald-50 via-white to-teal-50/90 border-emerald-300 shadow-lg shadow-emerald-500/10 text-slate-900'
+          : 'bg-gradient-to-r from-emerald-950/70 via-[#101915] to-[#0e1612] border-emerald-500/30 shadow-xl shadow-emerald-950/20 text-white'
+      }`}
+    >
       {/* Glow highlight */}
-      <div className="absolute top-0 right-0 -mt-6 -mr-6 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
+      <div
+        className={`absolute top-0 right-0 -mt-6 -mr-6 w-24 h-24 rounded-full blur-2xl pointer-events-none ${
+          isLight ? 'bg-emerald-400/20' : 'bg-emerald-500/10'
+        }`}
+      />
 
       <div className="flex items-start justify-between gap-3 relative z-10">
         <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center shrink-0 text-emerald-400 shadow-md">
+          <div
+            className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 shadow-md ${
+              isLight
+                ? 'bg-emerald-100 border-emerald-300 text-emerald-700 shadow-emerald-500/10'
+                : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
+            }`}
+          >
             <Bell className="w-5 h-5 animate-pulse" />
           </div>
 
           <div>
-            <h4 className="text-sm font-bold text-white">
+            <h4 className={`text-sm font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
               Turn on notifications
             </h4>
-            <p className="text-[12px] text-stone-300 mt-0.5 leading-relaxed">
+            <p className={`text-[12px] mt-0.5 leading-relaxed ${isLight ? 'text-slate-600 font-medium' : 'text-stone-300'}`}>
               Turn on notifications to receive alerts on your device when you visit the app and for your withdrawals.
             </p>
 
@@ -118,7 +136,9 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
               <button
                 type="button"
                 onClick={handleEnableNotifications}
-                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 text-black font-bold text-xs hover:from-emerald-400 hover:to-emerald-500 transition-all shadow-md shadow-emerald-500/25 active:scale-95 flex items-center gap-1.5 cursor-pointer"
+                className={`px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 font-bold text-xs hover:from-emerald-400 hover:to-emerald-500 transition-all shadow-md shadow-emerald-500/25 active:scale-95 flex items-center gap-1.5 cursor-pointer ${
+                  isLight ? 'text-white' : 'text-black'
+                }`}
               >
                 <Bell className="w-3.5 h-3.5" />
                 Turn On Notification
@@ -130,7 +150,11 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
         <button
           type="button"
           onClick={handleDismissBanner}
-          className="text-stone-400 hover:text-white p-1 rounded-lg hover:bg-stone-800/50 transition-colors cursor-pointer"
+          className={`p-1 rounded-lg transition-colors cursor-pointer ${
+            isLight
+              ? 'text-slate-500 hover:text-slate-900 hover:bg-emerald-100/70'
+              : 'text-stone-400 hover:text-white hover:bg-stone-800/50'
+          }`}
           title="Dismiss"
         >
           <X className="w-4 h-4" />
@@ -138,8 +162,14 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
       </div>
 
       {permission === 'denied' && (
-        <div className="mt-2 pt-2 border-t border-emerald-900/40 flex items-center gap-1.5 text-[11px] text-amber-300">
-          <ShieldAlert className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+        <div
+          className={`mt-2 pt-2 border-t flex items-center gap-1.5 text-[11px] ${
+            isLight
+              ? 'border-emerald-200 text-amber-800 font-medium'
+              : 'border-emerald-900/40 text-amber-300'
+          }`}
+        >
+          <ShieldAlert className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
           <span>Notifications are currently blocked. Please tap the lock or site settings icon in your browser to allow notifications.</span>
         </div>
       )}

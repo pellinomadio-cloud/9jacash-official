@@ -9,6 +9,7 @@
         "name": { "type": "string", "maxLength": 100 },
         "email": { "type": "string", "maxLength": 150 },
         "pin": { "type": "string", "maxLength": 10 },
+        "profilePicture": { "type": "string", "maxLength": 120000 },
         "balance": { "type": "number" },
         "accountNumber": { "type": "string", "maxLength": 30 },
         "bankName": { "type": "string", "maxLength": 60 },

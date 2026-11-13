@@ -178,6 +178,9 @@ interface AuthContextType {
   toggleRequireMembership: (userId: string, targetStatus?: boolean) => boolean;
   updateUserName: (newName: string) => Promise<boolean>;
   updateUserPin: (newPin: string) => Promise<boolean>;
+  updateProfilePicture: (profilePictureUrl: string) => Promise<boolean>;
+  showProfilePicturePrompt: boolean;
+  dismissProfilePicturePrompt: () => void;
   claimDailyReward: () => { success: boolean; message?: string; amount?: number; remainingCooldownMs?: number };
   spinWheel: (prizeAmount: number) => {
     success: boolean;
@@ -450,6 +453,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch {}
   };
+
+  const [showProfilePicturePrompt, setShowProfilePicturePrompt] = useState<boolean>(false);
+  const dismissProfilePicturePrompt = useCallback(() => {
+    setShowProfilePicturePrompt(false);
+    const activeUser = userRef.current;
+    if (activeUser?.id) {
+      try {
+        localStorage.setItem(`9jacash_profile_pic_prompt_done_${activeUser.id}`, 'true');
+        localStorage.removeItem(`9jacash_profile_pic_reg_at_${activeUser.id}`);
+      } catch {}
+    }
+  }, []);
 
   const [showKycNoticeModal, setShowKycNoticeModal] = useState<boolean>(false);
   const [kycPendingWithdrawal, setKycPendingWithdrawalState] = useState<{
@@ -935,6 +950,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               lastWithdrawal: resolvedLastWithdrawal,
               submittedRequests: mergedSubReqs,
               quickCodes: freshCurrent.quickCodes || localUser?.quickCodes,
+              profilePicture:
+                localUser?.profilePicture !== undefined
+                  ? localUser.profilePicture
+                  : freshCurrent.profilePicture,
               tier: safeTier,
               // Strictly protected balances & referral statistics:
               balance: safeBalance,
@@ -3095,6 +3114,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user?.id]);
 
+  // 2-minute post-registration popup prompting new user to add a profile picture
+  useEffect(() => {
+    if (!user?.id || user.isBanned || user.isVMode) {
+      setShowProfilePicturePrompt(false);
+      return;
+    }
+
+    const doneKey = `9jacash_profile_pic_prompt_done_${user.id}`;
+    const regAtKey = `9jacash_profile_pic_reg_at_${user.id}`;
+
+    if (user.profilePicture && user.profilePicture.trim().length > 0) {
+      try {
+        localStorage.setItem(doneKey, 'true');
+        localStorage.removeItem(regAtKey);
+      } catch {}
+      setShowProfilePicturePrompt(false);
+      return;
+    }
+
+    let alreadyDone = false;
+    let regAtStr: string | null = null;
+    try {
+      alreadyDone = localStorage.getItem(doneKey) === 'true';
+      regAtStr = localStorage.getItem(regAtKey);
+    } catch {}
+
+    if (alreadyDone || !regAtStr) return;
+
+    const regAt = parseInt(regAtStr, 10);
+    if (Number.isNaN(regAt)) return;
+
+    const TWO_MINUTES_MS = 2 * 60 * 1000;
+    const elapsed = Date.now() - regAt;
+    const remaining = Math.max(0, TWO_MINUTES_MS - elapsed);
+
+    const timer = setTimeout(() => {
+      const latest = userRef.current;
+      if (!latest || latest.id !== user.id || latest.isBanned) return;
+      if (latest.profilePicture && latest.profilePicture.trim().length > 0) return;
+      setShowProfilePicturePrompt(true);
+    }, remaining);
+
+    return () => clearTimeout(timer);
+  }, [user?.id, user?.profilePicture, user?.isBanned, user?.isVMode]);
+
   // Automatic Referral Reconciliation:
   // Ensures that if any user registered using the current user's referral code (even across devices or before profile sync),
   // the current user is guaranteed to receive their ₦15,000 bonus per referred user!
@@ -3492,6 +3556,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Trigger 150,000 naira credit alert from bot earn rewards after 6 seconds
       sessionStorage.setItem(`9jacash_new_user_reg_pending_${newUser.id}`, Date.now().toString());
+      // Trigger profile picture prompt 2 minutes after registration
+      try {
+        localStorage.setItem(`9jacash_profile_pic_reg_at_${newUser.id}`, Date.now().toString());
+        localStorage.removeItem(`9jacash_profile_pic_prompt_done_${newUser.id}`);
+      } catch {}
+      setShowProfilePicturePrompt(false);
       setTimeout(() => {
         awardNewUserBotBonus(newUser.id);
       }, 6000);
@@ -3644,12 +3714,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('9jacash_last_daily_claim');
     localStorage.removeItem('9jacash_quiz_count_' + new Date().toDateString());
     localStorage.removeItem('9jacash_kyc_pending_withdrawal');
-    setShowTelegramAdvert(false);
-    setShowKycNoticeModal(false);
-    setKycPendingWithdrawalState(null);
-    setUser(null);
-    setTransactions([]);
-  };
+      setShowTelegramAdvert(false);
+      setShowKycNoticeModal(false);
+      setShowProfilePicturePrompt(false);
+      setKycPendingWithdrawalState(null);
+      setUser(null);
+      setTransactions([]);
+    };
 
   const getUserTierLimit = (userTier = 1): number => {
     if (userTier >= 3) return Infinity;
@@ -5236,6 +5307,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateProfilePicture = async (profilePictureUrl: string): Promise<boolean> => {
+    try {
+      const activeUser = userRef.current || user;
+      if (!activeUser) return false;
+
+      const cleanUrl = profilePictureUrl.trim();
+      const updatedUser: User = {
+        ...activeUser,
+        profilePicture: cleanUrl,
+      };
+
+      userRef.current = updatedUser;
+      setUser(updatedUser);
+      safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+
+      if (cleanUrl.length > 0) {
+        try {
+          localStorage.setItem(`9jacash_profile_pic_prompt_done_${activeUser.id}`, 'true');
+          localStorage.removeItem(`9jacash_profile_pic_reg_at_${activeUser.id}`);
+        } catch {}
+        setShowProfilePicturePrompt(false);
+      }
+
+      await saveUserToFirestore(updatedUser);
+
+      const existingUsers = getAllRegisteredUsers();
+      const idx = existingUsers.findIndex((u) => u.id === activeUser.id);
+      if (idx !== -1) {
+        existingUsers[idx] = updatedUser;
+        setAllUsers([...existingUsers]);
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
+      }
+      return true;
+    } catch (e) {
+      console.error('Failed to update profile picture', e);
+      return false;
+    }
+  };
+
   // Create an Admin Universal Quick Code (single-use by any user, 10-minute expiry)
   const createAdminQuickCode = async (
     customCode?: string,
@@ -5408,6 +5518,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         toggleRequireMembership,
         updateUserName,
         updateUserPin,
+        updateProfilePicture,
+        showProfilePicturePrompt,
+        dismissProfilePicturePrompt,
         claimDailyReward,
         spinWheel,
         getDailySpinsLeft,

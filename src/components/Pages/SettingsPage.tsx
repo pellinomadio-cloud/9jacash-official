@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
+import { compressImage } from '../../utils/imageCompressor.ts';
 import {
   ArrowLeft,
   KeyRound,
@@ -16,6 +17,9 @@ import {
   AlertCircle,
   Sun,
   Moon,
+  Camera,
+  Upload,
+  Trash2,
 } from 'lucide-react';
 
 interface SettingsPageProps {
@@ -24,12 +28,17 @@ interface SettingsPageProps {
 }
 
 export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, onOpenTerms }) => {
-  const { user, logout, updateUserName, updateUserPin } = useAuth();
+  const { user, logout, updateUserName, updateUserPin, updateProfilePicture } = useAuth();
   const { theme, toggleTheme, isLight } = useTheme();
   const [nameInput, setNameInput] = useState(user?.name || '');
   const [nameSaved, setNameSaved] = useState(false);
   const [isUpdatingName, setIsUpdatingName] = useState(false);
   const [nameError, setNameError] = useState('');
+
+  const [isUploadingPic, setIsUploadingPic] = useState(false);
+  const [picSavedMsg, setPicSavedMsg] = useState('');
+  const [picErrorMsg, setPicErrorMsg] = useState('');
+  const picInputRef = useRef<HTMLInputElement | null>(null);
 
   const [pinChangeOpen, setPinChangeOpen] = useState(false);
   const [newPin, setNewPin] = useState('');
@@ -43,6 +52,52 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, onOpenTerms 
   }, [user?.name]);
 
   if (!user) return null;
+
+  const handleProfilePicUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setPicErrorMsg('Please select a valid image file.');
+      return;
+    }
+    setPicErrorMsg('');
+    setPicSavedMsg('');
+    setIsUploadingPic(true);
+    try {
+      const compressed = await compressImage(file, 320, 320, 0.75);
+      if (!compressed) {
+        setPicErrorMsg('Unable to process that image.');
+        return;
+      }
+      const ok = await updateProfilePicture(compressed);
+      if (ok) {
+        setPicSavedMsg('Profile picture updated!');
+        setTimeout(() => setPicSavedMsg(''), 3500);
+      } else {
+        setPicErrorMsg('Failed to update profile picture.');
+      }
+    } catch {
+      setPicErrorMsg('Failed to upload image.');
+    } finally {
+      setIsUploadingPic(false);
+      if (picInputRef.current) picInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveProfilePic = async () => {
+    setPicErrorMsg('');
+    setPicSavedMsg('');
+    setIsUploadingPic(true);
+    try {
+      const ok = await updateProfilePicture('');
+      if (ok) {
+        setPicSavedMsg('Profile picture removed.');
+        setTimeout(() => setPicSavedMsg(''), 3000);
+      }
+    } finally {
+      setIsUploadingPic(false);
+    }
+  };
 
   const handleUpdateName = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -113,20 +168,42 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, onOpenTerms 
       <div className={`p-5 rounded-3xl border flex items-center gap-4 ${
         isLight ? 'bg-white border-amber-300 shadow-md shadow-amber-500/5' : 'bg-[#15161c] border-amber-500/30'
       }`}>
-        <div className={`w-14 h-14 rounded-full border-2 flex items-center justify-center font-extrabold text-xl shadow-md ${
-          isLight ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-amber-500/10 border-amber-500/50 text-amber-400'
-        }`}>
-          {user.name.charAt(0).toUpperCase()}
-        </div>
+        <button
+          type="button"
+          onClick={() => picInputRef.current?.click()}
+          className="relative group shrink-0 cursor-pointer focus:outline-none"
+          title="Change profile picture"
+        >
+          <div className={`w-14 h-14 rounded-full border-2 flex items-center justify-center font-extrabold text-xl shadow-md overflow-hidden ${
+            isLight ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-amber-500/10 border-amber-500/50 text-amber-400'
+          }`}>
+            {user.profilePicture ? (
+              <img src={user.profilePicture} alt={user.name || 'Profile'} className="w-full h-full object-cover" />
+            ) : (
+              user.name.charAt(0).toUpperCase()
+            )}
+          </div>
+          <span
+            className={`absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-amber-400 text-black flex items-center justify-center border-2 shadow-xs ${
+              isLight ? 'border-white' : 'border-[#15161c]'
+            }`}
+          >
+            <Camera className="w-2.5 h-2.5 stroke-[2.5]" />
+          </span>
+        </button>
         <div className="overflow-hidden">
           <h3 className={`font-bold text-base truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>{user.name}</h3>
           <p className={`text-xs truncate ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>{user.email}</p>
           <div className="flex items-center gap-1.5 mt-1">
-            <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
+            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${
+              isLight ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+            }`}>
               Tier {user.tier || 1} Account
             </span>
             {user.referralCode && (
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-stone-800 text-stone-400 font-mono">
+              <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono ${
+                isLight ? 'bg-slate-100 text-slate-600' : 'bg-stone-800 text-stone-400'
+              }`}>
                 Ref: {user.referralCode}
               </span>
             )}
@@ -134,7 +211,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, onOpenTerms 
         </div>
       </div>
 
-      {/* Profile Information: Change Username & Locked Email */}
+      {/* Profile Information: Profile Picture, Change Username & Locked Email */}
       <div className="p-5 rounded-3xl bg-[#15161c] border border-stone-800 space-y-4">
         <div className="flex items-center justify-between border-b border-stone-800/80 pb-3">
           <div className="flex items-center gap-2">
@@ -144,8 +221,73 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({ onBack, onOpenTerms 
             </h2>
           </div>
           <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 font-semibold">
-            Change Username
+            Photo &amp; Name
           </span>
+        </div>
+
+        {/* Profile Picture Section */}
+        <div
+          className={`p-3.5 rounded-2xl border flex items-center justify-between gap-3 ${
+            isLight ? 'bg-amber-50/70 border-amber-200' : 'bg-[#1a1c24] border-stone-800'
+          }`}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div
+              className={`w-12 h-12 rounded-full border-2 flex items-center justify-center font-bold text-base overflow-hidden shrink-0 ${
+                isLight ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-amber-500/10 border-amber-500/40 text-amber-400'
+              }`}
+            >
+              {user.profilePicture ? (
+                <img src={user.profilePicture} alt={user.name || 'Profile'} className="w-full h-full object-cover" />
+              ) : (
+                user.name.charAt(0).toUpperCase()
+              )}
+            </div>
+            <div className="min-w-0">
+              <p className={`text-xs font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>Profile Picture</p>
+              <p className={`text-[10px] truncate ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                {picSavedMsg || (user.profilePicture ? 'Photo uploaded & synced' : 'No profile picture added yet')}
+              </p>
+              {picErrorMsg && (
+                <p className="text-[10px] text-red-500 font-semibold">{picErrorMsg}</p>
+              )}
+            </div>
+          </div>
+
+          <input
+            ref={picInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleProfilePicUpload}
+            className="hidden"
+          />
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => picInputRef.current?.click()}
+              disabled={isUploadingPic}
+              className="px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-[11px] flex items-center gap-1 cursor-pointer transition-colors disabled:opacity-50"
+            >
+              <Upload className="w-3 h-3 stroke-[2.5]" />
+              <span>{isUploadingPic ? 'Saving...' : user.profilePicture ? 'Change' : 'Upload'}</span>
+            </button>
+            {user.profilePicture && (
+              <button
+                type="button"
+                onClick={handleRemoveProfilePic}
+                disabled={isUploadingPic}
+                className={`p-1.5 rounded-xl border cursor-pointer transition-colors ${
+                  isLight
+                    ? 'bg-red-50 hover:bg-red-100 border-red-200 text-red-700'
+                    : 'bg-red-500/10 hover:bg-red-500/20 border-red-500/30 text-red-400'
+                }`}
+                title="Remove profile picture"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Change Username Form */}

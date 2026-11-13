@@ -3,6 +3,7 @@ export interface User {
   name: string;
   email: string;
   pin: string; // 4-digit password
+  profilePicture?: string;
   membershipId?: string;
   balance: number;
   availableBalance: number;

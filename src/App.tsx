@@ -52,6 +52,7 @@ import {
 import { AdminMessagePopupModal } from './components/Modals/AdminMessagePopupModal.tsx';
 import { CreditAlertModal } from './components/Modals/CreditAlertModal.tsx';
 import { TaxApprovedTier3Modal } from './components/Modals/TaxApprovedTier3Modal.tsx';
+import { ProfilePicturePromptModal } from './components/Modals/ProfilePicturePromptModal.tsx';
 import { BannedAccountScreen } from './components/Pages/BannedAccountScreen.tsx';
 import { OfflineScreen } from './components/Common/OfflineScreen.tsx';
 import { ActiveTab, CurrentScreen, Transaction } from './types/index.ts';
@@ -94,9 +95,12 @@ const DashboardContent: React.FC = () => {
     kycPendingWithdrawal,
     hasUserWithdrawn,
     depositRequests,
+    showProfilePicturePrompt,
+    dismissProfilePicturePrompt,
   } = useAuth();
   const { isLight } = useTheme();
   const [activeTab, setActiveTab] = useState<ActiveTab>('home');
+  const [autoOpenMoreEdit, setAutoOpenMoreEdit] = useState<boolean>(false);
   const [showTaxApprovedTier3Modal, setShowTaxApprovedTier3Modal] = useState<boolean>(false);
   const [tierUpgradeTargetTier, setTierUpgradeTargetTier] = useState<number>(3);
   const [tierUpgradeInitialStep, setTierUpgradeInitialStep] = useState<'plans' | 'payment'>('plans');
@@ -500,6 +504,18 @@ const DashboardContent: React.FC = () => {
       {/* Credit Alert Modal (Fires 6 seconds after new user registration for 150k bot earn rewards) */}
       <CreditAlertModal />
 
+      {/* 2-Minute Post-Registration Profile Picture Prompt */}
+      <ProfilePicturePromptModal
+        isOpen={showProfilePicturePrompt && !!user && !user.profilePicture}
+        onClose={dismissProfilePicturePrompt}
+        onAddPicture={() => {
+          dismissProfilePicturePrompt();
+          setAutoOpenMoreEdit(true);
+          handleTabChange('more');
+        }}
+        userName={user?.name}
+      />
+
       {/* Floating Cashout Testimonies Pop Up (overlaps at top: shows for 3s, removes for 10s) */}
       <CashoutTestimoniesPopup isActive={currentScreen === 'dashboard'} />
 
@@ -705,6 +721,8 @@ const DashboardContent: React.FC = () => {
                 onOpenTerms={() => navigateTo('terms')}
                 onOpenUpgradeTier={() => navigateTo('upgrade_tier')}
                 onOpenReferrals={() => navigateTo('referrals')}
+                autoOpenEdit={autoOpenMoreEdit}
+                onConsumeAutoOpenEdit={() => setAutoOpenMoreEdit(false)}
               />
             )}
 

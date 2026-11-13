@@ -62,7 +62,15 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
                 isLight ? 'bg-amber-50' : 'bg-gradient-to-b from-[#23242a] to-[#121316]'
               }`}
             >
-              <User className={`w-6 h-6 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
+              {user?.profilePicture ? (
+                <img
+                  src={user.profilePicture}
+                  alt={user.name || 'Profile'}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <User className={`w-6 h-6 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
+              )}
             </div>
           </div>
           {/* Online badge */}
@@ -132,8 +140,16 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
           }`}
         >
           <div className={`flex items-center gap-3 pb-3 border-b ${isLight ? 'border-slate-200' : 'border-stone-800'}`}>
-            <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/40 flex items-center justify-center text-amber-500 font-bold">
-              {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+            <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/40 flex items-center justify-center text-amber-500 font-bold overflow-hidden shrink-0">
+              {user?.profilePicture ? (
+                <img
+                  src={user.profilePicture}
+                  alt={user.name || 'Profile'}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                user?.name ? user.name.charAt(0).toUpperCase() : 'U'
+              )}
             </div>
             <div className="overflow-hidden">
               <h3 className={`font-semibold text-sm truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>{user?.name}</h3>
@@ -169,13 +185,17 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
                 setShowProfileMenu(false);
                 onOpenSettings();
               }}
-              className="w-full flex items-center justify-between p-2.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 dark:text-amber-300 font-semibold text-xs border border-amber-500/30 transition-colors cursor-pointer"
+              className={`w-full flex items-center justify-between p-2.5 rounded-xl font-semibold text-xs border transition-colors cursor-pointer ${
+                isLight
+                  ? 'bg-amber-50 hover:bg-amber-100 text-amber-800 border-amber-200'
+                  : 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border-amber-500/30'
+              }`}
             >
               <div className="flex items-center gap-2">
                 <Settings className="w-3.5 h-3.5 text-amber-500" />
                 <span>Profile &amp; Settings</span>
               </div>
-              <span className="text-[10px] text-amber-600 dark:text-amber-400/80 font-normal">Change Username</span>
+              <span className={`text-[10px] font-normal ${isLight ? 'text-amber-700' : 'text-amber-400/80'}`}>Change Username</span>
             </button>
 
             <div className={`flex items-center gap-2 px-1 py-1 ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
@@ -197,13 +217,21 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
                   await triggerDashboardVisitDeviceNotification(user, true);
                 }
               }}
-              className="w-full flex items-center justify-between p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 font-medium text-xs border border-emerald-500/30 transition-colors cursor-pointer"
+              className={`w-full flex items-center justify-between p-2 rounded-xl font-medium text-xs border transition-colors cursor-pointer ${
+                isLight
+                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                  : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+              }`}
             >
               <div className="flex items-center gap-2">
                 <Bell className="w-3.5 h-3.5 text-emerald-500" />
                 <span>Turn on notification</span>
               </div>
-              <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/20 px-1.5 py-0.5 rounded">
+              <span
+                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                  isLight ? 'text-emerald-700 bg-emerald-100' : 'text-emerald-400 bg-emerald-500/20'
+                }`}
+              >
                 Alerts
               </span>
             </button>

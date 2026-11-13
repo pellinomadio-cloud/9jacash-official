@@ -108,8 +108,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
 
         {/* User Card */}
         <div className="my-4 p-4 rounded-2xl bg-[#1c1e26] border border-stone-800 flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-full bg-amber-500/10 border-2 border-amber-500/50 flex items-center justify-center text-amber-400 font-bold text-lg shadow-md">
-            {user.name.charAt(0).toUpperCase()}
+          <div className="w-12 h-12 rounded-full bg-amber-500/10 border-2 border-amber-500/50 flex items-center justify-center text-amber-400 font-bold text-lg shadow-md overflow-hidden shrink-0">
+            {user.profilePicture ? (
+              <img src={user.profilePicture} alt={user.name || 'Profile'} className="w-full h-full object-cover" />
+            ) : (
+              user.name.charAt(0).toUpperCase()
+            )}
           </div>
           <div className="overflow-hidden">
             <h4 className="font-bold text-sm text-white truncate">{user.name}</h4>

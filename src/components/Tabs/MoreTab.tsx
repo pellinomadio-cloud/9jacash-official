@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useAuth, TIER_LIMITS } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
+import { compressImage } from '../../utils/imageCompressor.ts';
 import {
   User,
   KeyRound,
@@ -20,6 +21,12 @@ import {
   Sun,
   Moon,
   Sparkles,
+  Camera,
+  Upload,
+  Trash2,
+  X,
+  CheckCircle2,
+  Settings,
 } from 'lucide-react';
 
 interface MoreTabProps {
@@ -28,6 +35,8 @@ interface MoreTabProps {
   onOpenTerms: () => void;
   onOpenUpgradeTier: () => void;
   onOpenReferrals: () => void;
+  autoOpenEdit?: boolean;
+  onConsumeAutoOpenEdit?: () => void;
 }
 
 export const MoreTab: React.FC<MoreTabProps> = ({
@@ -36,15 +45,124 @@ export const MoreTab: React.FC<MoreTabProps> = ({
   onOpenTerms,
   onOpenUpgradeTier,
   onOpenReferrals,
+  autoOpenEdit,
+  onConsumeAutoOpenEdit,
 }) => {
-  const { user, logout, formatNaira, getUserReferrals, getUserReferralCode, getUserReferralLink, getReferralDisplayLink } = useAuth();
-  const { theme, toggleTheme, isLight } = useTheme();
+  const {
+    user,
+    logout,
+    formatNaira,
+    getUserReferrals,
+    getUserReferralCode,
+    getUserReferralLink,
+    getReferralDisplayLink,
+    updateProfilePicture,
+    updateUserName,
+  } = useAuth();
+  const { toggleTheme, isLight } = useTheme();
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedFullMessage, setCopiedFullMessage] = useState(false);
 
+  // Edit Profile Modal (Add/Change Profile Picture & Username directly from More -> Edit)
+  const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [isUploadingPic, setIsUploadingPic] = useState(false);
+  const [picSavedMsg, setPicSavedMsg] = useState('');
+  const [picErrorMsg, setPicErrorMsg] = useState('');
+  const [editNameInput, setEditNameInput] = useState(user?.name || '');
+  const [isSavingEditName, setIsSavingEditName] = useState(false);
+  const [editNameMsg, setEditNameMsg] = useState('');
+  const [editNameErr, setEditNameErr] = useState('');
+  const profileFileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (user?.name) {
+      setEditNameInput(user.name);
+    }
+  }, [user?.name]);
+
+  useEffect(() => {
+    if (autoOpenEdit) {
+      setShowEditProfileModal(true);
+      onConsumeAutoOpenEdit?.();
+    }
+  }, [autoOpenEdit, onConsumeAutoOpenEdit]);
+
+  const handleProfilePicFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setPicErrorMsg('Please select a valid image file (JPG, PNG, or WEBP).');
+      return;
+    }
+
+    setPicErrorMsg('');
+    setPicSavedMsg('');
+    setIsUploadingPic(true);
+    try {
+      const compressed = await compressImage(file, 320, 320, 0.75);
+      if (!compressed) {
+        setPicErrorMsg('Could not process that image. Please try another photo.');
+        return;
+      }
+      const ok = await updateProfilePicture(compressed);
+      if (ok) {
+        setPicSavedMsg('Profile picture updated!');
+        setTimeout(() => setPicSavedMsg(''), 3500);
+      } else {
+        setPicErrorMsg('Failed to save profile picture. Please try again.');
+      }
+    } catch {
+      setPicErrorMsg('Error uploading image. Please try again.');
+    } finally {
+      setIsUploadingPic(false);
+      if (profileFileInputRef.current) {
+        profileFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleRemoveProfilePicture = async () => {
+    setPicErrorMsg('');
+    setPicSavedMsg('');
+    setIsUploadingPic(true);
+    try {
+      const ok = await updateProfilePicture('');
+      if (ok) {
+        setPicSavedMsg('Profile picture removed.');
+        setTimeout(() => setPicSavedMsg(''), 3000);
+      }
+    } finally {
+      setIsUploadingPic(false);
+    }
+  };
+
+  const handleSaveEditName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setEditNameErr('');
+    setEditNameMsg('');
+    const trimmed = editNameInput.trim();
+    if (trimmed.length < 2) {
+      setEditNameErr('Username must be at least 2 characters');
+      return;
+    }
+    if (trimmed === user?.name) {
+      setEditNameMsg('Saved');
+      setTimeout(() => setEditNameMsg(''), 2000);
+      return;
+    }
+    setIsSavingEditName(true);
+    const ok = await updateUserName(trimmed);
+    setIsSavingEditName(false);
+    if (ok) {
+      setEditNameMsg('Username updated!');
+      setTimeout(() => setEditNameMsg(''), 3000);
+    } else {
+      setEditNameErr('Failed to update username.');
+    }
+  };
+
   const currentTier = user?.tier || 1;
-  const tierLimit = TIER_LIMITS[currentTier] || 400000;
   const isTier1LimitReached = currentTier < 2 && (user?.balance || 0) >= 400000;
 
   const [sharePlatformTab, setSharePlatformTab] = useState<'whatsapp' | 'telegram'>('whatsapp');
@@ -124,18 +242,42 @@ export const MoreTab: React.FC<MoreTabProps> = ({
           ? 'bg-white border-amber-200/90 shadow-amber-500/5 text-slate-900'
           : 'bg-[#16171d] border-amber-500/20 text-white'
       }`}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className={`w-12 h-12 rounded-2xl border-2 flex items-center justify-center font-bold text-lg shadow-md ${
-              isLight
-                ? 'bg-amber-100 border-amber-300 text-amber-800'
-                : 'bg-amber-500/10 border-amber-500/50 text-amber-400'
-            }`}>
-              {user?.name?.charAt(0).toUpperCase() || 'U'}
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <h3 className={`font-bold text-sm ${isLight ? 'text-slate-900' : 'text-white'}`}>{user?.name}</h3>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              onClick={() => setShowEditProfileModal(true)}
+              className="relative group shrink-0 cursor-pointer focus:outline-none"
+              title="Add or change profile picture"
+            >
+              <div
+                className={`w-13 h-13 rounded-2xl border-2 flex items-center justify-center font-bold text-lg shadow-md overflow-hidden transition-transform group-hover:scale-105 ${
+                  isLight
+                    ? 'bg-amber-100 border-amber-300 text-amber-800'
+                    : 'bg-amber-500/10 border-amber-500/50 text-amber-400'
+                }`}
+              >
+                {user?.profilePicture ? (
+                  <img
+                    src={user.profilePicture}
+                    alt={user.name || 'Profile'}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  user?.name?.charAt(0).toUpperCase() || 'U'
+                )}
+              </div>
+              <span
+                className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-amber-400 text-black flex items-center justify-center border-2 shadow-sm ${
+                  isLight ? 'border-white' : 'border-[#16171d]'
+                }`}
+              >
+                <Camera className="w-2.5 h-2.5 stroke-[2.5]" />
+              </span>
+            </button>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h3 className={`font-bold text-sm truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>{user?.name}</h3>
                 <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
                   isLight
                     ? 'bg-amber-100 text-amber-800 border-amber-300'
@@ -144,7 +286,7 @@ export const MoreTab: React.FC<MoreTabProps> = ({
                   Tier {currentTier}
                 </span>
               </div>
-              <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>{user?.email}</p>
+              <p className={`text-xs truncate ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>{user?.email}</p>
               {user?.referralCode && (
                 <div className="flex items-center gap-2 mt-0.5">
                   <span className={`text-[11px] font-semibold font-mono ${isLight ? 'text-amber-700' : 'text-amber-400'}`}>
@@ -157,13 +299,13 @@ export const MoreTab: React.FC<MoreTabProps> = ({
 
           <button
             type="button"
-            onClick={onOpenSettings}
-            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs ${
+            onClick={() => setShowEditProfileModal(true)}
+            className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors cursor-pointer flex items-center gap-1.5 shadow-xs shrink-0 ${
               isLight
                 ? 'bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-800'
                 : 'bg-amber-400/10 hover:bg-amber-400/20 border-amber-400/30 text-amber-300'
             }`}
-            title="Edit profile & username"
+            title="Edit profile picture & username"
           >
             <Edit2 className="w-3 h-3 text-amber-500" />
             <span>Edit</span>
@@ -650,6 +792,223 @@ export const MoreTab: React.FC<MoreTabProps> = ({
           <span>Sign Out</span>
         </button>
       </div>
+
+      {/* Edit Profile & Profile Picture Modal */}
+      {showEditProfileModal && (
+        <div
+          className={`fixed inset-0 z-[60] flex items-center justify-center p-4 backdrop-blur-md animate-in fade-in duration-200 ${
+            isLight ? 'bg-slate-900/50' : 'bg-black/85'
+          }`}
+        >
+          <div
+            className={`relative w-full max-w-sm rounded-3xl border p-5 sm:p-6 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto ${
+              isLight
+                ? 'bg-white border-amber-300 text-slate-900 shadow-slate-900/15'
+                : 'bg-[#14151b] border-stone-800 text-white'
+            }`}
+          >
+            {/* Header */}
+            <div className={`flex items-center justify-between pb-3 border-b ${isLight ? 'border-slate-200' : 'border-stone-800'}`}>
+              <div>
+                <h3 className={`font-bold text-base ${isLight ? 'text-slate-900' : 'text-white'}`}>Edit Profile</h3>
+                <p className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                  Add your profile picture &amp; update display name
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowEditProfileModal(false)}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+                  isLight ? 'bg-slate-100 hover:bg-slate-200 text-slate-600' : 'bg-stone-800 hover:bg-stone-700 text-stone-300'
+                }`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Profile Picture Uploader */}
+            <div
+              className={`p-4 rounded-2xl border flex flex-col items-center text-center space-y-3 ${
+                isLight ? 'bg-amber-50/60 border-amber-200' : 'bg-[#1a1c24] border-stone-800'
+              }`}
+            >
+              <div className="relative">
+                <div
+                  className={`w-24 h-24 rounded-full border-4 flex items-center justify-center font-extrabold text-3xl overflow-hidden shadow-lg ${
+                    isLight
+                      ? 'bg-amber-100 border-amber-300 text-amber-800'
+                      : 'bg-amber-500/10 border-amber-500/50 text-amber-400'
+                  }`}
+                >
+                  {user?.profilePicture ? (
+                    <img
+                      src={user.profilePicture}
+                      alt={user.name || 'Profile'}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    user?.name?.charAt(0).toUpperCase() || 'U'
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => profileFileInputRef.current?.click()}
+                  disabled={isUploadingPic}
+                  className="absolute bottom-0 right-0 w-8 h-8 rounded-full bg-amber-400 hover:bg-amber-300 text-black flex items-center justify-center shadow-md border-2 border-white cursor-pointer transition-transform active:scale-95"
+                  title="Upload photo"
+                >
+                  <Camera className="w-4 h-4 stroke-[2.5]" />
+                </button>
+              </div>
+
+              <input
+                ref={profileFileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleProfilePicFileChange}
+                className="hidden"
+              />
+
+              <div className="space-y-1">
+                <p className={`text-xs font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  Profile Picture
+                </p>
+                <p className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
+                  {user?.profilePicture
+                    ? 'Tap below to change or remove your photo'
+                    : 'Choose a photo from your gallery or camera'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 w-full">
+                <button
+                  type="button"
+                  onClick={() => profileFileInputRef.current?.click()}
+                  disabled={isUploadingPic}
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-black font-extrabold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 cursor-pointer transition-all active:scale-95 disabled:opacity-60"
+                >
+                  <Upload className="w-3.5 h-3.5 stroke-[2.5]" />
+                  <span>
+                    {isUploadingPic
+                      ? 'Saving Photo...'
+                      : user?.profilePicture
+                      ? 'Change Picture'
+                      : 'Add Profile Picture'}
+                  </span>
+                </button>
+
+                {user?.profilePicture && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveProfilePicture}
+                    disabled={isUploadingPic}
+                    className={`py-2.5 px-3 rounded-xl border text-xs font-bold flex items-center justify-center gap-1 cursor-pointer transition-colors ${
+                      isLight
+                        ? 'bg-red-50 hover:bg-red-100 border-red-200 text-red-700'
+                        : 'bg-red-500/10 hover:bg-red-500/20 border-red-500/30 text-red-400'
+                    }`}
+                    title="Remove photo"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {picSavedMsg && (
+                <div
+                  className={`w-full py-1.5 px-3 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1.5 ${
+                    isLight
+                      ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                      : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                  }`}
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>{picSavedMsg}</span>
+                </div>
+              )}
+
+              {picErrorMsg && (
+                <p className="text-[11px] text-red-500 font-semibold flex items-center gap-1">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                  <span>{picErrorMsg}</span>
+                </p>
+              )}
+            </div>
+
+            {/* Username Edit Form */}
+            <form onSubmit={handleSaveEditName} className="space-y-2">
+              <div className="flex items-center justify-between">
+                <label className={`text-xs font-bold ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+                  Display Name / Username
+                </label>
+                {editNameMsg && (
+                  <span className={`text-[11px] font-bold flex items-center gap-1 ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
+                    <CheckCircle2 className="w-3 h-3" /> {editNameMsg}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={editNameInput}
+                  onChange={(e) => {
+                    setEditNameInput(e.target.value);
+                    setEditNameErr('');
+                  }}
+                  placeholder="Enter your name"
+                  className={`flex-1 px-3 py-2.5 rounded-xl border text-xs font-bold focus:outline-none ${
+                    isLight
+                      ? 'bg-slate-50 border-slate-300 focus:border-amber-500 text-slate-900'
+                      : 'bg-[#1a1c24] border-stone-700 focus:border-amber-400 text-white'
+                  }`}
+                />
+                <button
+                  type="submit"
+                  disabled={isSavingEditName}
+                  className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-extrabold text-xs cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  {isSavingEditName ? '...' : 'Save'}
+                </button>
+              </div>
+              {editNameErr && (
+                <p className="text-[11px] text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {editNameErr}
+                </p>
+              )}
+            </form>
+
+            {/* Footer Link to Full Settings */}
+            <div className={`pt-2 border-t flex items-center justify-between gap-2 ${isLight ? 'border-slate-200' : 'border-stone-800'}`}>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEditProfileModal(false);
+                  onOpenSettings();
+                }}
+                className={`text-xs font-bold flex items-center gap-1.5 cursor-pointer ${
+                  isLight ? 'text-amber-700 hover:text-amber-800' : 'text-amber-400 hover:text-amber-300'
+                }`}
+              >
+                <Settings className="w-3.5 h-3.5" />
+                <span>PIN &amp; Account Settings</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowEditProfileModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${
+                  isLight
+                    ? 'bg-slate-100 hover:bg-slate-200 text-slate-800'
+                    : 'bg-stone-800 hover:bg-stone-700 text-stone-200'
+                }`}
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
