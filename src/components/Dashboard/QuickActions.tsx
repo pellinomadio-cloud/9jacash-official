@@ -47,7 +47,7 @@ export const QuickActions: React.FC<QuickActionsProps> = ({ onActionClick }) => 
     {
       id: 'community' as const,
       title: 'Community',
-      subtitle: 'Telegram & Proofs',
+      subtitle: '',
       icon: Users,
       iconRotate: '',
     },
@@ -175,15 +175,26 @@ export const QuickActions: React.FC<QuickActionsProps> = ({ onActionClick }) => 
                 </span>
 
                 {/* Subtitle */}
-                <span className={`text-[10px] sm:text-[11px] mt-0.5 ${
-                  isLight
-                    ? (isQuickCode && hasPendingQuickCode ? 'text-amber-700 font-bold' : (isWithdraw ? 'text-slate-700 font-semibold inline-flex items-center justify-center gap-1' : (isCommunity ? 'text-slate-700 font-semibold inline-flex items-center justify-center gap-1' : 'text-slate-500 font-normal')))
-                    : (isQuickCode && hasPendingQuickCode ? 'text-amber-400 font-bold' : (isWithdraw ? 'text-stone-300 font-semibold inline-flex items-center justify-center gap-1' : (isCommunity ? 'text-stone-300 font-semibold inline-flex items-center justify-center gap-1' : 'text-stone-400 font-normal')))
-                }`}>
-                  {isWithdraw && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />}
-                  {isCommunity && <span className="w-1.5 h-1.5 rounded-full bg-sky-500 flex-shrink-0" />}
-                  <span>{act.subtitle}</span>
-                </span>
+                {act.subtitle && (
+                  <span
+                    className={`text-[10px] sm:text-[11px] mt-0.5 ${
+                      isLight
+                        ? isQuickCode && hasPendingQuickCode
+                          ? 'text-amber-700 font-bold'
+                          : isWithdraw
+                          ? 'text-slate-700 font-semibold inline-flex items-center justify-center gap-1'
+                          : 'text-slate-500 font-normal'
+                        : isQuickCode && hasPendingQuickCode
+                        ? 'text-amber-400 font-bold'
+                        : isWithdraw
+                        ? 'text-stone-300 font-semibold inline-flex items-center justify-center gap-1'
+                        : 'text-stone-400 font-normal'
+                    }`}
+                  >
+                    {isWithdraw && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0" />}
+                    <span>{act.subtitle}</span>
+                  </span>
+                )}
               </button>
 
               {/* Directly under Dashboard Quick Code button: Show Code & Small Copy Button or Pending Status */}
