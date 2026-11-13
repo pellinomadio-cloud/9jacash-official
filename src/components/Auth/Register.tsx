@@ -9,6 +9,7 @@ import {
   SITE_DOMAIN,
 } from '../../utils/referral.ts';
 import { canRegisterAccountOnDevice } from '../../utils/deviceLimit.ts';
+import { validateEmailFormat, verifyEmailAddress } from '../../utils/emailValidation.ts';
 import {
   Landmark,
   User as UserIcon,
@@ -17,6 +18,8 @@ import {
   ArrowRight,
   ShieldCheck,
   Check,
+  CheckCircle2,
+  AlertCircle,
   Gift,
   Sparkles,
   ShieldAlert,
@@ -38,6 +41,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [isTermsOpen, setIsTermsOpen] = useState(false);
   const [error, setError] = useState('');
+  const [emailTouched, setEmailTouched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isDeviceLimitReached, setIsDeviceLimitReached] = useState(false);
 
@@ -63,7 +67,11 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
     setReferralCode(clean);
   };
 
-  const prospectiveReferralCode = email.includes('@') ? extractReferralCodeFromEmail(email) : '';
+  const emailValidation = validateEmailFormat(email);
+  const showInlineEmailError = emailTouched && email.trim().length > 0 && !emailValidation.valid;
+  const showInlineEmailValid = email.trim().length > 0 && emailValidation.valid;
+
+  const prospectiveReferralCode = emailValidation.valid ? extractReferralCodeFromEmail(emailValidation.normalizedEmail) : '';
 
   const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, '').slice(0, 4);
@@ -73,6 +81,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setEmailTouched(true);
 
     // Enforce 10 accounts limit per device
     const deviceCheck = canRegisterAccountOnDevice();
@@ -86,10 +95,13 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
       setError('Please enter your full name');
       return;
     }
-    if (!email.trim() || !email.includes('@')) {
-      setError('Please enter a valid email address');
+
+    const formatCheck = validateEmailFormat(email);
+    if (!formatCheck.valid) {
+      setError(formatCheck.error || 'Please enter a valid email address');
       return;
     }
+
     if (pin.length !== 4) {
       setError('Please create a 4-digit security PIN/password');
       return;
@@ -105,7 +117,14 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
       : (cleanReferralCodeInput(referralCode) || incomingRef || undefined);
 
     setIsLoading(true);
-    const result = await register(name, email, pin, finalRefCode);
+    const domainCheck = await verifyEmailAddress(formatCheck.normalizedEmail);
+    if (!domainCheck.valid) {
+      setIsLoading(false);
+      setError(domainCheck.error || 'Please enter a valid, working email address.');
+      return;
+    }
+
+    const result = await register(name, domainCheck.normalizedEmail, pin, finalRefCode);
     setIsLoading(false);
 
     if (!result.success) {
@@ -201,21 +220,60 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
             <label className={`block text-xs font-semibold mb-1.5 ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>Email Address</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-500">
-                <Mail className="w-4 h-4 text-amber-500/80" />
+                <Mail className={`w-4 h-4 ${showInlineEmailError ? 'text-red-500' : showInlineEmailValid ? 'text-emerald-500' : 'text-amber-500/80'}`} />
               </div>
               <input
                 type="email"
-                placeholder="Enter your email address"
+                inputMode="email"
+                autoComplete="email"
+                placeholder="e.g. yourname@gmail.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm transition-all border ${
-                  isLight
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (error) setError('');
+                }}
+                onBlur={() => setEmailTouched(true)}
+                className={`w-full pl-10 pr-10 py-3 rounded-xl text-sm transition-all border ${
+                  showInlineEmailError
+                    ? isLight
+                      ? 'bg-red-50/70 border-red-400 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40'
+                      : 'bg-red-950/20 border-red-500/60 text-white placeholder-stone-500 focus:outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500/40'
+                    : showInlineEmailValid
+                    ? isLight
+                      ? 'bg-slate-50 border-emerald-400 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40'
+                      : 'bg-[#1c1e24] border-emerald-500/50 text-white placeholder-stone-500 focus:outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/40'
+                    : isLight
                     ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50'
                     : 'bg-[#1c1e24] border-stone-800 text-white placeholder-stone-500 focus:outline-none focus:border-amber-500/80 focus:ring-1 focus:ring-amber-500/50'
                 }`}
                 required
               />
+              {showInlineEmailValid && (
+                <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                </div>
+              )}
+              {showInlineEmailError && (
+                <div className="absolute inset-y-0 right-0 pr-3.5 flex items-center pointer-events-none">
+                  <AlertCircle className="w-4 h-4 text-red-500" />
+                </div>
+              )}
             </div>
+
+            {showInlineEmailError && emailValidation.error && (
+              <div className="mt-1.5 flex flex-wrap items-center justify-between gap-1.5 text-[11px] text-red-500 dark:text-red-400 font-medium">
+                <span>{emailValidation.error}</span>
+                {emailValidation.suggestion && (
+                  <button
+                    type="button"
+                    onClick={() => setEmail(emailValidation.suggestion!)}
+                    className="px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-400 font-bold hover:bg-amber-500/25 cursor-pointer"
+                  >
+                    Use {emailValidation.suggestion}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
           {/* 4-digit PIN password */}

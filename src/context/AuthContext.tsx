@@ -55,6 +55,7 @@ import {
   getRegisteredAccountsOnDevice,
   DEVICE_ACCOUNTS_STORAGE_KEY,
 } from '../utils/deviceLimit.ts';
+import { verifyEmailAddress } from '../utils/emailValidation.ts';
 
 export const TIER_LIMITS: Record<number, number> = {
   1: 400000,    // ₦400,000 for Tier 1
@@ -3237,7 +3238,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Firebase Registration with real-time Firestore synchronization and Instant Referral Credit
   const register = async (name: string, email: string, pin: string, inputReferralCode?: string) => {
     try {
-      const cleanEmail = email.trim().toLowerCase();
+      const emailCheck = await verifyEmailAddress(email);
+      if (!emailCheck.valid) {
+        return {
+          success: false,
+          message: emailCheck.error || 'Please enter a valid email address.',
+        };
+      }
+
+      const cleanEmail = emailCheck.normalizedEmail;
       let existingUsers = getAllRegisteredUsers();
 
       // Check if user already exists locally or in cloud
