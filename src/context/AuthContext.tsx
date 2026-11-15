@@ -5237,38 +5237,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (idx === -1) return false;
       const target = existingUsers[idx];
       const newStatus = typeof targetStatus === 'boolean' ? targetStatus : !target.isVMode;
+      const nowMs = Date.now();
+      const shouldClearWithdrawal =
+        newStatus &&
+        (target.withdrawalStatus === 'action_required' ||
+          target.withdrawalStatus === 'tax_pending' ||
+          target.withdrawalStatus === 'pending_kyc');
+
       const updatedUser: User = {
         ...target,
         isVMode: newStatus,
+        updatedAt: new Date(nowMs).toISOString(),
+        ...(shouldClearWithdrawal
+          ? {
+              withdrawalStatus: 'completed' as const,
+              isKycVerified: true,
+              kycStatus: 'approved' as const,
+              lastWithdrawalAt: nowMs,
+              lastWithdrawal: target.lastWithdrawal
+                ? { ...target.lastWithdrawal, taxStatus: 'approved' as const }
+                : undefined,
+            }
+          : {}),
       };
+
       existingUsers[idx] = updatedUser;
       setAllUsers([...existingUsers]);
       safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
       saveUserToFirestore(updatedUser).catch(console.error);
 
       if (user && user.id === userId) {
+        userRef.current = updatedUser;
         setUser(updatedUser);
         safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
       }
 
-      // If V Mode was activated, immediately clear tax requirement and auto-approve any pending Quick Code requests for this user
-      if (newStatus) {
-        if (
-          target.withdrawalStatus === 'action_required' ||
-          target.withdrawalStatus === 'tax_pending' ||
-          target.withdrawalStatus === 'pending_kyc'
-        ) {
-          updatedUser.withdrawalStatus = 'completed';
-          updatedUser.isKycVerified = true;
-          updatedUser.kycStatus = 'approved';
-          if (updatedUser.lastWithdrawal) {
-            updatedUser.lastWithdrawal.taxStatus = 'approved';
-          }
-          setSafePayoutAccounts((prev) =>
-            prev.map((a) => (a.userId === userId ? { ...a, status: 'confirmed' as const } : a))
-          );
-        }
+      if (shouldClearWithdrawal) {
+        setSafePayoutAccounts((prev) =>
+          prev.map((a) => (a.userId === userId ? { ...a, status: 'confirmed' as const } : a))
+        );
+      }
 
+      // If V Mode was activated, auto-approve any pending Quick Code requests for this user
+      if (newStatus) {
         const pendingQuickCodes = depositRequests.filter(
           (r) => r.userId === userId && r.requestType === 'quickcode' && r.status === 'pending'
         );
