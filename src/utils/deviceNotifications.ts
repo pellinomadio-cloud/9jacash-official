@@ -209,8 +209,8 @@ export async function sendDeviceNotification(
 
   const notificationOptions = {
     body: options.body,
-    icon: options.icon || '/icon-192.png',
-    badge: options.badge || '/icon-badge.png',
+    icon: options.icon || '/pwa-192x192.png?v=4',
+    badge: options.badge || '/icon-badge.png?v=4',
     vibrate: options.vibrate || [200, 100, 200, 100, 300], // Haptic alert vibration
     tag: options.tag || `9jacash-${Date.now()}`,
     renotify: options.renotify !== false, // Always wake up notification bar and vibrate
@@ -238,7 +238,7 @@ export async function sendDeviceNotification(
   try {
     new Notification(title, {
       body: options.body,
-      icon: options.icon || '/icon-192.png',
+      icon: options.icon || '/pwa-192x192.png?v=4',
       tag: options.tag || `9jacash-${Date.now()}`,
     });
     return true;

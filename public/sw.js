@@ -9,6 +9,11 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// Required by Android / Chromium to qualify the Service Worker for native PWA installation (beforeinstallprompt)
+self.addEventListener('fetch', () => {
+  // Network pass-through
+});
+
 // Handle user clicking on the notification on their Android status bar or lock screen
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
@@ -47,8 +52,8 @@ self.addEventListener('message', (event) => {
     const { title, options } = event.data;
     if (self.registration && self.registration.showNotification) {
       self.registration.showNotification(title, {
-        icon: '/icon-192.png',
-        badge: '/icon-badge.png',
+        icon: '/pwa-192x192.png?v=4',
+        badge: '/icon-badge.png?v=4',
         vibrate: [200, 100, 200, 100, 300],
         renotify: true,
         ...options,
@@ -62,8 +67,8 @@ self.addEventListener('push', (event) => {
   let payload = {
     title: '9jacash • Account Alert',
     body: 'Your 9jacash account is active. Tap to view balance and transactions.',
-    icon: '/icon-192.png',
-    badge: '/icon-badge.png',
+    icon: '/pwa-192x192.png?v=4',
+    badge: '/icon-badge.png?v=4',
     vibrate: [200, 100, 200, 100, 300],
     tag: '9jacash-push-' + Date.now(),
     renotify: true,
@@ -82,8 +87,8 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title, {
       body: payload.body,
-      icon: payload.icon || '/icon-192.png',
-      badge: payload.badge || '/icon-badge.png',
+      icon: payload.icon || '/pwa-192x192.png?v=4',
+      badge: payload.badge || '/icon-badge.png?v=4',
       vibrate: payload.vibrate || [200, 100, 200, 100, 300],
       tag: payload.tag || '9jacash-alert',
       renotify: true,
@@ -107,8 +112,8 @@ self.addEventListener('periodicsync', (event) => {
             const actionUrl = (fields.actionUrl && fields.actionUrl.stringValue) || '/';
             return self.registration.showNotification(title, {
               body,
-              icon: '/icon-192.png',
-              badge: '/icon-badge.png',
+              icon: '/pwa-192x192.png?v=4',
+              badge: '/icon-badge.png?v=4',
               vibrate: [200, 100, 200, 100, 300],
               tag: '9jacash-periodic-' + Date.now(),
               renotify: true,

@@ -52,9 +52,9 @@
   <!-- Bill 1 (Front) -->
   <rect x="166" y="285" width="180" height="100" rx="12" fill="url(#goldGrad)" stroke="#ffffff" stroke-width="4" filter="url(#glow)" />
   
-  <!-- Currency Symbol ₦ / ¥ inside bill -->
+  <!-- Brand Emblem 9JA inside bill -->
   <circle cx="256" cy="335" r="28" fill="#1e3a8a" />
-  <text x="256" y="347" font-size="34" font-weight="900" font-family="Arial, sans-serif" fill="#fde047" text-anchor="middle">₦</text>
+  <text x="256" y="344" font-size="24" font-weight="900" font-family="Arial, sans-serif" fill="#fde047" text-anchor="middle">9JA</text>
 
   <!-- Sparkles / Stars for wealth/success -->
   <path d="M110 140 L118 160 L138 168 L118 176 L110 196 L102 176 L82 168 L102 160 Z" fill="#fde047" />

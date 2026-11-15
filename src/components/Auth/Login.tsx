@@ -57,12 +57,17 @@ export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
       }`}>
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center mb-7">
-          <div className={`w-16 h-16 rounded-2xl border flex items-center justify-center mb-3 shadow-lg ${
+          <div className={`w-16 h-16 rounded-2xl border overflow-hidden flex items-center justify-center mb-3 shadow-lg ${
             isLight
-              ? 'bg-gradient-to-b from-amber-50 to-amber-100/60 border-amber-300 shadow-amber-500/10 text-amber-700'
-              : 'bg-gradient-to-b from-[#22242b] to-[#121316] border-amber-500/30 shadow-amber-500/10 text-amber-400'
+              ? 'border-amber-400 shadow-amber-500/15'
+              : 'border-amber-500/50 shadow-amber-500/20'
           }`}>
-            <Landmark className="w-8 h-8" />
+            <img
+              src="/pwa-192x192.png?v=4"
+              alt="9jacash"
+              referrerPolicy="no-referrer"
+              className="w-full h-full object-cover"
+            />
           </div>
           <h1 className={`text-2xl font-extrabold tracking-tight flex items-center gap-1.5 ${isLight ? 'text-slate-900' : 'text-white'}`}>
             9ja<span className="text-amber-500">cash</span>
