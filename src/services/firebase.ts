@@ -18,7 +18,7 @@ import {
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { getAnalytics, isSupported } from 'firebase/analytics';
-import { User, Transaction, ReferralRecord, DepositRequest, CompanyAccount, CommunityLinks, AppNotification, SafeWithdrawalAccount, AppPricing, DevicePushBroadcast, DeviceSubscriber, AdminQuickCode } from '../types/index.ts';
+import { User, Transaction, ReferralRecord, DepositRequest, CompanyAccount, CommunityLinks, AppNotification, SafeWithdrawalAccount, AppPricing, DevicePushBroadcast, DeviceSubscriber, AdminQuickCode, SupportChatMessage, SupportChatThread } from '../types/index.ts';
 import { sortTransactionsNewestFirst } from '../utils/transactionSort.ts';
 import { extractReferralCodeFromEmail } from '../utils/referral.ts';
 // Your web app's Firebase configuration
@@ -1010,4 +1010,327 @@ export async function getAdminQuickCodesFromFirestore(): Promise<AdminQuickCode[
   }
 }
 
+// 12. 9jacash Support Chat Threads (User <-> Admin Live Support)
+export const SUPPORT_CHATS_COLLECTION = 'support_chats';
+
+function pickNewerSupportThread(
+  a?: SupportChatThread | null,
+  b?: SupportChatThread | null
+): SupportChatThread | null {
+  if (!a && !b) return null;
+  if (!a) return b || null;
+  if (!b) return a || null;
+  const aLen = Array.isArray(a.messages) ? a.messages.length : 0;
+  const bLen = Array.isArray(b.messages) ? b.messages.length : 0;
+  if ((b.lastTimestamp || 0) !== (a.lastTimestamp || 0)) {
+    return (b.lastTimestamp || 0) > (a.lastTimestamp || 0) ? b : a;
+  }
+  return bLen >= aLen ? b : a;
+}
+
+async function readExistingSupportThread(userId: string): Promise<SupportChatThread | null> {
+  let chatDocThread: SupportChatThread | null = null;
+  let userDocThread: SupportChatThread | null = null;
+
+  try {
+    const snap = await getDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId));
+    if (snap.exists()) {
+      chatDocThread = snap.data() as SupportChatThread;
+    }
+  } catch {
+    // support_chats may not be deployed yet in rules; fall back to users/{userId}
+  }
+
+  try {
+    const userSnap = await getDoc(doc(db, USERS_COLLECTION, userId));
+    if (userSnap.exists()) {
+      const userData = userSnap.data() as User;
+      if (userData?.supportChat) {
+        userDocThread = userData.supportChat;
+      }
+    }
+  } catch {
+    // Ignore transient read error
+  }
+
+  return pickNewerSupportThread(chatDocThread, userDocThread);
+}
+
+async function persistSupportThread(userId: string, thread: SupportChatThread): Promise<boolean> {
+  let savedAny = false;
+
+  try {
+    await setDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId), sanitizeForFirestore(thread), {
+      merge: true,
+    });
+    savedAny = true;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.toLowerCase().includes('permission')) {
+      handleFirestoreError(err, OperationType.WRITE, `${SUPPORT_CHATS_COLLECTION}/${userId}`);
+    }
+  }
+
+  try {
+    const compactThread: SupportChatThread = {
+      ...thread,
+      userProfilePicture: '',
+      messages: (thread.messages || []).slice(-60),
+    };
+    await setDoc(
+      doc(db, USERS_COLLECTION, userId),
+      sanitizeForFirestore({
+        supportChat: compactThread,
+        updatedAt: thread.updatedAt,
+      }),
+      { merge: true }
+    );
+    savedAny = true;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, `${USERS_COLLECTION}/${userId}`);
+  }
+
+  return savedAny;
+}
+
+export async function sendUserSupportMessageToFirestore(
+  user: { id: string; name?: string; email?: string; profilePicture?: string },
+  rawText: string
+): Promise<{ ok: boolean; reason?: string; thread?: SupportChatThread }> {
+  const text = rawText.trim().slice(0, 2000);
+  if (!text) {
+    return { ok: false, reason: 'Please enter a message before sending.' };
+  }
+  if (!user?.id) {
+    return { ok: false, reason: 'Please sign in to send a support message.' };
+  }
+  if (isFirestoreQuotaExhausted()) {
+    return { ok: false, reason: 'Service is temporarily busy. Please try again in a moment.' };
+  }
+
+  try {
+    const existing = await readExistingSupportThread(user.id);
+    const existingMessages = Array.isArray(existing?.messages) ? existing.messages : [];
+    const latestMsg = existingMessages[existingMessages.length - 1];
+
+    // Enforce turn-taking: user cannot send consecutive messages before admin replies
+    if (latestMsg && latestMsg.sender === 'user') {
+      return {
+        ok: false,
+        reason: 'Please wait for 9jacash Support to reply before sending another message.',
+        thread: existing || undefined,
+      };
+    }
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const newMsg: SupportChatMessage = {
+      id: `msg_${now}_${Math.random().toString(36).slice(2, 8)}`,
+      sender: 'user',
+      senderName: user.name || 'User',
+      text,
+      timestamp: now,
+      createdAt: nowIso,
+    };
+
+    const updatedMessages = [...existingMessages, newMsg].slice(-80);
+    const thread: SupportChatThread = {
+      id: user.id,
+      userId: user.id,
+      userName: user.name || existing?.userName || '9jacash User',
+      userEmail: user.email || existing?.userEmail || '',
+      userProfilePicture:
+        user.profilePicture && user.profilePicture.length <= 120000
+          ? user.profilePicture
+          : existing?.userProfilePicture || '',
+      messages: updatedMessages,
+      lastMessage: text,
+      lastSender: 'user',
+      awaitingAdminReply: true,
+      lastTimestamp: now,
+      updatedAt: nowIso,
+    };
+
+    const saved = await persistSupportThread(user.id, thread);
+    if (!saved) {
+      return { ok: false, reason: 'Unable to send message right now. Please try again.' };
+    }
+    return { ok: true, thread };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${SUPPORT_CHATS_COLLECTION}/${user.id}`);
+    return { ok: false, reason: 'Unable to send message right now. Please try again.' };
+  }
+}
+
+export async function sendAdminSupportReplyToFirestore(
+  userId: string,
+  rawText: string,
+  userMeta?: { name?: string; email?: string; profilePicture?: string }
+): Promise<{ ok: boolean; reason?: string; thread?: SupportChatThread }> {
+  const text = rawText.trim().slice(0, 2000);
+  if (!text) {
+    return { ok: false, reason: 'Please enter a reply message.' };
+  }
+  if (!userId) {
+    return { ok: false, reason: 'No user selected.' };
+  }
+  if (isFirestoreQuotaExhausted()) {
+    return { ok: false, reason: 'Service is temporarily busy. Please try again shortly.' };
+  }
+
+  try {
+    const existing = await readExistingSupportThread(userId);
+    const existingMessages = Array.isArray(existing?.messages) ? existing.messages : [];
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const adminMsg: SupportChatMessage = {
+      id: `msg_${now}_${Math.random().toString(36).slice(2, 8)}`,
+      sender: 'admin',
+      senderName: '9jacash Support',
+      text,
+      timestamp: now,
+      createdAt: nowIso,
+    };
+
+    const updatedMessages = [...existingMessages, adminMsg].slice(-80);
+    const thread: SupportChatThread = {
+      id: userId,
+      userId,
+      userName: existing?.userName || userMeta?.name || '9jacash User',
+      userEmail: existing?.userEmail || userMeta?.email || '',
+      userProfilePicture: existing?.userProfilePicture || userMeta?.profilePicture || '',
+      messages: updatedMessages,
+      lastMessage: text,
+      lastSender: 'admin',
+      awaitingAdminReply: false,
+      lastTimestamp: now,
+      updatedAt: nowIso,
+    };
+
+    const saved = await persistSupportThread(userId, thread);
+    if (!saved) {
+      return { ok: false, reason: 'Failed to send reply. Please try again.' };
+    }
+    return { ok: true, thread };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${SUPPORT_CHATS_COLLECTION}/${userId}`);
+    return { ok: false, reason: 'Failed to send reply. Please try again.' };
+  }
+}
+
+export function subscribeToUserSupportChat(
+  userId: string,
+  onUpdate: (thread: SupportChatThread | null) => void
+): Unsubscribe {
+  if (!userId) return () => {};
+  let chatThread: SupportChatThread | null = null;
+  let userThread: SupportChatThread | null = null;
+
+  const emit = () => {
+    onUpdate(pickNewerSupportThread(chatThread, userThread));
+  };
+
+  let unsubChat: Unsubscribe = () => {};
+  let unsubUser: Unsubscribe = () => {};
+
+  try {
+    unsubChat = onSnapshot(
+      doc(db, SUPPORT_CHATS_COLLECTION, userId),
+      (snap) => {
+        try {
+          chatThread = snap.exists() ? (snap.data() as SupportChatThread) : null;
+          emit();
+        } catch (e) {
+          console.warn('Error processing user support chat snapshot', e);
+        }
+      },
+      () => {
+        // Silently rely on users/{userId} listener if support_chats rule isn't deployed
+      }
+    );
+  } catch {
+    unsubChat = () => {};
+  }
+
+  try {
+    unsubUser = onSnapshot(
+      doc(db, USERS_COLLECTION, userId),
+      (snap) => {
+        try {
+          if (snap.exists()) {
+            const u = snap.data() as User;
+            userThread = u?.supportChat || null;
+          } else {
+            userThread = null;
+          }
+          emit();
+        } catch (e) {
+          console.warn('Error processing user doc support chat snapshot', e);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, `${USERS_COLLECTION}/${userId}`);
+      }
+    );
+  } catch {
+    unsubUser = () => {};
+  }
+
+  return () => {
+    unsubChat();
+    unsubUser();
+  };
+}
+
+export function subscribeToAllSupportChats(
+  onUpdate: (threads: SupportChatThread[]) => void
+): Unsubscribe {
+  const path = SUPPORT_CHATS_COLLECTION;
+  try {
+    return onSnapshot(
+      collection(db, SUPPORT_CHATS_COLLECTION),
+      (snap) => {
+        try {
+          const threads = snap.docs.map((d) => d.data() as SupportChatThread);
+          threads.sort((a, b) => {
+            const aWaiting = a.lastSender === 'user' || a.awaitingAdminReply ? 1 : 0;
+            const bWaiting = b.lastSender === 'user' || b.awaitingAdminReply ? 1 : 0;
+            if (bWaiting !== aWaiting) return bWaiting - aWaiting;
+            return (b.lastTimestamp || 0) - (a.lastTimestamp || 0);
+          });
+          onUpdate(threads);
+        } catch (e) {
+          console.warn('Error processing all support chats snapshot', e);
+        }
+      },
+      (error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (!msg.toLowerCase().includes('permission')) {
+          handleFirestoreError(error, OperationType.LIST, path);
+        }
+      }
+    );
+  } catch {
+    return () => {};
+  }
+}
+
+export async function deleteSupportChatFromFirestore(userId: string): Promise<void> {
+  if (isFirestoreQuotaExhausted() || !userId) return;
+  try {
+    await deleteDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId));
+  } catch {
+    // Ignore if support_chats rule isn't deployed
+  }
+  try {
+    await setDoc(
+      doc(db, USERS_COLLECTION, userId),
+      { supportChat: null, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `${USERS_COLLECTION}/${userId}`);
+  }
+}
 

@@ -61,6 +61,7 @@ export interface User {
   };
   deviceId?: string; // Unique device identifier to enforce max 10 accounts per device
   submittedRequests?: DepositRequest[]; // Synced payment/code requests for guaranteed admin dashboard visibility
+  supportChat?: SupportChatThread | null; // Synced live support chat thread
   createdAt: string;
 }
 
@@ -273,4 +274,27 @@ export const DEFAULT_APP_PRICING: AppPricing = {
   tier2Price: 4500,
   tier3Price: 15000,
 };
+
+export interface SupportChatMessage {
+  id: string;
+  sender: 'user' | 'admin';
+  senderName: string;
+  text: string;
+  timestamp: number;
+  createdAt: string;
+}
+
+export interface SupportChatThread {
+  id: string;
+  userId: string;
+  userName: string;
+  userEmail: string;
+  userProfilePicture?: string;
+  messages: SupportChatMessage[];
+  lastMessage: string;
+  lastSender: 'user' | 'admin';
+  awaitingAdminReply: boolean;
+  lastTimestamp: number;
+  updatedAt: string;
+}
 

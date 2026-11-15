@@ -1,170 +1,320 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Send, Headphones, Clock, ShieldCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
-import { Headphones, PhoneCall, ShieldCheck, Bot, Send, ArrowUpRight } from 'lucide-react';
-import { formatTelegramUrl, formatTelegramHandle } from '../../utils/telegram.ts';
+import { SupportChatMessage, SupportChatThread } from '../../types/index.ts';
+import {
+  sendUserSupportMessageToFirestore,
+  subscribeToUserSupportChat,
+} from '../../services/firebase.ts';
 
 interface SupportTabProps {
-  onStartLiveChat: () => void;
+  onStartLiveChat?: () => void;
 }
 
-export const SupportTab: React.FC<SupportTabProps> = ({ onStartLiveChat }) => {
-  const { communityLinks } = useAuth();
-  const { isLight } = useTheme();
+const getCacheKey = (userId: string) => `9jacash_support_chat_${userId}`;
 
-  // Strictly use the Agent Telegram URL (do not fall back to the Telegram community channel)
-  const agentHref = formatTelegramUrl(communityLinks?.agentTelegramUrl);
-  const agentHandle = formatTelegramHandle(communityLinks?.agentTelegramHandle || communityLinks?.agentTelegramUrl);
+function formatChatTime(timestamp: number): string {
+  try {
+    return new Date(timestamp).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return '';
+  }
+}
+
+export const SupportTab: React.FC<SupportTabProps> = () => {
+  const { user } = useAuth();
+  const { isLight } = useTheme();
+  const [thread, setThread] = useState<SupportChatThread | null>(() => {
+    if (!user?.id) return null;
+    try {
+      const cached = localStorage.getItem(getCacheKey(user.id));
+      return cached ? (JSON.parse(cached) as SupportChatThread) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [inputText, setInputText] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const messages: SupportChatMessage[] = Array.isArray(thread?.messages) ? thread.messages : [];
+  const lastMessage = messages[messages.length - 1];
+  const isWaitingForAdminReply = Boolean(lastMessage && lastMessage.sender === 'user');
+
+  // Subscribe to real-time updates for this user's support chat thread
+  useEffect(() => {
+    if (!user?.id) return;
+
+    try {
+      const cached = localStorage.getItem(getCacheKey(user.id));
+      if (cached) {
+        setThread(JSON.parse(cached) as SupportChatThread);
+      }
+    } catch {
+      // Ignore cache parse error
+    }
+
+    const unsub = subscribeToUserSupportChat(user.id, (remoteThread) => {
+      setThread(remoteThread);
+      try {
+        if (remoteThread) {
+          localStorage.setItem(getCacheKey(user.id), JSON.stringify(remoteThread));
+        } else {
+          localStorage.removeItem(getCacheKey(user.id));
+        }
+      } catch {
+        // Ignore storage error
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, [user?.id]);
+
+  // Auto-scroll to latest message
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages.length, isWaitingForAdminReply]);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+
+    if (!user?.id) {
+      setErrorMsg('Please sign in to message 9jacash Support.');
+      return;
+    }
+
+    // Strict turn-taking lock: user cannot send a second message until support responds
+    if (isWaitingForAdminReply || isSending) {
+      return;
+    }
+
+    const trimmed = inputText.trim();
+    if (!trimmed) return;
+
+    setIsSending(true);
+    const res = await sendUserSupportMessageToFirestore(
+      {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        profilePicture: user.profilePicture,
+      },
+      trimmed
+    );
+    setIsSending(false);
+
+    if (!res.ok) {
+      if (res.thread) {
+        setThread(res.thread);
+      }
+      setErrorMsg(res.reason || 'Unable to send message right now.');
+      return;
+    }
+
+    setInputText('');
+    if (res.thread) {
+      setThread(res.thread);
+      try {
+        localStorage.setItem(getCacheKey(user.id), JSON.stringify(res.thread));
+      } catch {
+        // Ignore storage error
+      }
+    }
+  };
 
   return (
-    <div className="py-2 space-y-4">
-      <div>
-        <h2 className={`text-xl font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>Help &amp; Support</h2>
-        <p className={`text-xs ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>24/7 dedicated customer care for 9jacash</p>
-      </div>
-
-      {/* Support Card Banner */}
-      <div className={`p-5 rounded-3xl border flex items-center gap-4 transition-colors ${
-        isLight
-          ? 'bg-gradient-to-r from-amber-50 via-amber-100/60 to-orange-50 border-amber-300 shadow-sm'
-          : 'bg-gradient-to-r from-[#181920] to-[#221f18] border-amber-500/30'
-      }`}>
-        <div className="w-12 h-12 rounded-2xl bg-amber-400 text-black flex items-center justify-center font-bold flex-shrink-0 shadow-lg shadow-amber-400/20">
-          <Headphones className="w-6 h-6" />
-        </div>
-        <div>
-          <h3 className={`font-bold text-sm ${isLight ? 'text-slate-900' : 'text-white'}`}>Priority Support Active</h3>
-          <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>Average response time under 2 minutes</p>
-        </div>
-      </div>
-
-      {/* Primary In-App Live Chat CTA Button */}
-      <button
-        type="button"
-        onClick={onStartLiveChat}
-        className={`w-full p-4 rounded-3xl border flex items-center justify-between text-left group transition-all cursor-pointer ${
+    <div className="pt-2 pb-1 animate-in fade-in">
+      <div
+        className={`flex flex-col h-[calc(100dvh-185px)] min-h-[430px] rounded-2xl border overflow-hidden shadow-lg ${
           isLight
-            ? 'bg-gradient-to-r from-white via-amber-50/40 to-white border-2 border-amber-300 hover:border-amber-400 shadow-md hover:shadow-lg'
-            : 'bg-gradient-to-tr from-[#161822] via-[#1c1f2b] to-[#241f16] border border-amber-500/50 hover:border-amber-400 shadow-xl hover:shadow-amber-500/10'
+            ? 'bg-white border-stone-200 shadow-stone-200/60'
+            : 'bg-[#121318] border-stone-800 shadow-black/40'
         }`}
       >
-        <div className="flex items-center gap-3.5">
-          <div className="w-12 h-12 rounded-2xl bg-amber-400 text-black flex items-center justify-center font-bold shadow-lg shadow-amber-400/20 group-hover:scale-105 transition-transform">
-            <Bot className="w-6 h-6" />
-          </div>
-          <div>
-            <div className="flex items-center gap-1.5">
-              <h4 className={`text-sm font-bold transition-colors ${
-                isLight ? 'text-slate-900 group-hover:text-amber-600' : 'text-white group-hover:text-amber-300'
-              }`}>
-                In-App Live Chat Assistant
-              </h4>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
-                isLight
-                  ? 'bg-emerald-50 text-emerald-700 border-emerald-300'
-                  : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-              }`}>
-                Online
-              </span>
-            </div>
-            <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
-              Ask how 9jacash works, Quick Code purchases &amp; withdrawals
-            </p>
-          </div>
-        </div>
-        <div className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-          isLight
-            ? 'bg-amber-400 hover:bg-amber-300 text-slate-950 shadow-sm'
-            : 'bg-amber-400/10 border border-amber-500/30 text-amber-400 group-hover:bg-amber-400 group-hover:text-black'
-        }`}>
-          Chat Now →
-        </div>
-      </button>
-
-      {/* Other Channels */}
-      <div className="space-y-2.5">
-        {/* Support Agent on Telegram */}
-        <a
-          href={agentHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all text-left group cursor-pointer block ${
+        {/* Chat Header */}
+        <div
+          className={`flex items-center justify-between px-4 py-3 border-b ${
             isLight
-              ? 'bg-white border-slate-200 hover:border-[#229ED9] hover:bg-sky-50/40 shadow-sm'
-              : 'bg-[#16171d] border-stone-800/80 hover:border-[#229ED9]/50 hover:bg-[#1c1e27]'
+              ? 'bg-stone-50 border-stone-200'
+              : 'bg-[#17181f] border-stone-800'
           }`}
         >
-          <div className="flex items-center gap-3.5">
-            <div className="w-10 h-10 rounded-xl bg-[#229ED9]/15 text-[#229ED9] flex items-center justify-center group-hover:scale-105 transition-transform">
-              <Send className="w-5 h-5" />
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 flex items-center justify-center text-black shadow-md shadow-emerald-500/20 flex-shrink-0">
+              <Headphones className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h4 className={`text-xs font-bold transition-colors ${
-                  isLight ? 'text-slate-900 group-hover:text-[#229ED9]' : 'text-white group-hover:text-[#229ED9]'
-                }`}>
-                  Message Support Agent
-                </h4>
-                <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold border ${
-                  isLight
-                    ? 'bg-sky-50 text-sky-700 border-sky-300'
-                    : 'bg-sky-500/10 text-sky-400 border-sky-500/30'
-                }`}>
-                  Telegram
-                </span>
+                <h2
+                  className={`text-sm font-extrabold tracking-tight ${
+                    isLight ? 'text-stone-900' : 'text-white'
+                  }`}
+                >
+                  9jacash Support
+                </h2>
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
               </div>
-              <p className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
-                {agentHandle ? `Chat with verified agent on ${agentHandle}` : 'Instant 1-on-1 assistance on Telegram'}
+              <p
+                className={`text-[11px] flex items-center gap-1.5 ${
+                  isLight ? 'text-stone-500' : 'text-stone-400'
+                }`}
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
+                {isWaitingForAdminReply ? 'Awaiting support reply' : 'Online • Reply in chat'}
               </p>
             </div>
           </div>
-          <div className="px-2.5 py-1 rounded-lg bg-[#229ED9]/10 text-[#229ED9] border border-[#229ED9]/20 text-[11px] font-bold group-hover:bg-[#229ED9] group-hover:text-white transition-all flex items-center gap-1">
-            <span>Message</span>
-            <ArrowUpRight className="w-3.5 h-3.5" />
-          </div>
-        </a>
+        </div>
 
-        {/* Phone Support Line */}
+        {/* Messages Thread */}
         <div
-          onClick={() => {
-            navigator.clipboard.writeText('+2347009522274');
-          }}
-          className={`flex items-center gap-3.5 p-3.5 rounded-2xl border transition-all text-left group cursor-pointer ${
-            isLight
-              ? 'bg-white border-slate-200 hover:border-amber-400 hover:bg-amber-50/40 shadow-sm'
-              : 'bg-[#16171d] border-stone-800/80 hover:border-amber-500/40 hover:bg-[#1c1e27]'
+          className={`flex-1 overflow-y-auto px-3.5 py-4 space-y-3 ${
+            isLight ? 'bg-stone-50/70' : 'bg-[#0e0f14]'
           }`}
         >
-          <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
-            isLight
-              ? 'bg-amber-50 text-amber-600 border border-amber-200'
-              : 'bg-[#1f212a] text-amber-400'
-          }`}>
-            <PhoneCall className="w-5 h-5" />
-          </div>
-          <div>
-            <h4 className={`text-xs font-bold transition-colors ${
-              isLight ? 'text-slate-900 group-hover:text-amber-600' : 'text-white group-hover:text-amber-300'
-            }`}>
-              Phone Support Line
-            </h4>
-            <p className={`text-[11px] ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
-              +234 (0) 700 9JACASH (Click to copy)
-            </p>
-          </div>
+          {messages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-center px-6">
+              <div
+                className={`w-12 h-12 rounded-2xl flex items-center justify-center mb-3 border ${
+                  isLight
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-600'
+                    : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400'
+                }`}
+              >
+                <Headphones className="w-6 h-6" />
+              </div>
+              <p
+                className={`text-sm font-bold ${
+                  isLight ? 'text-stone-900' : 'text-white'
+                }`}
+              >
+                Chat with 9jacash Support
+              </p>
+              <p
+                className={`text-xs mt-1 max-w-[260px] leading-relaxed ${
+                  isLight ? 'text-stone-500' : 'text-stone-400'
+                }`}
+              >
+                Send a message below and a 9jacash support admin will reply directly here.
+              </p>
+            </div>
+          ) : (
+            messages.map((msg) => {
+              const isUser = msg.sender === 'user';
+              return (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
+                >
+                  {!isUser && (
+                    <span
+                      className={`text-[10px] font-bold mb-1 px-1 ${
+                        isLight ? 'text-emerald-700' : 'text-emerald-400'
+                      }`}
+                    >
+                      9jacash Support
+                    </span>
+                  )}
+                  <div
+                    className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed shadow-sm ${
+                      isUser
+                        ? 'bg-emerald-500 text-black font-medium rounded-br-sm'
+                        : isLight
+                        ? 'bg-white text-stone-900 border border-stone-200 rounded-bl-sm'
+                        : 'bg-[#1a1c24] text-stone-100 border border-stone-800 rounded-bl-sm'
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap break-words">{msg.text}</p>
+                    <div
+                      className={`text-[9px] mt-1 text-right ${
+                        isUser
+                          ? 'text-emerald-950/75 font-semibold'
+                          : isLight
+                          ? 'text-stone-400'
+                          : 'text-stone-500'
+                      }`}
+                    >
+                      {formatChatTime(msg.timestamp)}
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          )}
+          <div ref={messagesEndRef} />
         </div>
-      </div>
 
-      {/* Safety Notice */}
-      <div className={`p-3.5 rounded-2xl border flex items-start gap-3 ${
-        isLight
-          ? 'bg-slate-50 border-slate-200 text-slate-700 shadow-sm'
-          : 'bg-[#121317] border-stone-800/80 text-stone-400'
-      }`}>
-        <ShieldCheck className="w-4 h-4 text-amber-500 mt-0.5 flex-shrink-0" />
-        <p className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
-          Security reminder: 9jacash customer care and support agents will NEVER ask for your secret password, PIN, or bank OTP.
-        </p>
+        {/* Turn-taking lock status + Error feedback */}
+        {isWaitingForAdminReply && (
+          <div
+            className={`px-3.5 py-2 border-t flex items-center gap-2 text-[11px] font-medium ${
+              isLight
+                ? 'bg-amber-50 border-amber-200 text-amber-800'
+                : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>
+              Message sent. You can send another message once 9jacash Support replies.
+            </span>
+          </div>
+        )}
+
+        {errorMsg && (
+          <div
+            className={`px-3.5 py-2 border-t text-[11px] font-medium ${
+              isLight
+                ? 'bg-red-50 border-red-200 text-red-700'
+                : 'bg-red-500/10 border-red-500/20 text-red-300'
+            }`}
+          >
+            {errorMsg}
+          </div>
+        )}
+
+        {/* Message Composer */}
+        <form
+          onSubmit={handleSendMessage}
+          className={`p-3 border-t flex items-center gap-2 ${
+            isLight
+              ? 'bg-white border-stone-200'
+              : 'bg-[#17181f] border-stone-800'
+          }`}
+        >
+          <input
+            type="text"
+            value={inputText}
+            onChange={(e) => setInputText(e.target.value)}
+            disabled={isWaitingForAdminReply || isSending}
+            maxLength={1000}
+            placeholder={
+              isWaitingForAdminReply
+                ? 'Waiting for support reply...'
+                : 'Type a message to 9jacash Support...'
+            }
+            className={`flex-1 rounded-xl px-3.5 py-2.5 text-xs outline-none border transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+              isLight
+                ? 'bg-stone-100 border-stone-200 text-stone-900 placeholder:text-stone-400 focus:border-emerald-500 focus:bg-white'
+                : 'bg-[#0e0f14] border-stone-800 text-white placeholder:text-stone-500 focus:border-emerald-500/60'
+            }`}
+          />
+          <button
+            type="submit"
+            disabled={isWaitingForAdminReply || isSending || !inputText.trim()}
+            aria-label="Send message"
+            className="w-10 h-10 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed text-black flex items-center justify-center transition-all cursor-pointer flex-shrink-0 shadow-md shadow-emerald-500/20"
+          >
+            <Send className="w-4 h-4" />
+          </button>
+        </form>
       </div>
     </div>
   );
