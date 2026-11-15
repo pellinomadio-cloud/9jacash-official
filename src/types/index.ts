@@ -62,6 +62,10 @@ export interface User {
   deviceId?: string; // Unique device identifier to enforce max 10 accounts per device
   submittedRequests?: DepositRequest[]; // Synced payment/code requests for guaranteed admin dashboard visibility
   supportChat?: SupportChatThread | null; // Synced live support chat thread
+  updatedAt?: string;
+  lastBalanceMutationAt?: number;
+  lastWithdrawalAt?: number;
+  profilePictureUpdatedAt?: number;
   createdAt: string;
 }
 

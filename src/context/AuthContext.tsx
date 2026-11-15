@@ -253,6 +253,7 @@ const COMMUNITY_LINKS_STORAGE_KEY = '9jacash_community_links_config';
 const DEPOSIT_REQUESTS_STORAGE_KEY = '9jacash_deposit_requests_db';
 const REFERRALS_STORAGE_KEY = '9jacash_referrals_db';
 const SAFE_PAYOUTS_STORAGE_KEY = '9jacash_safe_payout_accounts_db';
+const PROFILE_PIC_CACHE_PREFIX = '9jacash_profile_pic_';
 
 const DEFAULT_COMPANY_ACCOUNT: CompanyAccount = {
   bankName: '',
@@ -327,6 +328,220 @@ export function normalizeUser(u: User | null): User | null {
   return u;
 }
 
+const getCachedProfilePicture = (userId?: string): string | undefined => {
+  if (!userId) return undefined;
+  try {
+    const cached = localStorage.getItem(`${PROFILE_PIC_CACHE_PREFIX}${userId}`);
+    return cached && cached.trim().length > 0 ? cached.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const setCachedProfilePicture = (userId: string | undefined, url?: string, explicitClear = false): void => {
+  if (!userId) return;
+  try {
+    const key = `${PROFILE_PIC_CACHE_PREFIX}${userId}`;
+    if (explicitClear) {
+      localStorage.removeItem(key);
+      return;
+    }
+    if (url && url.trim().length > 0) {
+      localStorage.setItem(key, url.trim());
+    }
+  } catch {}
+};
+
+const mergeDepositRequestPair = (cloudReq: DepositRequest, localReq: DepositRequest): DepositRequest => {
+  const useLocalStatus = localReq.status !== 'pending' && cloudReq.status === 'pending';
+  return {
+    ...cloudReq,
+    ...(useLocalStatus ? localReq : {}),
+    status: useLocalStatus ? localReq.status : cloudReq.status,
+    receiptUrl: cloudReq.receiptUrl || localReq.receiptUrl || '',
+    declineReason: localReq.declineReason || cloudReq.declineReason,
+    reviewedAt: localReq.reviewedAt || cloudReq.reviewedAt,
+    approvedAt: localReq.approvedAt || cloudReq.approvedAt,
+    generatedCode: localReq.generatedCode || cloudReq.generatedCode,
+  };
+};
+
+const mergeCloudAndLocalUser = (cloudUser: User, localUser?: User | null): User => {
+  const uid = cloudUser.id || localUser?.id || '';
+  const cachedPic = getCachedProfilePicture(uid);
+
+  if (!localUser) {
+    const fallbackPic =
+      cloudUser.profilePicture && cloudUser.profilePicture.trim().length > 0
+        ? cloudUser.profilePicture
+        : cachedPic;
+    if (fallbackPic) {
+      setCachedProfilePicture(uid, fallbackPic, false);
+    }
+    const baseUser: User = {
+      ...cloudUser,
+      ...(fallbackPic !== undefined ? { profilePicture: fallbackPic } : {}),
+    };
+    return normalizeUser(baseUser) || baseUser;
+  }
+
+  // 1. Profile Picture Resolution (timestamped so uploads & explicit removals win, never lost on refresh)
+  const localPicAt = localUser.profilePictureUpdatedAt || 0;
+  const cloudPicAt = cloudUser.profilePictureUpdatedAt || 0;
+  let resolvedProfilePic: string | undefined;
+  let resolvedPicAt: number | undefined = Math.max(localPicAt, cloudPicAt) || undefined;
+
+  if (localPicAt > cloudPicAt) {
+    resolvedProfilePic = localUser.profilePicture;
+  } else if (cloudPicAt > localPicAt) {
+    resolvedProfilePic = cloudUser.profilePicture;
+  } else {
+    const localPicClean = localUser.profilePicture && localUser.profilePicture.trim().length > 0 ? localUser.profilePicture.trim() : undefined;
+    const cloudPicClean = cloudUser.profilePicture && cloudUser.profilePicture.trim().length > 0 ? cloudUser.profilePicture.trim() : undefined;
+    resolvedProfilePic = localPicClean || cloudPicClean || cachedPic;
+  }
+
+  if (resolvedProfilePic && resolvedProfilePic.trim().length > 0) {
+    setCachedProfilePicture(uid, resolvedProfilePic, false);
+  }
+
+  // 2. Balance & Withdrawal Mutation Resolution (prevents stale cloud snapshot from snapping back post-withdrawal balance)
+  const localBalAt = localUser.lastBalanceMutationAt || 0;
+  const cloudBalAt = cloudUser.lastBalanceMutationAt || 0;
+  const localWdrAt = localUser.lastWithdrawalAt || 0;
+  const cloudWdrAt = cloudUser.lastWithdrawalAt || 0;
+
+  const localWdrRef = localUser.lastWithdrawal?.reference || localUser.withdrawalAccount?.reference;
+  const cloudWdrRef = cloudUser.lastWithdrawal?.reference || cloudUser.withdrawalAccount?.reference;
+  const localHasNewerWdrRef = Boolean(
+    localWdrRef && localWdrRef !== cloudWdrRef && (localUser.balance || 0) <= (cloudUser.balance || 0)
+  );
+  const cloudHasNewerWdrRef = Boolean(
+    cloudWdrRef && cloudWdrRef !== localWdrRef && (cloudUser.balance || 0) <= (localUser.balance || 0)
+  );
+
+  const localEffectiveTs = Math.max(localBalAt, localWdrAt);
+  const cloudEffectiveTs = Math.max(cloudBalAt, cloudWdrAt);
+
+  let finalBal = 0;
+  let finalAvail = 0;
+  let finalPending = 0;
+  let resolvedLastBalAt: number | undefined = Math.max(localBalAt, cloudBalAt) || undefined;
+
+  if (localEffectiveTs > cloudEffectiveTs || (localHasNewerWdrRef && !cloudHasNewerWdrRef)) {
+    // Local user has a more recent balance mutation / withdrawal than Firestore doc
+    finalBal = localUser.balance ?? 0;
+    finalAvail = localUser.availableBalance ?? finalBal;
+    finalPending = localUser.pendingEarnings ?? 0;
+    resolvedLastBalAt = localBalAt || localEffectiveTs;
+  } else if (cloudEffectiveTs > localEffectiveTs || (cloudHasNewerWdrRef && !localHasNewerWdrRef)) {
+    // Cloud doc has a more recent balance mutation (e.g. admin deposit approval / cross-device update)
+    finalBal = cloudUser.balance ?? 0;
+    finalAvail = cloudUser.availableBalance ?? finalBal;
+    finalPending = cloudUser.pendingEarnings ?? 0;
+    resolvedLastBalAt = cloudBalAt || cloudEffectiveTs;
+  } else {
+    // Equal or legacy records without mutation timestamps: keep monotonic max so earn rewards never regress
+    finalBal = Math.max(cloudUser.balance || 0, localUser.balance || 0);
+    finalAvail = Math.max(cloudUser.availableBalance || 0, localUser.availableBalance || 0);
+    finalPending = Math.max(cloudUser.pendingEarnings || 0, localUser.pendingEarnings || 0);
+  }
+
+  const resolvedTier = Math.max(cloudUser.tier || 1, localUser.tier || 1);
+  if (resolvedTier >= 3) {
+    if (finalPending > 0) {
+      finalBal += finalPending;
+      finalAvail += finalPending;
+    }
+    finalPending = 0;
+  }
+
+  // 3. Withdrawal state & QuickCodes resolution
+  const localStatus = localUser.withdrawalStatus;
+  const cloudStatus = cloudUser.withdrawalStatus;
+  const localLastWdr = localUser.lastWithdrawal;
+  const cloudLastWdr = cloudUser.lastWithdrawal;
+
+  let resolvedWithdrawalStatus =
+    localStatus === 'tax_pending' && cloudStatus === 'action_required'
+      ? 'tax_pending'
+      : cloudStatus || localStatus;
+  let resolvedLastWithdrawal =
+    localLastWdr?.taxStatus === 'pending' && cloudLastWdr?.taxStatus === 'action_required'
+      ? localLastWdr
+      : cloudLastWdr || localLastWdr;
+  let resolvedWithdrawalAccount = cloudUser.withdrawalAccount || localUser.withdrawalAccount;
+  let resolvedQuickCodes = cloudUser.quickCodes || localUser.quickCodes;
+  let resolvedLastWdrAt: number | undefined = Math.max(localWdrAt, cloudWdrAt) || undefined;
+
+  if (localWdrAt > cloudWdrAt || (localHasNewerWdrRef && !cloudHasNewerWdrRef)) {
+    resolvedWithdrawalStatus = localStatus;
+    resolvedLastWithdrawal = localLastWdr;
+    resolvedWithdrawalAccount = localUser.withdrawalAccount || cloudUser.withdrawalAccount;
+    resolvedQuickCodes = localUser.quickCodes ?? cloudUser.quickCodes;
+    resolvedLastWdrAt = localWdrAt || resolvedLastWdrAt;
+  }
+
+  // 4. Submitted requests merge
+  const subReqMap = new Map<string, DepositRequest>();
+  (cloudUser.submittedRequests || []).forEach((r) => {
+    if (r && r.id) subReqMap.set(r.id, r);
+  });
+  (localUser.submittedRequests || []).forEach((r) => {
+    if (r && r.id) {
+      const ex = subReqMap.get(r.id);
+      subReqMap.set(r.id, ex ? mergeDepositRequestPair(ex, r) : r);
+    }
+  });
+  const mergedSubReqs = Array.from(subReqMap.values()).slice(0, 15);
+
+  const localKycStatus = localUser.kycStatus;
+  const resolvedKycStatus =
+    localKycStatus && localKycStatus !== 'pending' && cloudUser.kycStatus === 'pending'
+      ? localKycStatus
+      : cloudUser.kycStatus || localKycStatus;
+
+  const localMemStatus = localUser.membershipStatus;
+  const resolvedMemStatus =
+    localMemStatus && localMemStatus !== 'pending' && cloudUser.membershipStatus === 'pending'
+      ? localMemStatus
+      : cloudUser.membershipStatus || localMemStatus;
+
+  const resolvedSupportChat =
+    (localUser.supportChat?.updatedAt || '') > (cloudUser.supportChat?.updatedAt || '')
+      ? localUser.supportChat
+      : cloudUser.supportChat || localUser.supportChat;
+
+  const rawMerged: User = {
+    ...cloudUser,
+    isKycVerified: cloudUser.isKycVerified ?? localUser.isKycVerified,
+    kycStatus: resolvedKycStatus,
+    isMembershipPaid: cloudUser.isMembershipPaid ?? localUser.isMembershipPaid,
+    membershipStatus: resolvedMemStatus,
+    accountStatus: cloudUser.accountStatus ?? localUser.accountStatus,
+    isBanned: cloudUser.isBanned ?? localUser.isBanned,
+    recoveryCode: cloudUser.recoveryCode ?? localUser.recoveryCode,
+    withdrawalAccount: resolvedWithdrawalAccount,
+    withdrawalStatus: resolvedWithdrawalStatus,
+    lastWithdrawal: resolvedLastWithdrawal,
+    submittedRequests: mergedSubReqs,
+    quickCodes: resolvedQuickCodes,
+    supportChat: resolvedSupportChat,
+    profilePicture: resolvedProfilePic,
+    profilePictureUpdatedAt: resolvedPicAt,
+    tier: resolvedTier,
+    balance: finalBal,
+    availableBalance: finalAvail,
+    pendingEarnings: finalPending,
+    lastBalanceMutationAt: resolvedLastBalAt,
+    lastWithdrawalAt: resolvedLastWdrAt,
+    referralEarnings: Math.max(cloudUser.referralEarnings || 0, localUser.referralEarnings || 0),
+    referralCount: Math.max(cloudUser.referralCount || 0, localUser.referralCount || 0),
+  };
+
+  return normalizeUser(rawMerged) || rawMerged;
+};
+
 const getInitialUser = (): User | null => {
   try {
     const savedUser = localStorage.getItem(CURRENT_USER_KEY);
@@ -336,6 +551,14 @@ const getInitialUser = (): User | null => {
         const expectedRef = extractReferralCodeFromEmail(parsedUser.email);
         if (!parsedUser.referralCode || parsedUser.referralCode.startsWith('9JA-')) {
           parsedUser.referralCode = expectedRef;
+        }
+        if (!parsedUser.profilePicture || !String(parsedUser.profilePicture).trim()) {
+          const cachedPic = getCachedProfilePicture(parsedUser.id);
+          if (cachedPic) {
+            parsedUser.profilePicture = cachedPic;
+          }
+        } else {
+          setCachedProfilePicture(parsedUser.id, parsedUser.profilePicture, false);
         }
 
         const normalized = normalizeUser(parsedUser);
@@ -653,20 +876,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. Test Firestore connection on boot
     testConnection();
 
-    // 3. Verify active session user against Firestore (must be recorded on admin dashboard)
+    // 3. Verify active session user against Firestore (lookup by exact ID first, then email fallback)
     const restoredUser = currentUserSession;
     if (restoredUser && (restoredUser.id || restoredUser.email)) {
-      const userLookupKey = (restoredUser.email || '').trim().toLowerCase() || restoredUser.id;
+      const userLookupKey = restoredUser.id || (restoredUser.email || '').trim().toLowerCase();
       findUserByEmailOrIdInFirestore(userLookupKey)
-        .then((cloudUser) => {
+        .then(async (directCloudUser) => {
+          let cloudUser = directCloudUser;
+          if (!cloudUser && restoredUser.email && restoredUser.id) {
+            cloudUser = await findUserByEmailOrIdInFirestore(restoredUser.email.trim().toLowerCase()).catch(() => null);
+          }
           if (cloudUser) {
-            const normalized = normalizeUser(cloudUser) || cloudUser;
-            setUser(normalized);
-            userRef.current = normalized;
-            safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(normalized));
-            const restoredTx = getInitialTransactions(normalized);
+            const localBaseline = userRef.current || restoredUser;
+            const merged = mergeCloudAndLocalUser(cloudUser, localBaseline);
+            setUser(merged);
+            userRef.current = merged;
+            safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(merged));
+            const restoredTx = getInitialTransactions(merged);
             if (restoredTx.length > 0) {
               setTransactions(restoredTx);
+            }
+
+            // If local had a newer balance/withdrawal mutation or profile picture missing in Firestore, persist it immediately
+            const cloudMissingPic = Boolean(merged.profilePicture && !cloudUser.profilePicture);
+            const localHadNewerBal =
+              (merged.lastBalanceMutationAt || 0) > (cloudUser.lastBalanceMutationAt || 0) ||
+              (merged.lastWithdrawalAt || 0) > (cloudUser.lastWithdrawalAt || 0) ||
+              (merged.profilePictureUpdatedAt || 0) > (cloudUser.profilePictureUpdatedAt || 0);
+            if (cloudMissingPic || localHadNewerBal) {
+              saveUserToFirestore(merged).catch(console.error);
             }
           }
           // Note: If cloudUser is null on cold start (e.g. initial network lag or offline),
@@ -738,114 +976,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         }
 
-        // MONOTONIC BALANCE INTEGRITY GUARD:
-        // A stale background cloud snapshot must NEVER reduce any user's balance!
+        // TIMESTAMPED BALANCE & PROFILE MERGE:
+        // Preserves both post-withdrawal reduced balances AND profilePicture across snapshots/refreshes!
         setAllUsers((prevLocalUsers) => {
           const currentLoggedIn = userRef.current;
           const merged: User[] = cloudUsers.map((cu): User => {
             const isCurrent = currentLoggedIn && cu.id === currentLoggedIn.id;
-            const localMatch = prevLocalUsers.find((p) => p.id === cu.id);
-            const highestKnownBalance = Math.max(
-              cu.balance || 0,
-              isCurrent ? (currentLoggedIn.balance || 0) : (localMatch?.balance || 0)
-            );
-            const highestKnownAvailable = Math.max(
-              cu.availableBalance || 0,
-              isCurrent ? (currentLoggedIn.availableBalance || 0) : (localMatch?.availableBalance || 0)
-            );
-            const highestKnownPending = Math.max(
-              cu.pendingEarnings || 0,
-              isCurrent ? (currentLoggedIn.pendingEarnings || 0) : (localMatch?.pendingEarnings || 0)
-            );
-
-            const resolvedTier = Math.max(cu.tier || 1, (isCurrent ? currentLoggedIn.tier : localMatch?.tier) || 1);
-            let finalBal = highestKnownBalance;
-            let finalAvail = highestKnownAvailable;
-            let finalPending = highestKnownPending;
-
-            if (resolvedTier >= 3) {
-              if (finalPending > 0) {
-                finalBal += finalPending;
-                finalAvail += finalPending;
-              }
-              finalPending = 0;
-            }
-
-            // Resolve withdrawalStatus and lastWithdrawal without letting stale localUser overwrite admin/tax updates
-            const localStatus = (isCurrent ? currentLoggedIn.withdrawalStatus : localMatch?.withdrawalStatus);
-            const cloudStatus = cu.withdrawalStatus;
-            const resolvedWithdrawalStatus =
-              localStatus === 'tax_pending' && cloudStatus === 'action_required'
-                ? 'tax_pending'
-                : cloudStatus || localStatus;
-
-            const localLastWdr = isCurrent ? currentLoggedIn.lastWithdrawal : localMatch?.lastWithdrawal;
-            const cloudLastWdr = cu.lastWithdrawal;
-            const resolvedLastWithdrawal =
-              localLastWdr?.taxStatus === 'pending' && cloudLastWdr?.taxStatus === 'action_required'
-                ? localLastWdr
-                : cloudLastWdr || localLastWdr;
-
-            // Merge submittedRequests from cloud and local user (preserving non-pending status & receiptUrl)
-            const localSubReqs = (isCurrent ? currentLoggedIn.submittedRequests : localMatch?.submittedRequests) || [];
-            const cloudSubReqs = cu.submittedRequests || [];
-            const subReqMap = new Map<string, DepositRequest>();
-            cloudSubReqs.forEach((r) => {
-              if (r && r.id) subReqMap.set(r.id, r);
-            });
-            localSubReqs.forEach((r) => {
-              if (r && r.id) {
-                const ex = subReqMap.get(r.id);
-                if (!ex) {
-                  subReqMap.set(r.id, r);
-                } else {
-                  const useLocalStatus = r.status !== 'pending' && ex.status === 'pending';
-                  subReqMap.set(r.id, {
-                    ...ex,
-                    ...(useLocalStatus ? r : {}),
-                    status: useLocalStatus ? r.status : ex.status,
-                    receiptUrl: ex.receiptUrl || r.receiptUrl || '',
-                    declineReason: r.declineReason || ex.declineReason,
-                    reviewedAt: r.reviewedAt || ex.reviewedAt,
-                    approvedAt: r.approvedAt || ex.approvedAt,
-                  });
-                }
-              }
-            });
-            const mergedSubReqs = Array.from(subReqMap.values()).slice(0, 15);
-
-            const localKycStatus = isCurrent ? currentLoggedIn.kycStatus : localMatch?.kycStatus;
-            const resolvedKycStatus =
-              localKycStatus && localKycStatus !== 'pending' && cu.kycStatus === 'pending'
-                ? localKycStatus
-                : cu.kycStatus || localKycStatus;
-
-            const localMemStatus = isCurrent ? currentLoggedIn.membershipStatus : localMatch?.membershipStatus;
-            const resolvedMemStatus =
-              localMemStatus && localMemStatus !== 'pending' && cu.membershipStatus === 'pending'
-                ? localMemStatus
-                : cu.membershipStatus || localMemStatus;
-
-            return {
-              ...cu,
-              kycStatus: resolvedKycStatus,
-              membershipStatus: resolvedMemStatus,
-              withdrawalStatus: resolvedWithdrawalStatus,
-              lastWithdrawal: resolvedLastWithdrawal,
-              submittedRequests: mergedSubReqs,
-              balance: finalBal,
-              availableBalance: finalAvail,
-              pendingEarnings: finalPending,
-              referralEarnings: Math.max(
-                cu.referralEarnings || 0,
-                isCurrent ? (currentLoggedIn.referralEarnings || 0) : (localMatch?.referralEarnings || 0)
-              ),
-              referralCount: Math.max(
-                cu.referralCount || 0,
-                isCurrent ? (currentLoggedIn.referralCount || 0) : (localMatch?.referralCount || 0)
-              ),
-              tier: resolvedTier,
-            };
+            const localMatch = isCurrent ? currentLoggedIn : prevLocalUsers.find((p) => p.id === cu.id);
+            return mergeCloudAndLocalUser(cu, localMatch);
           });
 
           // Any account not recorded in Firestore / Admin Dashboard MUST NOT exist on the app!
@@ -862,7 +1000,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           // Only purge if the user is missing by BOTH email and ID, confirmed via direct query
           if (currentLoggedIn && (currentLoggedIn.id || currentLoggedIn.email) && !matchingCloudUser) {
-            const searchKey = currentEmailClean || currentId;
+            const searchKey = currentId || currentEmailClean;
             findUserByEmailOrIdInFirestore(searchKey).then((confirmedUser) => {
               if (!confirmedUser && userRef.current) {
                 console.warn(`User ${searchKey} is not recorded on the Admin Dashboard. Purging from app.`);
@@ -890,90 +1028,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return merged;
         });
 
-        // If current user is logged in, sync their profile SAFELY (never reduce balance on its own!)
+        // If current user is logged in, sync their profile safely using timestamped merge
         const currentUid = (userRef.current?.id || '').trim();
         const currentEmail = (userRef.current?.email || '').trim().toLowerCase();
         if (currentUid || currentEmail) {
-          const freshCurrent = cloudUsers.find(
-            (u) =>
-              (currentUid && (u.id || '').trim() === currentUid) ||
-              (currentEmail && (u.email || '').trim().toLowerCase() === currentEmail)
-          );
+          const freshCurrent =
+            cloudUsers.find((u) => currentUid && (u.id || '').trim() === currentUid) ||
+            cloudUsers.find((u) => currentEmail && (u.email || '').trim().toLowerCase() === currentEmail);
           if (freshCurrent) {
             const localUser = userRef.current;
-            const safeTier = Math.max(freshCurrent.tier || 1, localUser?.tier || 1);
-            let safeBalance = Math.max(freshCurrent.balance || 0, localUser?.balance || 0);
-            let safeAvailable = Math.max(freshCurrent.availableBalance || 0, localUser?.availableBalance || 0);
-            let safePending = Math.max(freshCurrent.pendingEarnings || 0, localUser?.pendingEarnings || 0);
-
-            if (safeTier >= 3) {
-              if (safePending > 0) {
-                safeBalance += safePending;
-                safeAvailable += safePending;
-              }
-              safePending = 0;
-            }
-
-            const resolvedWithdrawalStatus =
-              localUser?.withdrawalStatus === 'tax_pending' && freshCurrent.withdrawalStatus === 'action_required'
-                ? 'tax_pending'
-                : freshCurrent.withdrawalStatus || localUser?.withdrawalStatus;
-
-            const resolvedLastWithdrawal =
-              localUser?.lastWithdrawal?.taxStatus === 'pending' && freshCurrent.lastWithdrawal?.taxStatus === 'action_required'
-                ? localUser.lastWithdrawal
-                : freshCurrent.lastWithdrawal || localUser?.lastWithdrawal;
-
-            const localSubReqs = localUser?.submittedRequests || [];
-            const cloudSubReqs = freshCurrent.submittedRequests || [];
-            const subReqMap = new Map<string, DepositRequest>();
-            cloudSubReqs.forEach((r) => {
-              if (r && r.id) subReqMap.set(r.id, r);
-            });
-            localSubReqs.forEach((r) => {
-              if (r && r.id && !subReqMap.has(r.id)) {
-                subReqMap.set(r.id, r);
-              }
-            });
-            const mergedSubReqs = Array.from(subReqMap.values()).slice(0, 15);
-
-            const rawMergedUser: User = {
-              ...freshCurrent,
-              ...localUser,
-              isKycVerified: freshCurrent.isKycVerified ?? localUser?.isKycVerified,
-              kycStatus: freshCurrent.kycStatus ?? localUser?.kycStatus,
-              accountStatus: freshCurrent.accountStatus ?? localUser?.accountStatus,
-              isBanned: freshCurrent.isBanned ?? localUser?.isBanned,
-              recoveryCode: freshCurrent.recoveryCode ?? localUser?.recoveryCode,
-              withdrawalAccount: freshCurrent.withdrawalAccount || localUser?.withdrawalAccount,
-              withdrawalStatus: resolvedWithdrawalStatus,
-              lastWithdrawal: resolvedLastWithdrawal,
-              submittedRequests: mergedSubReqs,
-              quickCodes: freshCurrent.quickCodes || localUser?.quickCodes,
-              profilePicture:
-                localUser?.profilePicture !== undefined
-                  ? localUser.profilePicture
-                  : freshCurrent.profilePicture,
-              tier: safeTier,
-              // Strictly protected balances & referral statistics:
-              balance: safeBalance,
-              availableBalance: safeAvailable,
-              pendingEarnings: safePending,
-              referralEarnings: Math.max(freshCurrent.referralEarnings || 0, localUser?.referralEarnings || 0),
-              referralCount: Math.max(freshCurrent.referralCount || 0, localUser?.referralCount || 0),
-            };
-
-            const mergedUser = normalizeUser(rawMergedUser) || rawMergedUser;
+            const mergedUser = mergeCloudAndLocalUser(freshCurrent, localUser);
 
             userRef.current = mergedUser;
             setUser(mergedUser);
             safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(mergedUser));
 
-            // If local balance or referral count was ahead of Firestore, write back safely once (without runaway loops)
-            const syncHash = `${mergedUser.id}_${safeBalance}_${safePending}_${mergedUser.referralCount || 0}`;
+            const localBalNewer =
+              (mergedUser.lastBalanceMutationAt || 0) > (freshCurrent.lastBalanceMutationAt || 0) ||
+              (mergedUser.lastWithdrawalAt || 0) > (freshCurrent.lastWithdrawalAt || 0);
+            const localPicNewer =
+              (mergedUser.profilePictureUpdatedAt || 0) > (freshCurrent.profilePictureUpdatedAt || 0) ||
+              Boolean(mergedUser.profilePicture && !freshCurrent.profilePicture);
+
+            const syncHash = `${mergedUser.id}_${mergedUser.balance}_${mergedUser.pendingEarnings}_${mergedUser.referralCount || 0}_${mergedUser.lastBalanceMutationAt || 0}_${mergedUser.lastWithdrawalAt || 0}_${mergedUser.profilePictureUpdatedAt || 0}_${Boolean(mergedUser.profilePicture)}`;
             const isAhead =
-              safeBalance > (freshCurrent.balance || 0) ||
-              safePending > (freshCurrent.pendingEarnings || 0) ||
+              localBalNewer ||
+              localPicNewer ||
+              (mergedUser.balance || 0) > (freshCurrent.balance || 0) ||
+              (mergedUser.pendingEarnings || 0) > (freshCurrent.pendingEarnings || 0) ||
               (mergedUser.referralCount || 0) > (freshCurrent.referralCount || 0);
 
             if (isAhead && lastAutoSyncedHashRef.current !== syncHash) {
@@ -1765,12 +1847,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             finalBalance = (targetUser.balance || 0) + pendingToRelease;
           }
 
+          const nowBalMs = Date.now();
           const updatedTargetUser: User = {
             ...targetUser,
             tier: targetTier,
             balance: finalBalance,
             availableBalance: finalBalance,
             pendingEarnings: remainingPending,
+            lastBalanceMutationAt: nowBalMs,
+            updatedAt: new Date(nowBalMs).toISOString(),
             submittedRequests: syncUserSubmittedReqs(targetUser),
           };
 
@@ -1825,10 +1910,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const targetUser = existingUsers[targetUserIdx];
           const newBalance = (targetUser.balance || 0) + targetReq.amount;
           const newAvailBalance = (targetUser.availableBalance || 0) + targetReq.amount;
+          const nowBalMs = Date.now();
           const updatedTargetUser: User = {
             ...targetUser,
             balance: newBalance,
             availableBalance: newAvailBalance,
+            lastBalanceMutationAt: nowBalMs,
+            updatedAt: new Date(nowBalMs).toISOString(),
             submittedRequests: syncUserSubmittedReqs(targetUser),
           };
           existingUsers[targetUserIdx] = updatedTargetUser;
@@ -2296,11 +2384,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      const updatedUser = {
+      const nowMutMs = Date.now();
+      const updatedUser: User = {
         ...user,
         quickCodes: updatedCodes,
+        lastWithdrawalAt: nowMutMs,
+        updatedAt: new Date(nowMutMs).toISOString(),
       };
 
+      userRef.current = updatedUser;
       setUser(updatedUser);
       safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
       saveUserToFirestore(updatedUser).catch(console.error);
@@ -2461,6 +2553,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           withdrawalStatus: 'completed',
           lastWithdrawal: lastWithdrawalData,
           withdrawalAccount: withdrawalAccountData,
+          lastBalanceMutationAt: nowMs,
+          lastWithdrawalAt: nowMs,
+          updatedAt: now.toISOString(),
         };
 
         userRef.current = updatedUser;
@@ -2539,6 +2634,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           quickCodes: updatedCodes,
           withdrawalStatus: 'pending_kyc',
           withdrawalAccount: withdrawalAccountData,
+          lastBalanceMutationAt: nowMs,
+          lastWithdrawalAt: nowMs,
+          updatedAt: now.toISOString(),
         };
 
         userRef.current = updatedUser;
@@ -2609,6 +2707,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         withdrawalStatus: 'action_required',
         lastWithdrawal: lastWithdrawalData,
         withdrawalAccount: withdrawalAccountData,
+        lastBalanceMutationAt: nowMs,
+        lastWithdrawalAt: nowMs,
+        updatedAt: now.toISOString(),
       };
 
       userRef.current = updatedUser;
@@ -2777,6 +2878,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const updatedUser: User = {
         ...activeUser,
         withdrawalStatus: 'tax_pending',
+        lastWithdrawalAt: now.getTime(),
+        updatedAt: nowIso,
         submittedRequests: [newTaxReq, ...prevSubReqs].slice(0, 15),
         lastWithdrawal: {
           ...withdrawal,
@@ -2919,6 +3022,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const updatedUser: User = {
           ...targetUser,
           withdrawalStatus: 'completed',
+          lastWithdrawalAt: Date.now(),
+          updatedAt: approvedIso,
           submittedRequests: nextSub,
           lastWithdrawal: targetUser.lastWithdrawal
             ? {
@@ -3053,6 +3158,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...prev,
         balance: (prev.balance || 0) + bonusAmount,
         availableBalance: (prev.availableBalance || 0) + bonusAmount,
+        lastBalanceMutationAt: now,
+        updatedAt: nowObj.toISOString(),
       };
       userRef.current = updatedUser;
       safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
@@ -3224,12 +3331,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       newReferralCount * bonusPerUser
     );
 
+    const mutNow = Date.now();
     const updatedUser: User = {
       ...activeUser,
       balance: newBalance,
       availableBalance: newBalance,
       referralEarnings: newReferralEarnings,
       referralCount: newReferralCount,
+      lastBalanceMutationAt: mutNow,
+      updatedAt: new Date(mutNow).toISOString(),
     };
 
     userRef.current = updatedUser;
@@ -3381,8 +3491,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const welcomeBonus = isReferred ? REFERRED_WELCOME_BONUS : 0.0;
       const deviceId = getOrCreateDeviceId();
 
+      const regNowMs = Date.now();
       const newUser: User = {
-        id: 'usr_' + Date.now() + Math.random().toString(36).substring(2, 6),
+        id: 'usr_' + regNowMs + Math.random().toString(36).substring(2, 6),
         name: name.trim(),
         email: cleanEmail,
         pin: pin.trim(),
@@ -3398,7 +3509,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         referralEarnings: 0.0,
         referralCount: 0,
         deviceId,
-        createdAt: new Date().toISOString(),
+        lastBalanceMutationAt: regNowMs,
+        createdAt: new Date(regNowMs).toISOString(),
+        updatedAt: new Date(regNowMs).toISOString(),
       };
 
       // Record account on device to enforce the 10 accounts limit
@@ -3438,6 +3551,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const refNewBalance = (matchedReferrer.balance || 0) + bonusAmount;
         const refNewAvailable = Math.max(matchedReferrer.availableBalance || 0, matchedReferrer.balance || 0) + bonusAmount;
         const refNewPending = (matchedReferrer.tier || 1) >= 3 ? 0 : (matchedReferrer.pendingEarnings || 0);
+        const refMutMs = Date.now();
 
         const rawUpdatedReferrer: User = {
           ...matchedReferrer,
@@ -3446,6 +3560,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           pendingEarnings: refNewPending,
           referralEarnings: (matchedReferrer.referralEarnings || 0) + bonusAmount,
           referralCount: (matchedReferrer.referralCount || 0) + 1,
+          lastBalanceMutationAt: refMutMs,
+          updatedAt: new Date(refMutMs).toISOString(),
         };
         const updatedReferrer = normalizeUser(rawUpdatedReferrer) || rawUpdatedReferrer;
         updatedReferrerToStore = updatedReferrer;
@@ -3658,18 +3774,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const previousLocalUser = getInitialUser();
-      let userToSet = foundUser;
-      if (previousLocalUser && previousLocalUser.id === foundUser.id) {
-        userToSet = {
-          ...foundUser,
-          balance: Math.max(foundUser.balance || 0, previousLocalUser.balance || 0),
-          availableBalance: Math.max(foundUser.availableBalance || 0, previousLocalUser.availableBalance || 0),
-          pendingEarnings: Math.max(foundUser.pendingEarnings || 0, previousLocalUser.pendingEarnings || 0),
-          tier: Math.max(foundUser.tier || 1, previousLocalUser.tier || 1),
-        };
-      }
-
-      const normalizedUser = normalizeUser(userToSet) || userToSet;
+      const matchingLocal =
+        previousLocalUser && previousLocalUser.id === foundUser.id
+          ? previousLocalUser
+          : getAllRegisteredUsers().find((u) => u.id === foundUser.id) || null;
+      const normalizedUser = mergeCloudAndLocalUser(foundUser, matchingLocal);
 
       userRef.current = normalizedUser;
       safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(normalizedUser));
@@ -3797,6 +3906,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       availableBalance: newBalance,
       tier: currentTier,
       pendingEarnings: 0,
+      lastBalanceMutationAt: nowMs,
+      updatedAt: new Date(nowMs).toISOString(),
     };
     const updatedUser = normalizeUser(rawUpdatedUser) || rawUpdatedUser;
 
@@ -3923,6 +4034,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       tier: currentTier,
       pendingEarnings: 0,
       lastDailyClaim: now,
+      lastBalanceMutationAt: now,
+      updatedAt: nowObj.toISOString(),
     };
     const updatedUser = normalizeUser(rawUpdatedUser) || rawUpdatedUser;
 
@@ -4046,6 +4159,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lastSpinDate: today,
       spinsToday: newSpinsUsed,
       lastSpinTime: now,
+      lastBalanceMutationAt: now,
+      updatedAt: nowObj.toISOString(),
     };
     const updatedUser = normalizeUser(rawUpdatedUser) || rawUpdatedUser;
 
@@ -4180,6 +4295,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       availableBalance: newBalance,
       tier: currentTier,
       pendingEarnings: 0,
+      lastBalanceMutationAt: now,
+      updatedAt: nowObj.toISOString(),
     };
     const updatedUser = normalizeUser(rawUpdatedUser) || rawUpdatedUser;
 
@@ -4288,6 +4405,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       availableBalance: newBalance,
       tier: currentTier,
       pendingEarnings: 0,
+      lastBalanceMutationAt: now,
+      updatedAt: nowObj.toISOString(),
     };
     const updatedUser = normalizeUser(rawUpdatedUser) || rawUpdatedUser;
 
@@ -4419,6 +4538,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       availableBalance: newBalance,
       tier: currentTier,
       pendingEarnings: 0,
+      lastBalanceMutationAt: now,
+      updatedAt: nowObj.toISOString(),
     };
     const updatedUser = normalizeUser(rawUpdatedUser) || rawUpdatedUser;
 
@@ -4580,12 +4701,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         finalBalance = currentUser.balance;
       }
 
+      const mutNow = Date.now();
       const updatedUser: User = {
         ...currentUser,
         tier: targetTier,
         balance: finalBalance,
         availableBalance: finalBalance,
         pendingEarnings: remainingPending,
+        lastBalanceMutationAt: mutNow,
+        updatedAt: new Date(mutNow).toISOString(),
       };
 
       userRef.current = updatedUser;
@@ -4730,40 +4854,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (cloudUsers && cloudUsers.length > 0) {
         let finalUsers: User[] = cloudUsers;
         setAllUsers((prevLocalUsers) => {
+          const activeCurrent = userRef.current;
           const mergedUsers = cloudUsers.map((cu) => {
-            const loc = prevLocalUsers.find((p) => p.id === cu.id);
-            if (!loc) return cu;
-            const subMap = new Map<string, DepositRequest>();
-            (cu.submittedRequests || []).forEach((r) => {
-              if (r && r.id) subMap.set(r.id, r);
-            });
-            (loc.submittedRequests || []).forEach((r) => {
-              if (r && r.id) {
-                const ex = subMap.get(r.id);
-                subMap.set(r.id, ex ? mergeReqPair(ex, r) : r);
-              }
-            });
-            const resolvedKycStatus =
-              loc.kycStatus && loc.kycStatus !== 'pending' && cu.kycStatus === 'pending'
-                ? loc.kycStatus
-                : cu.kycStatus || loc.kycStatus;
-            const resolvedMemStatus =
-              loc.membershipStatus && loc.membershipStatus !== 'pending' && cu.membershipStatus === 'pending'
-                ? loc.membershipStatus
-                : cu.membershipStatus || loc.membershipStatus;
-            return {
-              ...cu,
-              kycStatus: resolvedKycStatus,
-              membershipStatus: resolvedMemStatus,
-              isKycVerified: cu.isKycVerified || loc.isKycVerified,
-              isMembershipPaid: cu.isMembershipPaid || loc.isMembershipPaid,
-              balance: Math.max(cu.balance || 0, loc.balance || 0),
-              availableBalance: Math.max(cu.availableBalance || 0, loc.availableBalance || 0),
-              submittedRequests: Array.from(subMap.values()).slice(0, 15),
-            };
+            const loc =
+              activeCurrent && activeCurrent.id === cu.id
+                ? activeCurrent
+                : prevLocalUsers.find((p) => p.id === cu.id);
+            return mergeCloudAndLocalUser(cu, loc);
           });
           finalUsers = mergedUsers;
           safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(mergedUsers));
+
+          if (activeCurrent?.id) {
+            const updatedCurrent = mergedUsers.find((u) => u.id === activeCurrent.id);
+            if (updatedCurrent) {
+              userRef.current = updatedCurrent;
+              setUser(updatedCurrent);
+              safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedCurrent));
+            }
+          }
           return mergedUsers;
         });
         return finalUsers;
@@ -5225,12 +5334,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         finalPending = 0;
       }
 
+      const mutNow = Date.now();
       const rawUser: User = {
         ...target,
         tier: validTier,
         balance: finalBalance,
         availableBalance: finalBalance,
         pendingEarnings: finalPending,
+        lastBalanceMutationAt: mutNow,
+        updatedAt: new Date(mutNow).toISOString(),
       };
       const updatedUser = normalizeUser(rawUser) || rawUser;
 
@@ -5313,14 +5425,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!activeUser) return false;
 
       const cleanUrl = profilePictureUrl.trim();
+      const picUpdatedAt = Date.now();
       const updatedUser: User = {
         ...activeUser,
         profilePicture: cleanUrl,
+        profilePictureUpdatedAt: picUpdatedAt,
+        updatedAt: new Date(picUpdatedAt).toISOString(),
       };
 
       userRef.current = updatedUser;
       setUser(updatedUser);
       safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+      setCachedProfilePicture(activeUser.id, cleanUrl, cleanUrl.length === 0);
 
       if (cleanUrl.length > 0) {
         try {
@@ -5330,8 +5446,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setShowProfilePicturePrompt(false);
       }
 
-      await saveUserToFirestore(updatedUser);
-
       const existingUsers = getAllRegisteredUsers();
       const idx = existingUsers.findIndex((u) => u.id === activeUser.id);
       if (idx !== -1) {
@@ -5339,6 +5453,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setAllUsers([...existingUsers]);
         safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
       }
+
+      await saveUserToFirestore(updatedUser);
       return true;
     } catch (e) {
       console.error('Failed to update profile picture', e);

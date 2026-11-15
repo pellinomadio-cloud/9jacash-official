@@ -203,36 +203,55 @@ const SAFE_PAYOUTS_COLLECTION = 'safe_payout_accounts';
 
 // 1. User Profiles & Balance Sync
 export async function saveUserToFirestore(user: User): Promise<void> {
+  if (!user?.id) return;
   if (isFirestoreQuotaExhausted()) return;
   const path = `${USERS_COLLECTION}/${user.id}`;
+  const updatedAtIso = user.updatedAt || new Date().toISOString();
   try {
-    // Keep at most 6 recent submittedRequests on the user document so the user doc stays well under Firestore's 1MB limit
+    // Keep at most 4 recent submittedRequests with compact thumbnails on the user document
+    // so profilePicture, balances, and withdrawal state never approach Firestore's 1MB limit.
     const trimmedUser: User = {
       ...user,
       ...(Array.isArray(user.submittedRequests)
         ? {
-            submittedRequests: user.submittedRequests.slice(0, 6).map((r) => ({
+            submittedRequests: user.submittedRequests.slice(0, 4).map((r) => ({
               ...r,
-              receiptUrl: r.receiptUrl && r.receiptUrl.length > 150000 ? '' : r.receiptUrl,
+              receiptUrl: r.receiptUrl && r.receiptUrl.length > 45000 ? '' : r.receiptUrl,
             })),
+          }
+        : {}),
+      ...(user.supportChat && Array.isArray(user.supportChat.messages)
+        ? {
+            supportChat: {
+              ...user.supportChat,
+              userProfilePicture: '',
+              messages: user.supportChat.messages.slice(-40),
+            },
           }
         : {}),
     };
     const sanitized = sanitizeForFirestore({
       ...trimmedUser,
-      updatedAt: new Date().toISOString(),
+      updatedAt: updatedAtIso,
     });
     await setDoc(doc(db, USERS_COLLECTION, user.id), sanitized, { merge: true });
   } catch (error) {
-    // Fallback if user doc was still too large
+    // Fallback: strip embedded receipts & bulky chat history so core balance, withdrawal & profilePicture always save
     try {
       const lightUser = sanitizeForFirestore({
         ...user,
-        submittedRequests: (user.submittedRequests || []).slice(0, 5).map((r) => ({
+        submittedRequests: (user.submittedRequests || []).slice(0, 4).map((r) => ({
           ...r,
-          receiptUrl: r.receiptUrl && r.receiptUrl.length > 60000 ? '' : r.receiptUrl,
+          receiptUrl: '',
         })),
-        updatedAt: new Date().toISOString(),
+        supportChat: user.supportChat
+          ? {
+              ...user.supportChat,
+              userProfilePicture: '',
+              messages: (user.supportChat.messages || []).slice(-15),
+            }
+          : user.supportChat,
+        updatedAt: updatedAtIso,
       });
       await setDoc(doc(db, USERS_COLLECTION, user.id), lightUser, { merge: true });
     } catch (retryErr) {
