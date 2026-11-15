@@ -29,6 +29,9 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
   const { user } = useAuth();
   const { isLight } = useTheme();
   const [thread, setThread] = useState<SupportChatThread | null>(() => {
+    if (user?.supportChat && Array.isArray(user.supportChat.messages)) {
+      return user.supportChat;
+    }
     if (!user?.id) return null;
     try {
       const cached = localStorage.getItem(getCacheKey(user.id));
@@ -41,25 +44,44 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
   const [isSending, setIsSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const hasInitialScrolledRef = useRef(false);
+  const pendingOptimisticTsRef = useRef<number>(0);
 
   const messages: SupportChatMessage[] = Array.isArray(thread?.messages) ? thread.messages : [];
   const lastMessage = messages[messages.length - 1];
-  const isWaitingForAdminReply = Boolean(lastMessage && lastMessage.sender === 'user');
+  const isWaitingForSupportReply = Boolean(lastMessage && lastMessage.sender === 'user');
+
+  // Seed instantly from live user profile if newer than cached thread
+  useEffect(() => {
+    if (!user?.supportChat) return;
+    setThread((prev) => {
+      if (!prev) return user.supportChat || null;
+      const incomingTs = user.supportChat?.lastTimestamp || 0;
+      const currentTs = prev.lastTimestamp || 0;
+      if (incomingTs > currentTs) {
+        return user.supportChat || prev;
+      }
+      return prev;
+    });
+  }, [user?.supportChat]);
 
   // Subscribe to real-time updates for this user's support chat thread
   useEffect(() => {
     if (!user?.id) return;
 
-    try {
-      const cached = localStorage.getItem(getCacheKey(user.id));
-      if (cached) {
-        setThread(JSON.parse(cached) as SupportChatThread);
-      }
-    } catch {
-      // Ignore cache parse error
-    }
-
     const unsub = subscribeToUserSupportChat(user.id, (remoteThread) => {
+      // Avoid overwriting a newer in-flight optimistic message with a stale initial snapshot
+      if (
+        pendingOptimisticTsRef.current > 0 &&
+        (!remoteThread || (remoteThread.lastTimestamp || 0) < pendingOptimisticTsRef.current)
+      ) {
+        return;
+      }
+
+      if (remoteThread && (remoteThread.lastTimestamp || 0) >= pendingOptimisticTsRef.current) {
+        pendingOptimisticTsRef.current = 0;
+      }
+
       setThread(remoteThread);
       try {
         if (remoteThread) {
@@ -77,10 +99,15 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
     };
   }, [user?.id]);
 
-  // Auto-scroll to latest message
+  // Smooth auto-scroll on new messages, instant scroll on initial open
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, isWaitingForAdminReply]);
+    const behavior: ScrollBehavior = hasInitialScrolledRef.current ? 'smooth' : 'auto';
+    hasInitialScrolledRef.current = true;
+    const rafId = requestAnimationFrame(() => {
+      messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [messages.length, isWaitingForSupportReply]);
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,12 +119,47 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
     }
 
     // Strict turn-taking lock: user cannot send a second message until support responds
-    if (isWaitingForAdminReply || isSending) {
+    if (isWaitingForSupportReply || isSending) {
       return;
     }
 
     const trimmed = inputText.trim();
     if (!trimmed) return;
+
+    // Optimistic update for instant, zero-lag UX
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const previousThread = thread;
+    const optimisticMsg: SupportChatMessage = {
+      id: `opt_${now}`,
+      sender: 'user',
+      senderName: user.name || 'User',
+      text: trimmed,
+      timestamp: now,
+      createdAt: nowIso,
+    };
+    const optimisticThread: SupportChatThread = {
+      id: user.id,
+      userId: user.id,
+      userName: user.name || previousThread?.userName || '9jacash User',
+      userEmail: user.email || previousThread?.userEmail || '',
+      userProfilePicture: user.profilePicture || previousThread?.userProfilePicture || '',
+      messages: [...messages, optimisticMsg].slice(-80),
+      lastMessage: trimmed,
+      lastSender: 'user',
+      awaitingAdminReply: true,
+      lastTimestamp: now,
+      updatedAt: nowIso,
+    };
+
+    pendingOptimisticTsRef.current = now;
+    setInputText('');
+    setThread(optimisticThread);
+    try {
+      localStorage.setItem(getCacheKey(user.id), JSON.stringify(optimisticThread));
+    } catch {
+      // Ignore storage error
+    }
 
     setIsSending(true);
     const res = await sendUserSupportMessageToFirestore(
@@ -110,16 +172,25 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
       trimmed
     );
     setIsSending(false);
+    pendingOptimisticTsRef.current = 0;
 
     if (!res.ok) {
-      if (res.thread) {
-        setThread(res.thread);
-      }
+      setThread(res.thread || previousThread || null);
+      setInputText(trimmed);
       setErrorMsg(res.reason || 'Unable to send message right now.');
+      try {
+        const rollback = res.thread || previousThread;
+        if (rollback) {
+          localStorage.setItem(getCacheKey(user.id), JSON.stringify(rollback));
+        } else {
+          localStorage.removeItem(getCacheKey(user.id));
+        }
+      } catch {
+        // Ignore storage error
+      }
       return;
     }
 
-    setInputText('');
     if (res.thread) {
       setThread(res.thread);
       try {
@@ -131,7 +202,7 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
   };
 
   return (
-    <div className="pt-2 pb-1 animate-in fade-in">
+    <div className="pt-2 pb-1 animate-in fade-in duration-150">
       <div
         className={`flex flex-col h-[calc(100dvh-185px)] min-h-[430px] rounded-2xl border overflow-hidden shadow-lg ${
           isLight
@@ -168,7 +239,7 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
                 }`}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block" />
-                {isWaitingForAdminReply ? 'Awaiting support reply' : 'Online • Reply in chat'}
+                {isWaitingForSupportReply ? 'Awaiting support reply' : 'Online • Reply in chat'}
               </p>
             </div>
           </div>
@@ -176,7 +247,7 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
 
         {/* Messages Thread */}
         <div
-          className={`flex-1 overflow-y-auto px-3.5 py-4 space-y-3 ${
+          className={`flex-1 overflow-y-auto overscroll-contain scroll-smooth px-3.5 py-4 space-y-3 ${
             isLight ? 'bg-stone-50/70' : 'bg-[#0e0f14]'
           }`}
         >
@@ -203,7 +274,7 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
                   isLight ? 'text-stone-500' : 'text-stone-400'
                 }`}
               >
-                Send a message below and a 9jacash support admin will reply directly here.
+                Send a message below and our 9jacash Support team will reply directly here.
               </p>
             </div>
           ) : (
@@ -212,7 +283,9 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
               return (
                 <div
                   key={msg.id}
-                  className={`flex flex-col ${isUser ? 'items-end' : 'items-start'}`}
+                  className={`flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-150 ${
+                    isUser ? 'items-end' : 'items-start'
+                  }`}
                 >
                   {!isUser && (
                     <span
@@ -253,9 +326,9 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
         </div>
 
         {/* Turn-taking lock status + Error feedback */}
-        {isWaitingForAdminReply && (
+        {isWaitingForSupportReply && (
           <div
-            className={`px-3.5 py-2 border-t flex items-center gap-2 text-[11px] font-medium ${
+            className={`px-3.5 py-2 border-t flex items-center gap-2 text-[11px] font-medium animate-in fade-in duration-150 ${
               isLight
                 ? 'bg-amber-50 border-amber-200 text-amber-800'
                 : 'bg-amber-500/10 border-amber-500/20 text-amber-300'
@@ -293,10 +366,10 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
             type="text"
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
-            disabled={isWaitingForAdminReply || isSending}
+            disabled={isWaitingForSupportReply || isSending}
             maxLength={1000}
             placeholder={
-              isWaitingForAdminReply
+              isWaitingForSupportReply
                 ? 'Waiting for support reply...'
                 : 'Type a message to 9jacash Support...'
             }
@@ -308,7 +381,7 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
           />
           <button
             type="submit"
-            disabled={isWaitingForAdminReply || isSending || !inputText.trim()}
+            disabled={isWaitingForSupportReply || isSending || !inputText.trim()}
             aria-label="Send message"
             className="w-10 h-10 rounded-xl bg-emerald-500 hover:bg-emerald-400 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed text-black flex items-center justify-center transition-all cursor-pointer flex-shrink-0 shadow-md shadow-emerald-500/20"
           >

@@ -1029,68 +1029,61 @@ function pickNewerSupportThread(
 }
 
 async function readExistingSupportThread(userId: string): Promise<SupportChatThread | null> {
+  const [chatRes, userRes] = await Promise.allSettled([
+    getDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId)),
+    getDoc(doc(db, USERS_COLLECTION, userId)),
+  ]);
+
   let chatDocThread: SupportChatThread | null = null;
   let userDocThread: SupportChatThread | null = null;
 
-  try {
-    const snap = await getDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId));
-    if (snap.exists()) {
-      chatDocThread = snap.data() as SupportChatThread;
-    }
-  } catch {
-    // support_chats may not be deployed yet in rules; fall back to users/{userId}
+  if (chatRes.status === 'fulfilled' && chatRes.value.exists()) {
+    chatDocThread = chatRes.value.data() as SupportChatThread;
   }
-
-  try {
-    const userSnap = await getDoc(doc(db, USERS_COLLECTION, userId));
-    if (userSnap.exists()) {
-      const userData = userSnap.data() as User;
-      if (userData?.supportChat) {
-        userDocThread = userData.supportChat;
-      }
+  if (userRes.status === 'fulfilled' && userRes.value.exists()) {
+    const userData = userRes.value.data() as User;
+    if (userData?.supportChat) {
+      userDocThread = userData.supportChat;
     }
-  } catch {
-    // Ignore transient read error
   }
 
   return pickNewerSupportThread(chatDocThread, userDocThread);
 }
 
 async function persistSupportThread(userId: string, thread: SupportChatThread): Promise<boolean> {
-  let savedAny = false;
+  const compactThread: SupportChatThread = {
+    ...thread,
+    userProfilePicture: '',
+    messages: (thread.messages || []).slice(-60),
+  };
 
-  try {
-    await setDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId), sanitizeForFirestore(thread), {
+  const [chatWrite, userWrite] = await Promise.allSettled([
+    setDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId), sanitizeForFirestore(thread), {
       merge: true,
-    });
-    savedAny = true;
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (!msg.toLowerCase().includes('permission')) {
-      handleFirestoreError(err, OperationType.WRITE, `${SUPPORT_CHATS_COLLECTION}/${userId}`);
-    }
-  }
-
-  try {
-    const compactThread: SupportChatThread = {
-      ...thread,
-      userProfilePicture: '',
-      messages: (thread.messages || []).slice(-60),
-    };
-    await setDoc(
+    }),
+    setDoc(
       doc(db, USERS_COLLECTION, userId),
       sanitizeForFirestore({
         supportChat: compactThread,
         updatedAt: thread.updatedAt,
       }),
       { merge: true }
-    );
-    savedAny = true;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, `${USERS_COLLECTION}/${userId}`);
+    ),
+  ]);
+
+  if (chatWrite.status === 'rejected') {
+    const err = chatWrite.reason;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (!msg.toLowerCase().includes('permission')) {
+      handleFirestoreError(err, OperationType.WRITE, `${SUPPORT_CHATS_COLLECTION}/${userId}`);
+    }
   }
 
-  return savedAny;
+  if (userWrite.status === 'rejected') {
+    handleFirestoreError(userWrite.reason, OperationType.WRITE, `${USERS_COLLECTION}/${userId}`);
+  }
+
+  return chatWrite.status === 'fulfilled' || userWrite.status === 'fulfilled';
 }
 
 export async function sendUserSupportMessageToFirestore(

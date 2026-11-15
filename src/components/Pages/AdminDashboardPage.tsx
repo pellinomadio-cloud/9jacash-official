@@ -119,6 +119,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
   const [supportSearchQuery, setSupportSearchQuery] = useState('');
   const [supportFeedbackMsg, setSupportFeedbackMsg] = useState('');
+  const adminSupportEndRef = React.useRef<HTMLDivElement>(null);
 
   // Pricing & Fee Controls state (Quick Code & KYC)
   const [kycPriceInput, setKycPriceInput] = useState<number>(appPricing?.kycPrice ?? 22000);
@@ -305,26 +306,82 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   const selectedSupportThread =
     combinedSupportThreads.find((t) => t.userId === selectedSupportUserId) || null;
 
+  useEffect(() => {
+    if (activeTab !== 'support' || !selectedSupportThread) return;
+    const rafId = requestAnimationFrame(() => {
+      adminSupportEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    });
+    return () => cancelAnimationFrame(rafId);
+  }, [activeTab, selectedSupportThread?.userId, selectedSupportThread?.messages?.length]);
+
   const handleSendSupportReply = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedSupportThread || !supportReplyInput.trim() || isSendingSupportReply) return;
-    setIsSendingSupportReply(true);
+    const replyText = supportReplyInput.trim();
+    if (!selectedSupportThread || !replyText || isSendingSupportReply) return;
+
+    const targetThread = selectedSupportThread;
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const optimisticThread: SupportChatThread = {
+      ...targetThread,
+      messages: [
+        ...(targetThread.messages || []),
+        {
+          id: `opt_admin_${now}`,
+          sender: 'admin' as const,
+          senderName: '9jacash Support',
+          text: replyText,
+          timestamp: now,
+          createdAt: nowIso,
+        },
+      ].slice(-80),
+      lastMessage: replyText,
+      lastSender: 'admin',
+      awaitingAdminReply: false,
+      lastTimestamp: now,
+      updatedAt: nowIso,
+    };
+
+    // Instant optimistic UI update
+    setSupportReplyInput('');
     setSupportFeedbackMsg('');
+    setSupportThreads((prev) => {
+      const idx = prev.findIndex((t) => t.userId === targetThread.userId);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = optimisticThread;
+        return copy;
+      }
+      return [optimisticThread, ...prev];
+    });
+
+    setIsSendingSupportReply(true);
     const res = await sendAdminSupportReplyToFirestore(
-      selectedSupportThread.userId,
-      supportReplyInput,
+      targetThread.userId,
+      replyText,
       {
-        name: selectedSupportThread.userName,
-        email: selectedSupportThread.userEmail,
-        profilePicture: selectedSupportThread.userProfilePicture,
+        name: targetThread.userName,
+        email: targetThread.userEmail,
+        profilePicture: targetThread.userProfilePicture,
       }
     );
     setIsSendingSupportReply(false);
     if (res.ok) {
-      setSupportReplyInput('');
-      setSupportFeedbackMsg(`Reply sent to ${selectedSupportThread.userName}.`);
-      setTimeout(() => setSupportFeedbackMsg(''), 3500);
+      if (res.thread) {
+        setSupportThreads((prev) => {
+          const idx = prev.findIndex((t) => t.userId === targetThread.userId);
+          if (idx >= 0) {
+            const copy = [...prev];
+            copy[idx] = res.thread!;
+            return copy;
+          }
+          return [res.thread!, ...prev];
+        });
+      }
+      setSupportFeedbackMsg(`Reply sent to ${targetThread.userName}.`);
+      setTimeout(() => setSupportFeedbackMsg(''), 3000);
     } else {
+      setSupportReplyInput(replyText);
       setSupportFeedbackMsg(res.reason || 'Failed to send reply.');
     }
   };
@@ -3331,13 +3388,13 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                     </div>
 
                     {/* Messages */}
-                    <div className="flex-1 overflow-y-auto p-3.5 space-y-2.5 bg-[#0f1015]">
+                    <div className="flex-1 overflow-y-auto overscroll-contain scroll-smooth p-3.5 space-y-2.5 bg-[#0f1015]">
                       {(selectedSupportThread.messages || []).map((m) => {
                         const isAdmin = m.sender === 'admin';
                         return (
                           <div
                             key={m.id}
-                            className={`flex flex-col ${isAdmin ? 'items-end' : 'items-start'}`}
+                            className={`flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-150 ${isAdmin ? 'items-end' : 'items-start'}`}
                           >
                             <span
                               className={`text-[9px] font-bold mb-0.5 px-1 ${
@@ -3368,6 +3425,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                           </div>
                         );
                       })}
+                      <div ref={adminSupportEndRef} />
                     </div>
 
                     {supportFeedbackMsg && (
