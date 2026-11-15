@@ -6,9 +6,14 @@ import { useTheme } from '../../context/ThemeContext.tsx';
 interface BottomNavProps {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
+  supportUnreadCount?: number;
 }
 
-export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) => {
+export const BottomNav: React.FC<BottomNavProps> = ({
+  activeTab,
+  onTabChange,
+  supportUnreadCount = 0,
+}) => {
   const { isLight } = useTheme();
 
   const tabs = [
@@ -31,6 +36,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
         {tabs.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.id || (tab.id === 'community' && activeTab === 'cards');
+          const showSupportBadge = tab.id === 'support' && supportUnreadCount > 0;
 
           return (
             <button
@@ -52,7 +58,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
 
               {/* Icon */}
               <div
-                className={`p-1 transition-transform duration-200 ${
+                className={`relative p-1 transition-transform duration-200 ${
                   isActive
                     ? isLight
                       ? 'scale-110 text-amber-600'
@@ -63,6 +69,15 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
                 }`}
               >
                 <Icon className={`w-5 h-5 ${isActive ? 'stroke-[2.4]' : 'stroke-[1.8]'}`} />
+                {showSupportBadge && (
+                  <span
+                    className={`absolute -top-0.5 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[9px] font-extrabold flex items-center justify-center border shadow-sm ${
+                      isLight ? 'border-white' : 'border-[#0d0e12]'
+                    }`}
+                  >
+                    {supportUnreadCount > 9 ? '9+' : supportUnreadCount}
+                  </span>
+                )}
               </div>
 
               {/* Label */}

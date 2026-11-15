@@ -20,6 +20,7 @@ import { CashoutTestimoniesPopup } from './components/Dashboard/CashoutTestimoni
 import { DeviceNotificationHandler } from './components/Dashboard/DeviceNotificationHandler.tsx';
 import { GlobalDeviceNotificationListener } from './components/Dashboard/GlobalDeviceNotificationListener.tsx';
 import { BottomNav } from './components/Dashboard/BottomNav.tsx';
+import { FloatingSupportToggle } from './components/Dashboard/FloatingSupportToggle.tsx';
 import { CommunityTab } from './components/Tabs/CommunityTab.tsx';
 import { PaymentsTab } from './components/Tabs/PaymentsTab.tsx';
 import { SupportTab } from './components/Tabs/SupportTab.tsx';
@@ -55,7 +56,8 @@ import { TaxApprovedTier3Modal } from './components/Modals/TaxApprovedTier3Modal
 import { ProfilePicturePromptModal } from './components/Modals/ProfilePicturePromptModal.tsx';
 import { BannedAccountScreen } from './components/Pages/BannedAccountScreen.tsx';
 import { OfflineScreen } from './components/Common/OfflineScreen.tsx';
-import { ActiveTab, CurrentScreen, Transaction } from './types/index.ts';
+import { ActiveTab, CurrentScreen, Transaction, SupportChatThread } from './types/index.ts';
+import { subscribeToUserSupportChat } from './services/firebase.ts';
 
 const SCREEN_TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -104,6 +106,17 @@ const DashboardContent: React.FC = () => {
   const [showTaxApprovedTier3Modal, setShowTaxApprovedTier3Modal] = useState<boolean>(false);
   const [tierUpgradeTargetTier, setTierUpgradeTargetTier] = useState<number>(3);
   const [tierUpgradeInitialStep, setTierUpgradeInitialStep] = useState<'plans' | 'payment'>('plans');
+  const [supportThreadState, setSupportThreadState] = useState<SupportChatThread | null>(
+    user?.supportChat || null
+  );
+  const [lastSeenSupportTs, setLastSeenSupportTs] = useState<number>(() => {
+    if (!user?.id) return 0;
+    try {
+      return Number(localStorage.getItem(`9jacash_support_seen_ts_${user.id}`) || '0') || 0;
+    } catch {
+      return 0;
+    }
+  });
 
   const [currentScreen, setCurrentScreen] = useState<CurrentScreen>(() => {
     if (typeof window !== 'undefined' && window.location.hash) {
@@ -133,6 +146,86 @@ const DashboardContent: React.FC = () => {
     return 'dashboard';
   });
   const [selectedTxForPage, setSelectedTxForPage] = useState<Transaction | null>(null);
+
+  // Sync user's support chat thread in real time so unread reply badge updates immediately
+  useEffect(() => {
+    if (!user?.id) {
+      setSupportThreadState(null);
+      setLastSeenSupportTs(0);
+      return;
+    }
+    try {
+      setLastSeenSupportTs(
+        Number(localStorage.getItem(`9jacash_support_seen_ts_${user.id}`) || '0') || 0
+      );
+    } catch {
+      setLastSeenSupportTs(0);
+    }
+
+    const unsub = subscribeToUserSupportChat(user.id, (remoteThread) => {
+      setSupportThreadState(remoteThread);
+    });
+    return () => unsub();
+  }, [user?.id]);
+
+  // Also merge user.supportChat updates from AuthContext
+  useEffect(() => {
+    if (!user?.supportChat) return;
+    setSupportThreadState((prev) => {
+      if (!prev) return user.supportChat || null;
+      return (user.supportChat?.lastTimestamp || 0) >= (prev.lastTimestamp || 0)
+        ? user.supportChat || prev
+        : prev;
+    });
+  }, [user?.supportChat]);
+
+  const markSupportMessagesSeen = (threadToMark: SupportChatThread | null) => {
+    if (!user?.id) return;
+    const msgs = threadToMark?.messages || [];
+    const latestMsgTs = msgs.length > 0 ? Math.max(...msgs.map((m) => m.timestamp || 0)) : 0;
+    const seenTs = Math.max(latestMsgTs, Date.now());
+    setLastSeenSupportTs(seenTs);
+    try {
+      localStorage.setItem(`9jacash_support_seen_ts_${user.id}`, String(seenTs));
+    } catch {
+      // Ignore storage error
+    }
+  };
+
+  // Clear unread indicator automatically while user is actively viewing Support chat
+  useEffect(() => {
+    if (currentScreen === 'dashboard' && activeTab === 'support') {
+      markSupportMessagesSeen(supportThreadState);
+    }
+  }, [currentScreen, activeTab, supportThreadState?.lastTimestamp, user?.id]);
+
+  const unreadSupportCount = React.useMemo(() => {
+    const msgs = supportThreadState?.messages;
+    if (!Array.isArray(msgs) || msgs.length === 0) return 0;
+    if (currentScreen === 'dashboard' && activeTab === 'support') return 0;
+
+    if (lastSeenSupportTs > 0) {
+      return msgs.filter((m) => m.sender === 'admin' && (m.timestamp || 0) > lastSeenSupportTs).length;
+    }
+
+    // If user hasn't opened Support yet, count replies arriving after their latest message
+    let lastUserIdx = -1;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].sender === 'user') {
+        lastUserIdx = i;
+        break;
+      }
+    }
+    const tail = lastUserIdx >= 0 ? msgs.slice(lastUserIdx + 1) : msgs;
+    return tail.filter((m) => m.sender === 'admin').length;
+  }, [supportThreadState, lastSeenSupportTs, currentScreen, activeTab]);
+
+  const handleOpenSupportFromToggle = () => {
+    markSupportMessagesSeen(supportThreadState);
+    setCurrentScreen('dashboard');
+    setActiveTab('support');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
 
   // Detect tax payment approval and show celebratory withdrawal success & Tier 3 upgrade modal
   useEffect(() => {
@@ -519,6 +612,14 @@ const DashboardContent: React.FC = () => {
       {/* Floating Cashout Testimonies Pop Up (overlaps at top: shows for 3s, removes for 10s) */}
       <CashoutTestimoniesPopup isActive={currentScreen === 'dashboard'} />
 
+      {/* Hanging Blue Support Toggle (middle-down right side) with unread reply badge */}
+      {currentScreen !== 'admin' && !(currentScreen === 'dashboard' && activeTab === 'support') && (
+        <FloatingSupportToggle
+          unreadCount={unreadSupportCount}
+          onOpenSupport={handleOpenSupportFromToggle}
+        />
+      )}
+
       {/* Global Device Push Notification Listener (receives company alerts even in background/minimized) */}
       <GlobalDeviceNotificationListener />
 
@@ -730,6 +831,7 @@ const DashboardContent: React.FC = () => {
             <BottomNav
               activeTab={activeTab}
               onTabChange={handleTabChange}
+              supportUnreadCount={unreadSupportCount}
             />
           </>
         )}
