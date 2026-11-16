@@ -114,6 +114,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
 
   // Support Chat Inbox state
   const [supportThreads, setSupportThreads] = useState<SupportChatThread[]>([]);
+  const [deletedSupportMap, setDeletedSupportMap] = useState<Record<string, number>>(() => {
+    try {
+      const raw = localStorage.getItem('9jacash_admin_deleted_support_chats');
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
   const [selectedSupportUserId, setSelectedSupportUserId] = useState<string | null>(null);
   const [supportReplyInput, setSupportReplyInput] = useState('');
   const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
@@ -256,6 +264,9 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
 
     (allUsersList || []).forEach((u) => {
       if (u && u.supportChat && Array.isArray(u.supportChat.messages) && u.supportChat.messages.length > 0) {
+        const deletedAt = deletedSupportMap[u.id] || 0;
+        const threadTs = u.supportChat.lastTimestamp || 0;
+        if (deletedAt > 0 && threadTs <= deletedAt) return;
         map.set(u.id, {
           ...u.supportChat,
           userId: u.id,
@@ -267,7 +278,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     });
 
     (supportThreads || []).forEach((t) => {
-      if (!t || !t.userId) return;
+      if (!t || !t.userId || !Array.isArray(t.messages) || t.messages.length === 0) return;
+      const deletedAt = deletedSupportMap[t.userId] || 0;
+      const threadTs = t.lastTimestamp || 0;
+      if (deletedAt > 0 && threadTs <= deletedAt) return;
       const existing = map.get(t.userId);
       if (!existing) {
         map.set(t.userId, t);
@@ -289,7 +303,63 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
       return (b.lastTimestamp || 0) - (a.lastTimestamp || 0);
     });
     return list;
-  }, [supportThreads, allUsersList]);
+  }, [supportThreads, allUsersList, deletedSupportMap]);
+
+  const handleDeleteSupportChat = async (targetUserId: string) => {
+    if (!targetUserId) return;
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+
+    setDeletedSupportMap((prev) => {
+      const next = { ...prev, [targetUserId]: now };
+      try {
+        localStorage.setItem('9jacash_admin_deleted_support_chats', JSON.stringify(next));
+      } catch {
+        // Ignore storage quota errors
+      }
+      return next;
+    });
+
+    // Clear from local users db cache so it never resurrects on refresh
+    try {
+      const rawUsers = localStorage.getItem('9jacash_users_db');
+      if (rawUsers) {
+        const parsed = JSON.parse(rawUsers);
+        if (Array.isArray(parsed)) {
+          const updated = parsed.map((u: any) =>
+            u && u.id === targetUserId
+              ? {
+                  ...u,
+                  supportChat: {
+                    id: targetUserId,
+                    userId: targetUserId,
+                    userName: '',
+                    userEmail: '',
+                    messages: [],
+                    lastMessage: '',
+                    lastSender: 'admin',
+                    awaitingAdminReply: false,
+                    lastTimestamp: now,
+                    updatedAt: nowIso,
+                  },
+                }
+              : u
+          );
+          localStorage.setItem('9jacash_users_db', JSON.stringify(updated));
+        }
+      }
+    } catch {
+      // Ignore localStorage parse errors
+    }
+
+    setSupportThreads((prev) => prev.filter((t) => t.userId !== targetUserId));
+    if (selectedSupportUserId === targetUserId) {
+      const remaining = combinedSupportThreads.filter((t) => t.userId !== targetUserId);
+      setSelectedSupportUserId(remaining.length > 0 ? remaining[0].userId : null);
+    }
+
+    await deleteSupportChatFromFirestore(targetUserId);
+  };
 
   useEffect(() => {
     if (combinedSupportThreads.length === 0) {
@@ -3298,9 +3368,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                     const isSelected = selectedSupportThread?.userId === thread.userId;
                     const needsReply = thread.lastSender === 'user' || thread.awaitingAdminReply;
                     return (
-                      <button
+                      <div
                         key={thread.userId}
-                        type="button"
                         onClick={() => setSelectedSupportUserId(thread.userId)}
                         className={`w-full text-left p-3 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
                           isSelected
@@ -3326,15 +3395,28 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                             <span className="text-xs font-bold text-white truncate">
                               {thread.userName || '9jacash User'}
                             </span>
-                            <span
-                              className={`text-[9px] px-1.5 py-0.5 rounded font-bold flex-shrink-0 ${
-                                needsReply
-                                  ? 'bg-red-500/20 text-red-300 border border-red-500/30'
-                                  : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
-                              }`}
-                            >
-                              {needsReply ? 'Needs Reply' : 'Replied'}
-                            </span>
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              <span
+                                className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                  needsReply
+                                    ? 'bg-red-500/20 text-red-300 border border-red-500/30'
+                                    : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                }`}
+                              >
+                                {needsReply ? 'Needs Reply' : 'Replied'}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteSupportChat(thread.userId);
+                                }}
+                                className="p-1 rounded-md bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/25 transition-colors cursor-pointer"
+                                title="Delete chat"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
                           </div>
                           {thread.userEmail && (
                             <p className="text-[10px] text-stone-400 truncate">{thread.userEmail}</p>
@@ -3354,7 +3436,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                               : ''}
                           </p>
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
               </div>
@@ -3375,15 +3457,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                       </div>
                       <button
                         type="button"
-                        onClick={async () => {
-                          await deleteSupportChatFromFirestore(selectedSupportThread.userId);
-                          setSupportFeedbackMsg('Support conversation cleared.');
-                          setTimeout(() => setSupportFeedbackMsg(''), 3000);
-                        }}
+                        onClick={() => handleDeleteSupportChat(selectedSupportThread.userId)}
                         className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold flex items-center gap-1 cursor-pointer flex-shrink-0"
                         title="Delete conversation"
                       >
-                        <Trash2 className="w-3 h-3" /> Clear Chat
+                        <Trash2 className="w-3 h-3" /> Delete Chat
                       </button>
                     </div>
 

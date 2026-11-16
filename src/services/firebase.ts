@@ -1304,7 +1304,9 @@ export function subscribeToAllSupportChats(
       collection(db, SUPPORT_CHATS_COLLECTION),
       (snap) => {
         try {
-          const threads = snap.docs.map((d) => d.data() as SupportChatThread);
+          const threads = snap.docs
+            .map((d) => d.data() as SupportChatThread)
+            .filter((t) => t && t.userId && Array.isArray(t.messages) && t.messages.length > 0);
           threads.sort((a, b) => {
             const aWaiting = a.lastSender === 'user' || a.awaitingAdminReply ? 1 : 0;
             const bWaiting = b.lastSender === 'user' || b.awaitingAdminReply ? 1 : 0;
@@ -1330,6 +1332,27 @@ export function subscribeToAllSupportChats(
 
 export async function deleteSupportChatFromFirestore(userId: string): Promise<void> {
   if (isFirestoreQuotaExhausted() || !userId) return;
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+  const clearedThread: SupportChatThread = {
+    id: userId,
+    userId,
+    userName: '',
+    userEmail: '',
+    userProfilePicture: '',
+    messages: [],
+    lastMessage: '',
+    lastSender: 'admin',
+    awaitingAdminReply: false,
+    lastTimestamp: now,
+    updatedAt: nowIso,
+  };
+
+  try {
+    await setDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId), clearedThread);
+  } catch {
+    // Ignore if support_chats rule isn't deployed
+  }
   try {
     await deleteDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId));
   } catch {
@@ -1338,11 +1361,12 @@ export async function deleteSupportChatFromFirestore(userId: string): Promise<vo
   try {
     await setDoc(
       doc(db, USERS_COLLECTION, userId),
-      { supportChat: null, updatedAt: new Date().toISOString() },
+      { supportChat: clearedThread, updatedAt: nowIso },
       { merge: true }
     );
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, `${USERS_COLLECTION}/${userId}`);
   }
 }
+
 

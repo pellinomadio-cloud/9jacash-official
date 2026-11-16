@@ -507,8 +507,16 @@ const mergeCloudAndLocalUser = (cloudUser: User, localUser?: User | null): User 
       ? localMemStatus
       : cloudUser.membershipStatus || localMemStatus;
 
+  const localChatTs =
+    localUser.supportChat?.lastTimestamp ||
+    (localUser.supportChat?.updatedAt ? new Date(localUser.supportChat.updatedAt).getTime() : 0) ||
+    0;
+  const cloudChatTs =
+    cloudUser.supportChat?.lastTimestamp ||
+    (cloudUser.supportChat?.updatedAt ? new Date(cloudUser.supportChat.updatedAt).getTime() : 0) ||
+    0;
   const resolvedSupportChat =
-    (localUser.supportChat?.updatedAt || '') > (cloudUser.supportChat?.updatedAt || '')
+    localChatTs > cloudChatTs
       ? localUser.supportChat
       : cloudUser.supportChat || localUser.supportChat;
 
