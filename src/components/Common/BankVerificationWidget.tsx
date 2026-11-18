@@ -58,6 +58,7 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
 
   const dropdownRef = useRef<HTMLDivElement>(null);
   const lastVerifiedKey = useRef<string>('');
+  const latestRequestKeyRef = useRef<string>('');
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -84,8 +85,10 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
   const executeVerification = async (bank: BankItem, accNum: string) => {
     const cleanNum = accNum.replace(/\D/g, '');
     if (cleanNum.length !== 10 || !bank) {
+      latestRequestKeyRef.current = '';
       setVerifiedName(null);
       setErrorMessage(null);
+      setIsLoading(false);
       return;
     }
 
@@ -94,12 +97,18 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
       return; // Already verified this exact combination
     }
 
+    latestRequestKeyRef.current = currentKey;
     setIsLoading(true);
     setErrorMessage(null);
     setVerifiedName(null);
 
     try {
       const res: VerificationResponse = await verifyBankAccount(bank.code, cleanNum, bank.name);
+
+      // Ignore responses from canceled or superseded requests
+      if (res.canceled || latestRequestKeyRef.current !== currentKey) {
+        return;
+      }
 
       if (res.success && res.accountName) {
         setVerifiedName(res.accountName);
@@ -118,13 +127,16 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
         lastVerifiedKey.current = '';
         if (onClear) onClear();
       }
-    } catch (e) {
+    } catch {
+      if (latestRequestKeyRef.current !== currentKey) return;
       setVerifiedName(null);
-      setErrorMessage('Verification request failed. Please retry.');
+      setErrorMessage('Verification request failed. Please retry or enter your account name manually.');
       lastVerifiedKey.current = '';
       if (onClear) onClear();
     } finally {
-      setIsLoading(false);
+      if (latestRequestKeyRef.current === currentKey) {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -134,8 +146,10 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
     if (cleanAcc.length === 10 && selectedBank) {
       executeVerification(selectedBank, cleanAcc);
     } else {
+      latestRequestKeyRef.current = '';
       setVerifiedName(null);
       setErrorMessage(null);
+      setIsLoading(false);
       lastVerifiedKey.current = '';
       if (onClear) onClear();
     }

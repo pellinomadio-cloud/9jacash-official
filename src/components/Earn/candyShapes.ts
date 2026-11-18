@@ -1,8 +1,10 @@
 // Candy Crush Level Shapes and Level Configurations (Levels 1 to 1,000)
+// Classic 8x8 Candy Crush grid layout
 
-export const GRID_SIZE = 7;
+export const GRID_SIZE = 8;
 
 export type BoardShape = boolean[][];
+export type TargetCandyColor = 'red' | 'blue' | 'orange' | 'green' | 'yellow';
 
 export interface LevelConfig {
   level: number;
@@ -11,200 +13,101 @@ export interface LevelConfig {
   shape: BoardShape;
   targetScore: number;
   totalMoves: number;
+  targetCandyType: TargetCandyColor;
+  targetCandyCount: number;
+  numColors: 5 | 6;
   themeColor: string;
 }
 
-// 12 Distinctive Level Shapes for Levels 1 to 1,000
+const TARGET_CANDY_CYCLE: TargetCandyColor[] = ['red', 'blue', 'orange', 'green', 'yellow'];
+
+// Classic 8x8 level board definitions (Level 1 is the iconic full 8x8 square)
 const SHAPE_DEFINITIONS: Array<{ name: string; generator: () => BoardShape }> = [
-  // Shape 0: Classic Full Square 7x7 (Level 1, 13, 25...)
+  // Shape 0: Classic Full 8x8 Square (Level 1 and classic boards)
   {
-    name: 'Classic Meadow',
+    name: 'Candy Town',
     generator: () => Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true)),
   },
-  // Shape 1: Plus / Cross Shape (Level 2, 14, 26...) - 4 corners cut
+  // Shape 1: Beveled Meadow (1-cell corner bevels on 8x8)
   {
-    name: 'Crossroads Valley',
+    name: 'Lemonade Lake',
     generator: () => {
       const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Cut 2x2 in each of the 4 corners
-      for (const r of [0, 1, 5, 6]) {
-        for (const c of [0, 1, 5, 6]) {
+      b[0][0] = false;
+      b[0][7] = false;
+      b[7][0] = false;
+      b[7][7] = false;
+      return b;
+    },
+  },
+  // Shape 2: Crossroads Valley (2x2 corner cutouts on 8x8)
+  {
+    name: 'Sugar Meadow',
+    generator: () => {
+      const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
+      for (const r of [0, 1, 6, 7]) {
+        for (const c of [0, 1, 6, 7]) {
           b[r][c] = false;
         }
       }
       return b;
     },
   },
-  // Shape 2: Diamond / Octagon (Level 3, 15, 27...) - Beveled edges
+  // Shape 3: Diamond Peak (Octagon bevel on 8x8)
   {
     name: 'Diamond Peak',
     generator: () => {
       const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      b[0][0] = false;
-      b[0][1] = false;
-      b[0][5] = false;
-      b[0][6] = false;
-      b[1][0] = false;
-      b[1][6] = false;
-      b[5][0] = false;
-      b[5][6] = false;
-      b[6][0] = false;
-      b[6][1] = false;
-      b[6][5] = false;
-      b[6][6] = false;
+      b[0][0] = false; b[0][1] = false; b[0][6] = false; b[0][7] = false;
+      b[1][0] = false; b[1][7] = false;
+      b[6][0] = false; b[6][7] = false;
+      b[7][0] = false; b[7][1] = false; b[7][6] = false; b[7][7] = false;
       return b;
     },
   },
-  // Shape 3: Donut Ring (Level 4, 16, 28...) - Center hollow orbital
+  // Shape 4: Jelly Ring Lagoon (2x2 center island cutout)
   {
-    name: 'Jelly Ring Lagoon',
+    name: 'Jelly Lagoon',
     generator: () => {
       const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Inactive 3x3 center
-      for (let r = 2; r <= 4; r++) {
-        for (let c = 2; c <= 4; c++) {
+      for (const r of [3, 4]) {
+        for (const c of [3, 4]) {
           b[r][c] = false;
         }
       }
       return b;
     },
   },
-  // Shape 4: Hourglass / Butterfly (Level 5, 17, 29...)
+  // Shape 5: Twin Sugar Pillars
   {
-    name: 'Hourglass Canyon',
+    name: 'Caramel Bridge',
     generator: () => {
       const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Rows 1 and 5: cut corners
-      b[1][0] = false;
-      b[1][6] = false;
-      b[5][0] = false;
-      b[5][6] = false;
-      // Rows 2 and 4: cut 2 on sides
-      b[2][0] = false;
-      b[2][1] = false;
-      b[2][5] = false;
-      b[2][6] = false;
-      b[4][0] = false;
-      b[4][1] = false;
-      b[4][5] = false;
-      b[4][6] = false;
-      // Row 3 (center waist): keep center 3
-      b[3][0] = false;
-      b[3][1] = false;
+      b[3][2] = false;
+      b[4][2] = false;
       b[3][5] = false;
-      b[3][6] = false;
+      b[4][5] = false;
       return b;
     },
   },
-  // Shape 5: Stepped Castle / Pyramid (Level 6, 18, 30...)
+  // Shape 6: Candy Castle Arch
   {
-    name: 'Sugar Castle',
+    name: 'Minty Castle',
     generator: () => {
       const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Row 0 has only center 3
-      b[0][0] = false;
-      b[0][1] = false;
-      b[0][5] = false;
-      b[0][6] = false;
-      // Row 1 has center 5
-      b[1][0] = false;
-      b[1][6] = false;
+      b[0][0] = false; b[0][1] = false; b[0][6] = false; b[0][7] = false;
+      b[1][0] = false; b[1][7] = false;
       return b;
     },
   },
-  // Shape 6: Twin Channels / Double Pillars (Level 7, 19, 31...)
+  // Shape 7: Sweet Heart Valley
   {
-    name: 'Twin Pillars',
+    name: 'Strawberry Fields',
     generator: () => {
       const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Center column has barrier in rows 2, 3, 4
-      b[2][3] = false;
-      b[3][3] = false;
-      b[4][3] = false;
-      return b;
-    },
-  },
-  // Shape 7: Candy Heart (Level 8, 20, 32...)
-  {
-    name: 'Sweet Heart Oasis',
-    generator: () => {
-      const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Top dip
-      b[0][0] = false;
-      b[0][3] = false;
-      b[0][6] = false;
-      // Bottom taper
-      b[5][0] = false;
-      b[5][1] = false;
-      b[5][5] = false;
-      b[5][6] = false;
-      b[6][0] = false;
-      b[6][1] = false;
-      b[6][2] = false;
-      b[6][4] = false;
-      b[6][5] = false;
-      b[6][6] = false;
-      return b;
-    },
-  },
-  // Shape 8: Hexagon Honeycomb (Level 9, 21, 33...)
-  {
-    name: 'Honey Beehive',
-    generator: () => {
-      const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      b[0][0] = false;
-      b[0][1] = false;
-      b[0][5] = false;
-      b[0][6] = false;
-      b[1][0] = false;
-      b[1][6] = false;
-      b[5][0] = false;
-      b[5][6] = false;
-      b[6][0] = false;
-      b[6][1] = false;
-      b[6][5] = false;
-      b[6][6] = false;
-      return b;
-    },
-  },
-  // Shape 9: Star Nexus / X-Wing (Level 10, 22, 34...)
-  {
-    name: 'Star Nexus',
-    generator: () => {
-      const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Cut top and bottom center edges
-      b[0][3] = false;
-      b[6][3] = false;
-      // Cut left and right center edges
-      b[3][0] = false;
-      b[3][6] = false;
-      return b;
-    },
-  },
-  // Shape 10: Knight Shield (Level 11, 23, 35...)
-  {
-    name: 'Knight Shield',
-    generator: () => {
-      const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      // Bottom pointy taper
-      b[5][0] = false;
-      b[5][6] = false;
-      b[6][0] = false;
-      b[6][1] = false;
-      b[6][5] = false;
-      b[6][6] = false;
-      return b;
-    },
-  },
-  // Shape 11: Cosmic Yin-Yang (Level 12, 24, 36...)
-  {
-    name: 'Cosmic Orbit',
-    generator: () => {
-      const b = Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill(true));
-      b[1][2] = false;
-      b[1][3] = false;
-      b[5][3] = false;
-      b[5][4] = false;
+      b[0][0] = false; b[0][3] = false; b[0][4] = false; b[0][7] = false;
+      b[6][0] = false; b[6][7] = false;
+      b[7][0] = false; b[7][1] = false; b[7][6] = false; b[7][7] = false;
       return b;
     },
   },
@@ -212,34 +115,34 @@ const SHAPE_DEFINITIONS: Array<{ name: string; generator: () => BoardShape }> = 
 
 // Returns world theme name based on level
 export const getWorldName = (level: number): string => {
-  if (level <= 25) return 'Sugar Meadow';
-  if (level <= 50) return 'Jelly Lagoon';
+  if (level <= 25) return 'Candy Kingdom';
+  if (level <= 50) return 'Lemonade Lake';
   if (level <= 100) return 'Caramel Coast';
   if (level <= 200) return 'Lollipop Peak';
-  if (level <= 350) return 'Electric Soda Springs';
+  if (level <= 350) return 'Soda Springs';
   if (level <= 500) return 'Chocolate Castle';
-  if (level <= 700) return 'Lightning Galaxy';
+  if (level <= 700) return 'Starlight Lagoon';
   if (level <= 850) return 'Sugar Divine Realm';
-  return 'Grandmaster League 1,000';
+  return 'Grandmaster League';
 };
 
 // Generates complete configuration for any Level 1 to 1,000
 export const getLevelConfig = (levelInput: number): LevelConfig => {
   const level = Math.max(1, Math.min(1000, levelInput));
-  const shapeIndex = (level - 1) % SHAPE_DEFINITIONS.length;
+  // Keep full classic 8x8 square on Level 1, 2 and every 3rd level for crisp classic play
+  const shapeIndex = level === 1 ? 0 : (level - 1) % SHAPE_DEFINITIONS.length;
   const def = SHAPE_DEFINITIONS[shapeIndex];
 
-  // Base target score scales with level
-  // Level 1: 5,000 | Level 2: 7,500 | Level 10: 22,000 ...
-  const targetScore = 5000 + (level - 1) * 1500;
-  const totalMoves = level <= 5 ? 22 : level <= 20 ? 20 : 18;
+  const targetScore = 3000 + (level - 1) * 900;
+  const totalMoves = level <= 5 ? 25 : level <= 25 ? 24 : 22;
+  const targetCandyType = TARGET_CANDY_CYCLE[(level - 1) % TARGET_CANDY_CYCLE.length];
+  const targetCandyCount = Math.min(80, 20 + Math.floor((level - 1) * 2.5));
+  const numColors: 5 | 6 = level >= 4 ? 6 : 5;
 
   const THEMES = [
-    'from-pink-500/20 via-purple-500/20 to-amber-500/20',
-    'from-blue-500/20 via-teal-500/20 to-emerald-500/20',
+    'from-pink-500/20 via-rose-500/20 to-amber-500/20',
+    'from-sky-500/20 via-blue-500/20 to-pink-500/20',
     'from-amber-500/20 via-orange-500/20 to-rose-500/20',
-    'from-purple-500/20 via-pink-500/20 to-sky-500/20',
-    'from-emerald-500/20 via-yellow-500/20 to-teal-500/20',
   ];
   const themeColor = THEMES[(level - 1) % THEMES.length];
 
@@ -250,6 +153,9 @@ export const getLevelConfig = (levelInput: number): LevelConfig => {
     shape: def.generator(),
     targetScore,
     totalMoves,
+    targetCandyType,
+    targetCandyCount,
+    numColors,
     themeColor,
   };
 };

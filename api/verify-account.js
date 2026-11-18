@@ -1,11 +1,10 @@
 /**
  * Vercel Serverless Function Proxy for Bank Account Verification
- * Proxies POST requests to https://api.wtproject.space/vrf/verify.php
- * Resolves CORS limitations when deployed on Vercel
+ * Sends POST application/x-www-form-urlencoded requests to https://api.wtproject.space/vrf/verify.php
+ * with required parameters: bank_code and account_number
  */
 
 export default async function handler(req, res) {
-  // CORS Headers for browser clients
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
@@ -23,7 +22,6 @@ export default async function handler(req, res) {
     let bank_code = '';
     let account_number = '';
 
-    // Handle parsed JSON body, urlencoded string, or query params
     if (typeof req.body === 'string') {
       try {
         const parsed = JSON.parse(req.body);
@@ -40,17 +38,21 @@ export default async function handler(req, res) {
     }
 
     if (!bank_code || !account_number) {
-      bank_code = (req.query && req.query.bank_code) || '';
-      account_number = (req.query && req.query.account_number) || '';
+      bank_code = (req.query && req.query.bank_code) || bank_code || '';
+      account_number = (req.query && req.query.account_number) || account_number || '';
     }
 
-    if (!bank_code || !account_number) {
+    const cleanCode = String(bank_code).trim();
+    const cleanAcc = String(account_number).trim().replace(/\D/g, '');
+
+    if (!cleanCode || !cleanAcc) {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       return res.status(400).send('Error: Missing bank code or account number');
     }
 
     const formData = new URLSearchParams();
-    formData.append('bank_code', String(bank_code).trim());
-    formData.append('account_number', String(account_number).trim().replace(/\D/g, ''));
+    formData.append('bank_code', cleanCode);
+    formData.append('account_number', cleanAcc);
 
     const upstreamResponse = await fetch('https://api.wtproject.space/vrf/verify.php', {
       method: 'POST',
@@ -61,11 +63,11 @@ export default async function handler(req, res) {
     });
 
     const resultText = (await upstreamResponse.text()).trim();
-
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    return res.status(200).send(resultText);
+    return res.status(200).send(resultText || 'Error: Invalid Account');
   } catch (error) {
-    console.error('Vercel API proxy error:', error);
-    return res.status(500).send('Error: Verification service temporarily unreachable');
+    console.error('API proxy error:', error);
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    return res.status(502).send('Error: Unable to reach verification server');
   }
 }

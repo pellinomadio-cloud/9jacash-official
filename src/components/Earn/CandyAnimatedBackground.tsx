@@ -1,111 +1,121 @@
-import React, { useMemo } from 'react';
-import { useTheme } from '../../context/ThemeContext.tsx';
-
-interface Bubble {
-  id: number;
-  left: number; // percentage
-  size: number; // px
-  duration: number; // seconds
-  delay: number; // seconds
-  color: string;
-  glow: string;
-}
+import React from 'react';
 
 export const CandyAnimatedBackground: React.FC<{ hasLightning?: boolean }> = ({ hasLightning }) => {
-  const { isLight } = useTheme();
-
-  // Pre-generate 16 deterministic floating candy bubbles
-  const bubbles: Bubble[] = useMemo(() => {
-    const colors = [
-      { bg: 'bg-rose-500/30', glow: 'shadow-[0_0_15px_rgba(244,63,94,0.35)]' },
-      { bg: 'bg-amber-400/30', glow: 'shadow-[0_0_15px_rgba(251,191,36,0.35)]' },
-      { bg: 'bg-emerald-400/30', glow: 'shadow-[0_0_15px_rgba(52,211,153,0.35)]' },
-      { bg: 'bg-sky-400/30', glow: 'shadow-[0_0_15px_rgba(56,189,248,0.35)]' },
-      { bg: 'bg-purple-500/30', glow: 'shadow-[0_0_15px_rgba(168,85,247,0.35)]' },
-      { bg: 'bg-pink-400/30', glow: 'shadow-[0_0_15px_rgba(244,114,182,0.35)]' },
-    ];
-
-    return Array.from({ length: 16 }, (_, i) => {
-      const c = colors[i % colors.length];
-      return {
-        id: i,
-        left: 4 + (i * 6) + (Math.sin(i * 1.5) * 5),
-        size: 16 + (i % 5) * 8,
-        duration: 9 + (i % 6) * 2.2,
-        delay: -(i * 1.3),
-        color: c.bg,
-        glow: c.glow,
-      };
-    });
-  }, []);
-
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden select-none z-0">
-      {/* Animated nebula aurora gradient */}
+      {/* Bright Storybook Blue Sky Gradient */}
       <div
-        className={`absolute inset-0 ${
-          isLight
-            ? 'bg-gradient-to-br from-[#f8fafc] via-[#fdf2f8]/70 to-[#fefce8]/70 opacity-100'
-            : 'bg-gradient-to-br from-[#0c0d14] via-[#14121f] to-[#090b10] opacity-95'
-        }`}
+        className="absolute inset-0"
+        style={{
+          background:
+            'linear-gradient(180deg, #2fb5f7 0%, #5fd0ff 28%, #a6e9ff 55%, #dff8ff 72%, #b5f07c 88%, #7ed957 100%)',
+        }}
       />
 
-      {/* Pulsing light orbs in the background */}
-      <div
-        className={`absolute -top-24 -left-24 w-80 h-80 rounded-full blur-[100px] animate-pulse duration-[6000ms] ${
-          isLight ? 'bg-pink-300/25' : 'bg-pink-600/15'
-        }`}
-      />
-      <div
-        className={`absolute top-1/3 -right-24 w-96 h-96 rounded-full blur-[110px] animate-pulse duration-[8000ms] ${
-          isLight ? 'bg-amber-300/20' : 'bg-amber-500/10'
-        }`}
-      />
-      <div
-        className={`absolute -bottom-24 left-1/4 w-80 h-80 rounded-full blur-[100px] animate-pulse duration-[7000ms] ${
-          isLight ? 'bg-purple-300/25' : 'bg-purple-600/15'
-        }`}
-      />
-      <div
-        className={`absolute top-1/2 left-1/3 w-64 h-64 rounded-full blur-[90px] animate-pulse duration-[9000ms] ${
-          isLight ? 'bg-sky-300/25' : 'bg-sky-500/10'
-        }`}
-      />
+      {/* Soft Fluffy Clouds */}
+      <svg
+        viewBox="0 0 800 500"
+        preserveAspectRatio="none"
+        className="absolute inset-0 w-full h-full"
+        aria-hidden="true"
+      >
+        <defs>
+          <linearGradient id="cloudWhite" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.95" />
+            <stop offset="100%" stopColor="#e8f7ff" stopOpacity="0.82" />
+          </linearGradient>
+          <linearGradient id="hillBack" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#8ce649" />
+            <stop offset="100%" stopColor="#5cc227" />
+          </linearGradient>
+          <linearGradient id="hillFront" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#7ad938" />
+            <stop offset="100%" stopColor="#46aa18" />
+          </linearGradient>
+          <linearGradient id="cottageRoof" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stopColor="#ff88c9" />
+            <stop offset="100%" stopColor="#ec4098" />
+          </linearGradient>
+          <linearGradient id="candyPath" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#ffd8eb" />
+            <stop offset="50%" stopColor="#ff9bd0" />
+            <stop offset="100%" stopColor="#ffd8eb" />
+          </linearGradient>
+        </defs>
 
-      {/* Electric crackle glow when lightning candy is present */}
+        {/* Sky Clouds */}
+        <g opacity="0.9">
+          <circle cx="95" cy="95" r="46" fill="url(#cloudWhite)" />
+          <circle cx="145" cy="88" r="56" fill="url(#cloudWhite)" />
+          <circle cx="200" cy="100" r="42" fill="url(#cloudWhite)" />
+          <circle cx="48" cy="108" r="34" fill="url(#cloudWhite)" />
+        </g>
+        <g opacity="0.78">
+          <circle cx="590" cy="115" r="40" fill="url(#cloudWhite)" />
+          <circle cx="645" cy="105" r="52" fill="url(#cloudWhite)" />
+          <circle cx="705" cy="115" r="42" fill="url(#cloudWhite)" />
+        </g>
+
+        {/* Distant Rolling Green Hills */}
+        <path
+          d="M-40 330 Q 140 245 340 310 T 840 280 L 840 520 L -40 520 Z"
+          fill="url(#hillBack)"
+        />
+
+        {/* Cute Candy Cottage on the Right */}
+        <g transform="translate(650, 145) scale(0.95)">
+          {/* Polka-dot Mushroom Candy Roof */}
+          <path
+            d="M0 78 Q 68 -10 136 78 Z"
+            fill="url(#cottageRoof)"
+            stroke="#fff0f8"
+            strokeWidth="3"
+          />
+          {/* White Roof Frosting Trim */}
+          <path
+            d="M-4 78 Q 14 90 32 78 Q 50 90 68 78 Q 86 90 104 78 Q 122 90 140 78 L 136 70 L 0 70 Z"
+            fill="#ffffff"
+          />
+          {/* Roof Polka Dots */}
+          <circle cx="38" cy="48" r="7" fill="#ffffff" opacity="0.92" />
+          <circle cx="70" cy="30" r="8" fill="#ffffff" opacity="0.92" />
+          <circle cx="100" cy="52" r="6.5" fill="#ffffff" opacity="0.92" />
+          <circle cx="56" cy="58" r="5.5" fill="#ffffff" opacity="0.9" />
+          {/* Cottage Wall */}
+          <rect x="16" y="76" width="104" height="82" rx="10" fill="#fff7fa" stroke="#ffd2e8" strokeWidth="2.5" />
+          {/* Arched Sky Window */}
+          <path d="M52 108 A 16 16 0 0 1 84 108 L 84 126 L 52 126 Z" fill="#67c7ff" stroke="#ffffff" strokeWidth="3" />
+          <line x1="68" y1="92" x2="68" y2="126" stroke="#ffffff" strokeWidth="2.5" />
+          <line x1="52" y1="110" x2="84" y2="110" stroke="#ffffff" strokeWidth="2.5" />
+          {/* Red Candy Door */}
+          <path d="M54 158 L 54 138 A 14 14 0 0 1 82 138 L 82 158 Z" fill="#ff4d6d" stroke="#ffe1ea" strokeWidth="2.5" />
+          <circle cx="75" cy="147" r="2.5" fill="#ffd84d" />
+          {/* Lollipop Bushes */}
+          <circle cx="-6" cy="108" r="22" fill="#92e33b" />
+          <circle cx="140" cy="126" r="20" fill="#ff74be" />
+        </g>
+
+        {/* Midground Lush Green Hills */}
+        <path
+          d="M-30 385 Q 180 325 410 385 T 840 365 L 840 520 L -30 520 Z"
+          fill="url(#hillFront)"
+        />
+
+        {/* Pastel Candy Foreground Hills & Lollipops */}
+        <path
+          d="M-40 445 Q 190 400 420 448 T 840 428 L 840 520 L -40 520 Z"
+          fill="url(#candyPath)"
+          opacity="0.95"
+        />
+        <ellipse cx="75" cy="455" rx="75" ry="38" fill="#ff73b8" opacity="0.9" />
+        <ellipse cx="265" cy="472" rx="90" ry="34" fill="#ffe169" opacity="0.85" />
+        <ellipse cx="645" cy="465" rx="95" ry="38" fill="#ff84c7" opacity="0.88" />
+      </svg>
+
+      {/* Subtle golden flash overlay when lightning color bomb activates */}
       {hasLightning && (
-        <div className="absolute inset-0 bg-sky-500/5 mix-blend-screen animate-pulse duration-1000">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(56,189,248,0.12)_0%,transparent_70%)]" />
-        </div>
+        <div className="absolute inset-0 bg-amber-300/10 animate-pulse duration-700" />
       )}
-
-      {/* Floating Candy Bubbles */}
-      <div className="absolute inset-0">
-        {bubbles.map((b) => (
-          <div
-            key={b.id}
-            style={{
-              left: `${b.left}%`,
-              width: `${b.size}px`,
-              height: `${b.size}px`,
-              animationDuration: `${b.duration}s`,
-              animationDelay: `${b.delay}s`,
-            }}
-            className={`absolute rounded-full border border-white/20 backdrop-blur-[1px] animate-float-bubble ${b.color} ${b.glow}`}
-          >
-            {/* Bubble reflection glint */}
-            <div className="absolute top-1 left-1.5 w-2 h-1 bg-white/60 rounded-full -rotate-45" />
-          </div>
-        ))}
-      </div>
-
-      {/* Shimmering Starlight Points */}
-      <div className="absolute inset-0 opacity-40">
-        <div className="absolute top-12 left-1/6 w-1 h-1 bg-white rounded-full animate-ping duration-[3000ms]" />
-        <div className="absolute top-1/4 right-1/5 w-1.5 h-1.5 bg-amber-200 rounded-full animate-pulse duration-[2500ms]" />
-        <div className="absolute bottom-1/3 left-1/4 w-1 h-1 bg-cyan-200 rounded-full animate-ping duration-[4000ms]" />
-        <div className="absolute top-3/4 right-1/4 w-1.5 h-1.5 bg-pink-200 rounded-full animate-pulse duration-[3500ms]" />
-      </div>
     </div>
   );
 };
