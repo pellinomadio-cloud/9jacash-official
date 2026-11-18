@@ -26,9 +26,10 @@ import {
   getLevelConfig,
 } from './candyShapes.ts';
 import { CandyAnimatedBackground } from './CandyAnimatedBackground.tsx';
+import { CandyPieceSvg, CandyPieceType } from './CandyPieceSvg.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
 
-export type CandyType = 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'lightning';
+export type CandyType = CandyPieceType;
 
 const FIVE_CLASSIC_COLORS: CandyType[] = ['red', 'blue', 'orange', 'green', 'yellow'];
 const SIX_CANDY_COLORS: CandyType[] = ['red', 'blue', 'orange', 'green', 'yellow', 'purple'];
@@ -38,8 +39,7 @@ interface CandyItem {
   type: CandyType;
   isSpecial?: 'striped_h' | 'striped_v' | 'lightning';
   isMatched?: boolean;
-  isDropping?: boolean;
-  dropDelay?: number;
+  fallRows?: number;
 }
 
 interface FloatingScore {
@@ -55,11 +55,10 @@ interface Particle {
   id: string;
   x: number;
   y: number;
-  vx: number;
-  vy: number;
+  dx: number;
+  dy: number;
   color: string;
   size: number;
-  alpha: number;
   shape: 'star' | 'circle';
 }
 
@@ -71,17 +70,6 @@ interface SwapState {
   dr: number;
   dc: number;
   isReverting: boolean;
-}
-
-interface DragState {
-  r: number;
-  c: number;
-  startX: number;
-  startY: number;
-  currentDx: number;
-  currentDy: number;
-  dominantAxis: 'x' | 'y' | null;
-  targetNeighbor: { r: number; c: number } | null;
 }
 
 interface LightningZapInfo {
@@ -145,12 +133,22 @@ export const CandyCrushGame: React.FC = () => {
   const [gameMessageToast, setGameMessageToast] = useState<string | null>(null);
 
   const [swapState, setSwapState] = useState<SwapState | null>(null);
-  const [dragState, setDragState] = useState<DragState | null>(null);
   const [lightningZap, setLightningZap] = useState<LightningZapInfo | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const boardRef = useRef<HTMLDivElement>(null);
-  const pointerStartRef = useRef<{ r: number; c: number; x: number; y: number; pointerId: number } | null>(null);
+  const pieceWrapperRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const pointerStartRef = useRef<{
+    r: number;
+    c: number;
+    x: number;
+    y: number;
+    pointerId: number;
+    lastNeighborKey: string | null;
+    targetNeighbor: { r: number; c: number } | null;
+    dx: number;
+    dy: number;
+  } | null>(null);
   const hasWonLevelRef = useRef<boolean>(false);
   const isProcessingRef = useRef<boolean>(false);
   const sessionScoreRef = useRef<number>(0);
@@ -358,43 +356,28 @@ export const CandyCrushGame: React.FC = () => {
     }
   };
 
-  const spawnParticles = (x: number, y: number, color: string, count = 12) => {
+  const spawnParticles = useCallback((x: number, y: number, color: string, count = 8) => {
+    const batchId = 'pb_' + Math.random().toString(36).substring(2, 8);
     const newParticles: Particle[] = [];
     for (let i = 0; i < count; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speed = 2.2 + Math.random() * 5.5;
+      const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
+      const dist = 22 + Math.random() * 28;
       newParticles.push({
-        id: 'p_' + Math.random().toString(36).substring(2, 9),
+        id: `${batchId}_${i}`,
         x,
         y,
-        vx: Math.cos(angle) * speed,
-        vy: Math.sin(angle) * speed,
+        dx: Math.cos(angle) * dist,
+        dy: Math.sin(angle) * dist + 10,
         color,
-        size: 5 + Math.random() * 6,
-        alpha: 1,
-        shape: Math.random() > 0.5 ? 'star' : 'circle',
+        size: 5 + Math.random() * 4,
+        shape: i % 2 === 0 ? 'star' : 'circle',
       });
     }
-    setParticles((prev) => [...prev, ...newParticles]);
-  };
-
-  useEffect(() => {
-    if (particles.length === 0) return;
-    const interval = setInterval(() => {
-      setParticles((prev) =>
-        prev
-          .map((p) => ({
-            ...p,
-            x: p.x + p.vx,
-            y: p.y + p.vy + 0.45,
-            alpha: p.alpha - 0.045,
-            size: p.size * 0.96,
-          }))
-          .filter((p) => p.alpha > 0.05)
-      );
-    }, 24);
-    return () => clearInterval(interval);
-  }, [particles.length]);
+    setParticles((prev) => [...prev.slice(-24), ...newParticles]);
+    setTimeout(() => {
+      setParticles((prev) => prev.filter((p) => !p.id.startsWith(batchId)));
+    }, 460);
+  }, []);
 
   const findAllMatches = (
     b: (CandyItem | null)[][],
@@ -539,35 +522,44 @@ export const CandyCrushGame: React.FC = () => {
 
       for (let c = 0; c < GRID_SIZE; c++) {
         const activeRowsInCol: number[] = [];
-        const survivingCandies: CandyItem[] = [];
+        const survivingEntries: Array<{ candy: CandyItem; oldR: number }> = [];
 
         for (let r = 0; r < GRID_SIZE; r++) {
           if (currentShape[r]?.[c]) {
             activeRowsInCol.push(r);
             const candy = currentBoard[r][c];
             if (candy && !coordsToRemove.has(`${r},${c}`)) {
-              survivingCandies.push({ ...candy, isDropping: false });
+              survivingEntries.push({ candy, oldR: r });
             }
           }
         }
 
-        const emptySlots = activeRowsInCol.length - survivingCandies.length;
+        const emptySlots = activeRowsInCol.length - survivingEntries.length;
         const freshCandies: CandyItem[] = [];
         for (let i = 0; i < emptySlots; i++) {
           const fresh = createRandomCandy();
-          fresh.isDropping = true;
-          fresh.dropDelay = i * 32;
+          fresh.fallRows = Math.max(1, emptySlots);
           freshCandies.push(fresh);
         }
 
-        const finalColCandies = [...freshCandies, ...survivingCandies];
+        const survivingPlaced: CandyItem[] = survivingEntries.map((entry, idx) => {
+          const newR = activeRowsInCol[emptySlots + idx];
+          const fallDist = Math.max(0, newR - entry.oldR);
+          return {
+            ...entry.candy,
+            isMatched: false,
+            fallRows: fallDist > 0 ? fallDist : undefined,
+          };
+        });
+
+        const finalColCandies = [...freshCandies, ...survivingPlaced];
         activeRowsInCol.forEach((r, idx) => {
           newBoard[r][c] = finalColCandies[idx];
         });
       }
 
       setBoard(newBoard);
-      await new Promise((res) => setTimeout(res, 320));
+      await new Promise((res) => setTimeout(res, 245));
       await processMatchesAndCascades(newBoard, currentCombo + 1);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -705,7 +697,7 @@ export const CandyCrushGame: React.FC = () => {
               : group.type === 'blue'
               ? '#1b9cff'
               : '#a855f7';
-          spawnParticles(pX, pY, pColor, 12);
+          spawnParticles(pX, pY, pColor, 8);
         }
 
         claimCandyMatchReward(group.length);
@@ -714,7 +706,7 @@ export const CandyCrushGame: React.FC = () => {
       if (!isMuted) {
         soundFx.playCandyMatch(maxMatchLen);
         if (maxMatchLen >= 5) {
-          setTimeout(() => soundFx.playSugarCrush(), 220);
+          setTimeout(() => soundFx.playSugarCrush(), 180);
         }
       }
 
@@ -741,13 +733,14 @@ export const CandyCrushGame: React.FC = () => {
           if (!item) return null;
           return {
             ...item,
+            fallRows: undefined,
             isMatched: coordsToDelete.has(`${r},${c}`),
           };
         })
       );
       setBoard(boardWithMatches);
 
-      await new Promise((res) => setTimeout(res, 260));
+      await new Promise((res) => setTimeout(res, 195));
       await dropCandiesAndCascade(currentBoard, coordsToDelete, currentCombo);
     },
     [
@@ -759,6 +752,7 @@ export const CandyCrushGame: React.FC = () => {
       highestCombo,
       isMuted,
       levelConfig,
+      spawnParticles,
     ]
   );
 
@@ -839,6 +833,21 @@ export const CandyCrushGame: React.FC = () => {
     }
   };
 
+  const clearDragTransforms = useCallback((r: number, c: number, neighborKey: string | null) => {
+    const draggedEl = pieceWrapperRefs.current[`${r}_${c}`];
+    if (draggedEl) {
+      draggedEl.style.transform = '';
+      draggedEl.style.zIndex = '';
+    }
+    if (neighborKey) {
+      const nEl = pieceWrapperRefs.current[neighborKey];
+      if (nEl) {
+        nEl.style.transform = '';
+        nEl.style.zIndex = '';
+      }
+    }
+  }, []);
+
   const handleSwap = async (r1: number, c1: number, r2: number, c2: number) => {
     if (isProcessingRef.current || movesLeft <= 0 || hasWonLevelRef.current) return;
     if (!levelConfig.shape[r1]?.[c1] || !levelConfig.shape[r2]?.[c2]) return;
@@ -857,7 +866,6 @@ export const CandyCrushGame: React.FC = () => {
     setIsProcessing(true);
     setSelectedCell(null);
     setHintCells(null);
-    setDragState(null);
 
     if (candy1.isSpecial === 'lightning' || candy2.isSpecial === 'lightning') {
       const lightningPos = candy1.isSpecial === 'lightning' ? { r: r1, c: c1 } : { r: r2, c: c2 };
@@ -872,9 +880,11 @@ export const CandyCrushGame: React.FC = () => {
     setSwapState({ r1, c1, r2, c2, dr, dc, isReverting: false });
     if (!isMuted) soundFx.playCandySwap();
 
-    await new Promise((res) => setTimeout(res, 190));
+    await new Promise((res) => setTimeout(res, 150));
 
-    const nextBoard = board.map((row) => [...row]);
+    const nextBoard = board.map((row) =>
+      row.map((cell) => (cell ? { ...cell, fallRows: undefined } : null))
+    );
     const temp = nextBoard[r1][c1];
     nextBoard[r1][c1] = nextBoard[r2][c2];
     nextBoard[r2][c2] = temp;
@@ -884,7 +894,7 @@ export const CandyCrushGame: React.FC = () => {
     if (coords.size === 0) {
       setSwapState({ r1, c1, r2, c2, dr, dc, isReverting: true });
       if (!isMuted) soundFx.playInvalidSwap();
-      await new Promise((res) => setTimeout(res, 190));
+      await new Promise((res) => setTimeout(res, 150));
       setSwapState(null);
       isProcessingRef.current = false;
       setIsProcessing(false);
@@ -905,7 +915,7 @@ export const CandyCrushGame: React.FC = () => {
           if (!isMuted) soundFx.playSugarCrush();
           setRoundCompleteModal(true);
         }
-      }, 650);
+      }, 450);
     }
   };
 
@@ -923,48 +933,52 @@ export const CandyCrushGame: React.FC = () => {
     }
   };
 
-  // Unified Pointer Drag + Tap handlers (works seamlessly on both Mobile Touch & Desktop Mouse!)
+  // Direct DOM 60/120fps Pointer Drag + Tap handlers (zero React re-renders during drag)
   const handlePointerDown = (r: number, c: number, e: React.PointerEvent<HTMLDivElement>) => {
     if (isProcessingRef.current || movesLeft <= 0 || !levelConfig.shape[r]?.[c] || !board[r]?.[c]) return;
     e.currentTarget.setPointerCapture?.(e.pointerId);
-    pointerStartRef.current = { r, c, x: e.clientX, y: e.clientY, pointerId: e.pointerId };
-    setDragState({
+    pointerStartRef.current = {
       r,
       c,
-      startX: e.clientX,
-      startY: e.clientY,
-      currentDx: 0,
-      currentDy: 0,
-      dominantAxis: null,
+      x: e.clientX,
+      y: e.clientY,
+      pointerId: e.pointerId,
+      lastNeighborKey: null,
       targetNeighbor: null,
-    });
+      dx: 0,
+      dy: 0,
+    };
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!pointerStartRef.current || isProcessingRef.current || movesLeft <= 0) return;
-    if (e.pointerId !== pointerStartRef.current.pointerId) return;
+    const ptr = pointerStartRef.current;
+    if (!ptr || isProcessingRef.current || movesLeft <= 0) return;
+    if (e.pointerId !== ptr.pointerId) return;
 
-    const rawDx = e.clientX - pointerStartRef.current.x;
-    const rawDy = e.clientY - pointerStartRef.current.y;
-    const { r, c } = pointerStartRef.current;
+    const rawDx = e.clientX - ptr.x;
+    const rawDy = e.clientY - ptr.y;
+    const { r, c } = ptr;
+
+    const cellWidth = boardRef.current ? boardRef.current.clientWidth / GRID_SIZE : 48;
+    const maxOffset = cellWidth * 0.85;
+    const swapThreshold = Math.max(14, cellWidth * 0.34);
 
     const absDx = Math.abs(rawDx);
     const absDy = Math.abs(rawDy);
-    const maxOffset = 44;
-
     const dominantAxis: 'x' | 'y' = absDx >= absDy ? 'x' : 'y';
+
     let targetNeighbor: { r: number; c: number } | null = null;
     let clampedDx = 0;
     let clampedDy = 0;
 
-    if (dominantAxis === 'x' && absDx > 4) {
+    if (dominantAxis === 'x' && absDx > 3) {
       const dir = rawDx > 0 ? 1 : -1;
       const targetC = c + dir;
       if (targetC >= 0 && targetC < GRID_SIZE && levelConfig.shape[r]?.[targetC]) {
         clampedDx = Math.max(-maxOffset, Math.min(maxOffset, rawDx));
         targetNeighbor = { r, c: targetC };
       }
-    } else if (dominantAxis === 'y' && absDy > 4) {
+    } else if (dominantAxis === 'y' && absDy > 3) {
       const dir = rawDy > 0 ? 1 : -1;
       const targetR = r + dir;
       if (targetR >= 0 && targetR < GRID_SIZE && levelConfig.shape[targetR]?.[c]) {
@@ -973,43 +987,55 @@ export const CandyCrushGame: React.FC = () => {
       }
     }
 
-    // Auto-trigger immediate swap as soon as swipe reaches threshold for snappy Candy Crush feel
-    if ((Math.abs(clampedDx) >= 24 || Math.abs(clampedDy) >= 24) && targetNeighbor) {
+    const newNeighborKey = targetNeighbor ? `${targetNeighbor.r}_${targetNeighbor.c}` : null;
+    if (ptr.lastNeighborKey && ptr.lastNeighborKey !== newNeighborKey) {
+      const prevEl = pieceWrapperRefs.current[ptr.lastNeighborKey];
+      if (prevEl) {
+        prevEl.style.transform = '';
+        prevEl.style.zIndex = '';
+      }
+    }
+
+    // Immediate crisp swap as soon as drag reaches natural swipe distance
+    if ((Math.abs(clampedDx) >= swapThreshold || Math.abs(clampedDy) >= swapThreshold) && targetNeighbor) {
+      clearDragTransforms(r, c, newNeighborKey);
       pointerStartRef.current = null;
-      setDragState(null);
       handleSwap(r, c, targetNeighbor.r, targetNeighbor.c);
       return;
     }
 
-    setDragState({
-      r,
-      c,
-      startX: pointerStartRef.current.x,
-      startY: pointerStartRef.current.y,
-      currentDx: clampedDx,
-      currentDy: clampedDy,
-      dominantAxis,
-      targetNeighbor,
-    });
+    const draggedEl = pieceWrapperRefs.current[`${r}_${c}`];
+    if (draggedEl) {
+      draggedEl.style.zIndex = '35';
+      draggedEl.style.transform = `translate3d(${clampedDx}px, ${clampedDy}px, 0) scale3d(1.06, 1.06, 1)`;
+    }
+    if (newNeighborKey) {
+      const nEl = pieceWrapperRefs.current[newNeighborKey];
+      if (nEl) {
+        nEl.style.zIndex = '15';
+        nEl.style.transform = `translate3d(${-clampedDx * 0.45}px, ${-clampedDy * 0.45}px, 0)`;
+      }
+    }
+
+    ptr.lastNeighborKey = newNeighborKey;
+    ptr.targetNeighbor = targetNeighbor;
+    ptr.dx = clampedDx;
+    ptr.dy = clampedDy;
   };
 
   const handlePointerUpOrCancel = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!pointerStartRef.current) return;
-    if (e.pointerId !== pointerStartRef.current.pointerId) return;
+    const ptr = pointerStartRef.current;
+    if (!ptr) return;
+    if (e.pointerId !== ptr.pointerId) return;
 
-    const { r, c } = pointerStartRef.current;
-    const currentDrag = dragState;
+    const { r, c, targetNeighbor, dx, dy, lastNeighborKey } = ptr;
+    clearDragTransforms(r, c, lastNeighborKey);
     pointerStartRef.current = null;
-    setDragState(null);
 
     if (isProcessingRef.current || movesLeft <= 0) return;
 
-    if (
-      currentDrag &&
-      currentDrag.targetNeighbor &&
-      (Math.abs(currentDrag.currentDx) >= 16 || Math.abs(currentDrag.currentDy) >= 16)
-    ) {
-      handleSwap(r, c, currentDrag.targetNeighbor.r, currentDrag.targetNeighbor.c);
+    if (targetNeighbor && (Math.abs(dx) >= 12 || Math.abs(dy) >= 12)) {
+      handleSwap(r, c, targetNeighbor.r, targetNeighbor.c);
     } else {
       handleCellSelectOrSwap(r, c);
     }
@@ -1073,244 +1099,6 @@ export const CandyCrushGame: React.FC = () => {
     setHintCells(null);
   };
 
-  // Classic Glossy 3D Candy SVG Graphics matching the exact Candy Crush visual style
-  const renderCandySvg = (
-    type: CandyType,
-    special?: 'striped_h' | 'striped_v' | 'lightning',
-    compact = false
-  ) => {
-    const shadowClass = compact
-      ? 'w-full h-full drop-shadow-[0_2px_3px_rgba(0,0,0,0.3)] select-none pointer-events-none'
-      : 'w-full h-full drop-shadow-[0_3px_4px_rgba(0,0,0,0.38)] select-none pointer-events-none';
-
-    const stripeOverlay =
-      special === 'striped_h' ? (
-        <g opacity="0.88">
-          <rect x="16" y="34" width="68" height="7" rx="3.5" fill="#ffffff" />
-          <rect x="14" y="48" width="72" height="7" rx="3.5" fill="#ffffff" />
-          <rect x="16" y="62" width="68" height="7" rx="3.5" fill="#ffffff" />
-        </g>
-      ) : special === 'striped_v' ? (
-        <g opacity="0.88">
-          <rect x="34" y="16" width="7" height="68" rx="3.5" fill="#ffffff" />
-          <rect x="48" y="14" width="7" height="72" rx="3.5" fill="#ffffff" />
-          <rect x="62" y="16" width="7" height="68" rx="3.5" fill="#ffffff" />
-        </g>
-      ) : null;
-
-    switch (type) {
-      case 'lightning':
-        return (
-          <svg viewBox="0 0 100 100" className={`${shadowClass} animate-lightning-pulse`}>
-            <circle cx="50" cy="50" r="39" fill="url(#candyGrad_lightning)" stroke="#ffe59e" strokeWidth="2.5" />
-            <circle cx="34" cy="36" r="5" fill="#ff3b5c" />
-            <circle cx="64" cy="34" r="5" fill="#2ee55d" />
-            <circle cx="32" cy="60" r="5" fill="#ffcf26" />
-            <circle cx="66" cy="62" r="5" fill="#35a7ff" />
-            <circle cx="50" cy="74" r="4.5" fill="#ff8a1e" />
-            <circle cx="50" cy="26" r="4.5" fill="#e879f9" />
-            <polygon
-              points="53,22 36,50 49,50 43,78 65,46 52,46 60,22"
-              fill="#fde047"
-              stroke="#ffffff"
-              strokeWidth="2"
-            />
-            <ellipse cx="37" cy="30" rx="8" ry="4" fill="#ffffff" opacity="0.7" transform="rotate(-25 37 30)" />
-          </svg>
-        );
-
-      case 'red':
-        // Classic Curved Red Jelly Bean rotated diagonally like the screenshot
-        return (
-          <svg viewBox="0 0 100 100" className={shadowClass}>
-            <g transform="rotate(-38 50 50)">
-              <path
-                d="M20 46 C20 26, 40 20, 56 26 C72 32, 82 40, 82 54 C82 69, 68 76, 54 70 C41 64, 34 66, 25 62 C18 59, 20 52, 20 46 Z"
-                fill="url(#candyGrad_red)"
-                stroke="#ff9aa8"
-                strokeWidth="1.6"
-              />
-              {/* Bottom rich shadow */}
-              <path
-                d="M23 56 C33 63, 44 61, 56 67 C68 72, 78 66, 80 55 C77 65, 67 70, 55 65 C43 59, 32 61, 23 56 Z"
-                fill="#7f0416"
-                opacity="0.65"
-              />
-              {/* Glossy curved top shine */}
-              <path
-                d="M29 39 C36 30, 52 29, 66 36 C56 36, 42 36, 32 45 Z"
-                fill="#ffffff"
-                opacity="0.78"
-              />
-              <ellipse cx="38" cy="36" rx="10" ry="4" fill="#ffffff" opacity="0.88" transform="rotate(-12 38 36)" />
-              <circle cx="67" cy="40" r="2.8" fill="#ffffff" opacity="0.82" />
-            </g>
-            {stripeOverlay}
-          </svg>
-        );
-
-      case 'blue':
-        // Classic Glossy Blue Round Hard Candy with equatorial band
-        return (
-          <svg viewBox="0 0 100 100" className={shadowClass}>
-            <circle
-              cx="50"
-              cy="50"
-              r="37"
-              fill="url(#candyGrad_blue)"
-              stroke="#93d5ff"
-              strokeWidth="1.8"
-            />
-            {/* Horizontal subtle lollipop band */}
-            <path
-              d="M14 52 Q 50 61 86 52"
-              fill="none"
-              stroke="#03489c"
-              strokeWidth="4.5"
-              opacity="0.45"
-              strokeLinecap="round"
-            />
-            <path
-              d="M15 48 Q 50 57 85 48"
-              fill="none"
-              stroke="#7dd3fc"
-              strokeWidth="2.5"
-              opacity="0.55"
-              strokeLinecap="round"
-            />
-            {/* Top-left bright glass shine */}
-            <ellipse cx="38" cy="32" rx="14" ry="7" fill="#ffffff" opacity="0.82" transform="rotate(-24 38 32)" />
-            <ellipse cx="32" cy="29" rx="5.5" ry="2.8" fill="#ffffff" opacity="0.95" transform="rotate(-24 32 29)" />
-            <circle cx="58" cy="27" r="3" fill="#ffffff" opacity="0.7" />
-            {/* Bottom rim light */}
-            <path d="M32 77 Q 50 84 68 77" fill="none" stroke="#bae6fd" strokeWidth="2.5" strokeLinecap="round" opacity="0.6" />
-            {stripeOverlay}
-          </svg>
-        );
-
-      case 'orange':
-        // Classic Vertical Orange Oval Lozenge with inner indented oval ring
-        return (
-          <svg viewBox="0 0 100 100" className={shadowClass}>
-            <ellipse
-              cx="50"
-              cy="50"
-              rx="28"
-              ry="38"
-              fill="url(#candyGrad_orange)"
-              stroke="#ffd08a"
-              strokeWidth="1.8"
-            />
-            {/* Embossed inner oval indentation */}
-            <ellipse
-              cx="50"
-              cy="50"
-              rx="16"
-              ry="25"
-              fill="none"
-              stroke="#c2410c"
-              strokeWidth="3.5"
-              opacity="0.45"
-            />
-            <ellipse
-              cx="50"
-              cy="50"
-              rx="15"
-              ry="24"
-              fill="none"
-              stroke="#fed7aa"
-              strokeWidth="1.6"
-              opacity="0.7"
-            />
-            {/* Glossy top-left shine */}
-            <ellipse cx="37" cy="30" rx="6" ry="12" fill="#ffffff" opacity="0.75" transform="rotate(14 37 30)" />
-            <circle cx="62" cy="30" r="2.5" fill="#ffffff" opacity="0.75" />
-            {stripeOverlay}
-          </svg>
-        );
-
-      case 'green':
-        // Classic Pillowed Emerald Green Square
-        return (
-          <svg viewBox="0 0 100 100" className={shadowClass}>
-            <rect
-              x="14"
-              y="14"
-              width="72"
-              height="72"
-              rx="16"
-              fill="url(#candyGrad_green)"
-              stroke="#9ef7ae"
-              strokeWidth="1.8"
-            />
-            {/* Inner soft pillow bevel */}
-            <rect
-              x="21"
-              y="21"
-              width="58"
-              height="58"
-              rx="12"
-              fill="none"
-              stroke="#ffffff"
-              strokeWidth="1.6"
-              opacity="0.38"
-            />
-            {/* Top glossy highlight arc */}
-            <path d="M24 25 Q 50 18 76 25 L 72 34 Q 50 28 28 34 Z" fill="#ffffff" opacity="0.52" />
-            <circle cx="30" cy="28" r="3.5" fill="#ffffff" opacity="0.88" />
-            {/* Bottom deep green bevel */}
-            <path d="M22 76 Q 50 83 78 76" stroke="#064e1b" strokeWidth="3.5" strokeLinecap="round" fill="none" opacity="0.55" />
-            {stripeOverlay}
-          </svg>
-        );
-
-      case 'yellow':
-        // Classic Yellow Lemon Drop Teardrop (pointed top, plump rounded base)
-        return (
-          <svg viewBox="0 0 100 100" className={shadowClass}>
-            <path
-              d="M50 12 C67 30, 82 47, 82 64 A 32 28 0 0 1 18 64 C18 47, 33 30, 50 12 Z"
-              fill="url(#candyGrad_yellow)"
-              stroke="#fef9c3"
-              strokeWidth="1.8"
-            />
-            {/* Inner sculpted teardrop ridge */}
-            <path
-              d="M50 23 C62 37, 72 50, 72 62 A 22 19 0 0 1 28 62 C28 50, 38 37, 50 23 Z"
-              fill="none"
-              stroke="#ca8a04"
-              strokeWidth="2.5"
-              opacity="0.35"
-            />
-            {/* Bright curved shine on left shoulder */}
-            <path
-              d="M47 22 C37 35, 29 49, 30 61 C33 50, 40 37, 49 26 Z"
-              fill="#ffffff"
-              opacity="0.85"
-            />
-            <ellipse cx="38" cy="48" rx="4.5" ry="9" fill="#ffffff" opacity="0.82" transform="rotate(24 38 48)" />
-            <path d="M35 80 Q 50 87 65 80" stroke="#fef08a" strokeWidth="2.2" strokeLinecap="round" fill="none" opacity="0.7" />
-            {stripeOverlay}
-          </svg>
-        );
-
-      case 'purple':
-        return (
-          <svg viewBox="0 0 100 100" className={shadowClass}>
-            <path
-              d="M50 13 L82 42 L68 83 L32 83 L18 42 Z"
-              fill="url(#candyGrad_purple)"
-              stroke="#e9d5ff"
-              strokeWidth="1.8"
-            />
-            <polygon points="50,24 70,44 61,72 39,72 30,44" fill="none" stroke="#ffffff" strokeWidth="1.4" opacity="0.4" />
-            <ellipse cx="40" cy="36" rx="9" ry="4.5" fill="#ffffff" opacity="0.8" transform="rotate(-25 40 36)" />
-            {stripeOverlay}
-          </svg>
-        );
-    }
-  };
-
   const scorePct = Math.min(100, Math.round((sessionScore / levelConfig.targetScore) * 100));
   const star1Reached = scorePct >= 33;
   const star2Reached = scorePct >= 66;
@@ -1330,54 +1118,6 @@ export const CandyCrushGame: React.FC = () => {
     >
       {/* Sunny Candy Kingdom Sky, Clouds, Hills & Cottage Background */}
       <CandyAnimatedBackground hasLightning={hasLightningOnBoard} />
-
-      {/* SVG Material Gradients for Classic 3D Candies */}
-      <svg className="absolute w-0 h-0 overflow-hidden pointer-events-none" aria-hidden="true">
-        <defs>
-          <radialGradient id="candyGrad_red" cx="35%" cy="28%" r="72%">
-            <stop offset="0%" stopColor="#ff94a1" />
-            <stop offset="28%" stopColor="#ff1e38" />
-            <stop offset="72%" stopColor="#d1001c" />
-            <stop offset="100%" stopColor="#7a0010" />
-          </radialGradient>
-          <radialGradient id="candyGrad_blue" cx="35%" cy="28%" r="70%">
-            <stop offset="0%" stopColor="#bfe8ff" />
-            <stop offset="26%" stopColor="#26a9ff" />
-            <stop offset="68%" stopColor="#0066e6" />
-            <stop offset="100%" stopColor="#003594" />
-          </radialGradient>
-          <radialGradient id="candyGrad_orange" cx="34%" cy="28%" r="72%">
-            <stop offset="0%" stopColor="#ffe1a8" />
-            <stop offset="25%" stopColor="#ffa21a" />
-            <stop offset="70%" stopColor="#ef6c00" />
-            <stop offset="100%" stopColor="#9a3400" />
-          </radialGradient>
-          <radialGradient id="candyGrad_green" cx="32%" cy="26%" r="74%">
-            <stop offset="0%" stopColor="#b8ffc4" />
-            <stop offset="25%" stopColor="#2de34d" />
-            <stop offset="68%" stopColor="#05a31d" />
-            <stop offset="100%" stopColor="#025910" />
-          </radialGradient>
-          <radialGradient id="candyGrad_yellow" cx="36%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#ffffff" />
-            <stop offset="22%" stopColor="#fff380" />
-            <stop offset="58%" stopColor="#ffd000" />
-            <stop offset="90%" stopColor="#d99200" />
-            <stop offset="100%" stopColor="#8c5400" />
-          </radialGradient>
-          <radialGradient id="candyGrad_purple" cx="35%" cy="30%" r="72%">
-            <stop offset="0%" stopColor="#f3e8ff" />
-            <stop offset="28%" stopColor="#c054ff" />
-            <stop offset="70%" stopColor="#7e22ce" />
-            <stop offset="100%" stopColor="#4c097a" />
-          </radialGradient>
-          <radialGradient id="candyGrad_lightning" cx="36%" cy="30%" r="68%">
-            <stop offset="0%" stopColor="#9d6b53" />
-            <stop offset="45%" stopColor="#592e1b" />
-            <stop offset="100%" stopColor="#2a1106" />
-          </radialGradient>
-        </defs>
-      </svg>
 
       {/* 1. TOP PINK CANDY HUD BAR (Matches screenshot: Moves | Stars + Score | Target) */}
       <div
@@ -1473,7 +1213,7 @@ export const CandyCrushGame: React.FC = () => {
             </div>
             <div className="flex items-center justify-center gap-1 mt-0.5">
               <div className="w-6 h-6 sm:w-7 sm:h-7 flex-shrink-0">
-                {renderCandySvg(levelConfig.targetCandyType, undefined, true)}
+                <CandyPieceSvg type={levelConfig.targetCandyType} compact />
               </div>
               <span className="text-base sm:text-lg font-black tabular-nums text-[#630b3e]">
                 {remainingTargetCount === 0 ? '✓' : remainingTargetCount}
@@ -1573,22 +1313,24 @@ export const CandyCrushGame: React.FC = () => {
             </div>
           ))}
 
-          {/* Candy Burst Particles */}
+          {/* GPU-Accelerated Candy Burst Particles */}
           <div className="absolute inset-0 pointer-events-none z-30 overflow-hidden">
             {particles.map((p) => (
               <div
                 key={p.id}
-                style={{
-                  left: `${p.x}px`,
-                  top: `${p.y}px`,
-                  width: `${p.size}px`,
-                  height: `${p.size}px`,
-                  backgroundColor: p.color,
-                  opacity: p.alpha,
-                  borderRadius: p.shape === 'circle' ? '50%' : '2px',
-                  transform: p.shape === 'star' ? 'rotate(45deg)' : 'none',
-                }}
-                className="absolute pointer-events-none"
+                style={
+                  {
+                    left: `${p.x}px`,
+                    top: `${p.y}px`,
+                    width: `${p.size}px`,
+                    height: `${p.size}px`,
+                    backgroundColor: p.color,
+                    borderRadius: p.shape === 'circle' ? '50%' : '2px',
+                    '--px': `${p.dx}px`,
+                    '--py': `${p.dy}px`,
+                  } as React.CSSProperties
+                }
+                className="absolute pointer-events-none animate-candy-particle"
               />
             ))}
           </div>
@@ -1633,30 +1375,27 @@ export const CandyCrushGame: React.FC = () => {
                 if (swapState) {
                   if (swapState.r1 === r && swapState.c1 === c) {
                     zIndex = 25;
-                    transitionStr = 'transform 180ms cubic-bezier(0.25, 1, 0.5, 1)';
+                    transitionStr = 'transform 145ms cubic-bezier(0.22, 1, 0.36, 1)';
                     transformStr = swapState.isReverting
-                      ? 'translate(0, 0)'
-                      : `translate(${swapState.dc * 100}%, ${swapState.dr * 100}%)`;
+                      ? 'translate3d(0, 0, 0)'
+                      : `translate3d(${swapState.dc * 100}%, ${swapState.dr * 100}%, 0)`;
                   } else if (swapState.r2 === r && swapState.c2 === c) {
                     zIndex = 25;
-                    transitionStr = 'transform 180ms cubic-bezier(0.25, 1, 0.5, 1)';
+                    transitionStr = 'transform 145ms cubic-bezier(0.22, 1, 0.36, 1)';
                     transformStr = swapState.isReverting
-                      ? 'translate(0, 0)'
-                      : `translate(${-swapState.dc * 100}%, ${-swapState.dr * 100}%)`;
+                      ? 'translate3d(0, 0, 0)'
+                      : `translate3d(${-swapState.dc * 100}%, ${-swapState.dr * 100}%, 0)`;
                   }
-                } else if (dragState && dragState.r === r && dragState.c === c) {
-                  zIndex = 35;
-                  transformStr = `translate3d(${dragState.currentDx}px, ${dragState.currentDy}px, 0) scale(1.1)`;
-                  transitionStr = 'none';
-                } else if (
-                  dragState &&
-                  dragState.targetNeighbor &&
-                  dragState.targetNeighbor.r === r &&
-                  dragState.targetNeighbor.c === c
-                ) {
-                  zIndex = 15;
-                  transformStr = `translate3d(${-dragState.currentDx * 0.45}px, ${-dragState.currentDy * 0.45}px, 0)`;
-                  transitionStr = 'none';
+                }
+
+                const pieceStyle: React.CSSProperties = {
+                  transform: transformStr || undefined,
+                  transition: transitionStr || undefined,
+                  zIndex,
+                };
+                if (candy.fallRows && candy.fallRows > 0) {
+                  (pieceStyle as Record<string, string | number>)['--fall-y'] = `-${candy.fallRows * 100}%`;
+                  (pieceStyle as Record<string, string | number>)['--fall-dur'] = `${Math.min(300, 175 + candy.fallRows * 28)}ms`;
                 }
 
                 return (
@@ -1667,7 +1406,7 @@ export const CandyCrushGame: React.FC = () => {
                     onPointerUp={handlePointerUpOrCancel}
                     onPointerCancel={handlePointerUpOrCancel}
                     style={{ touchAction: 'none' }}
-                    className={`aspect-square relative flex items-center justify-center p-[5%] cursor-pointer select-none touch-none border border-[#8ac0f4]/30 transition-colors ${
+                    className={`aspect-square relative flex items-center justify-center p-[5%] cursor-pointer select-none touch-none border border-[#8ac0f4]/30 ${
                       isSelected
                         ? 'bg-[#69a9ec]/55 ring-2 ring-white z-20'
                         : isHint
@@ -1677,20 +1416,19 @@ export const CandyCrushGame: React.FC = () => {
                   >
                     <div
                       key={candy.id}
-                      style={{
-                        transform: transformStr,
-                        transition: transitionStr,
-                        zIndex,
+                      ref={(el) => {
+                        pieceWrapperRefs.current[`${r}_${c}`] = el;
                       }}
+                      style={pieceStyle}
                       className={`relative w-full h-full flex items-center justify-center select-none pointer-events-none ${
                         candy.isMatched
                           ? 'animate-candy-pop'
-                          : candy.isDropping
+                          : candy.fallRows && candy.fallRows > 0
                           ? 'animate-candy-drop'
                           : ''
                       }`}
                     >
-                      {renderCandySvg(candy.type, candy.isSpecial)}
+                      <CandyPieceSvg type={candy.type} special={candy.isSpecial} />
                     </div>
                   </div>
                 );
@@ -2014,7 +1752,7 @@ export const CandyCrushGame: React.FC = () => {
                 </div>
               </div>
               <div className="w-8 h-8">
-                {renderCandySvg(levelConfig.targetCandyType, undefined, true)}
+                <CandyPieceSvg type={levelConfig.targetCandyType} compact />
               </div>
             </div>
 
