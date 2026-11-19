@@ -330,7 +330,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
                 )}
               </label>
               <span className={`text-[10px] font-bold flex items-center gap-1 ${isLight ? 'text-emerald-700' : 'text-emerald-400'}`}>
-                <Gift className="w-3 h-3" /> Get ₦7,000 Welcome Bonus
+                <Gift className="w-3 h-3" /> Get ₦3,000 Welcome Bonus
               </span>
             </div>
             <div className="relative">

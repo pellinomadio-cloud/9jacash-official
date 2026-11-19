@@ -135,7 +135,7 @@ export const CreditAlertModal: React.FC = () => {
               New Dashboard Balance:
             </span>
             <span className={`font-bold ${isLight ? 'text-amber-600' : 'text-amber-400'}`}>
-              {user ? formatNaira(user.balance) : '₦150,000'}
+              {user ? formatNaira(user.balance) : '₦100,000'}
             </span>
           </div>
         </div>

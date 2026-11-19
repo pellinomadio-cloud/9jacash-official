@@ -116,7 +116,7 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ onBack }) => {
             Refer &amp; Earn Rewards <Sparkles className="w-4 h-4 text-amber-500" />
           </h1>
           <p className={`text-xs ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
-            Earn ₦15,000 per friend &amp; your friend gets ₦7,000
+            Earn ₦15,000 per friend &amp; your friend gets ₦3,000
           </p>
         </div>
       </div>
@@ -135,7 +135,7 @@ export const ReferralsPage: React.FC<ReferralsPageProps> = ({ onBack }) => {
             Get ₦15,000 Instant Bonus
           </h2>
           <p className="text-xs text-amber-100/90 leading-relaxed">
-            Give your unique code to friends. When they register, you receive ₦15,000 cash and they receive a ₦7,000 welcome bonus straight to their wallet!
+            Give your unique code to friends. When they register, you receive ₦15,000 cash and they receive a ₦3,000 welcome bonus straight to their wallet!
           </p>
         </div>
 

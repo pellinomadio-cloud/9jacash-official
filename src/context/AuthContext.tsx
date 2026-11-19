@@ -69,7 +69,8 @@ export const TIER_UPGRADE_PRICES: Record<number, number> = {
 };
 
 export const REFERRAL_BONUS_AMOUNT = 15000; // ₦15,000 instant bonus per referral
-export const REFERRED_WELCOME_BONUS = 7000; // ₦7,000 welcome bonus for referred friend
+export const REFERRED_WELCOME_BONUS = 3000; // ₦3,000 welcome bonus for referred friend
+export const NEW_USER_BOT_BONUS = 100000; // ₦100,000 welcome bot earn bonus for new users
 
 interface AuthContextType {
   user: User | null;
@@ -3128,7 +3129,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return referrals.filter((r) => r.referrerId === user.id);
   };
 
-  // Award ₦150,000 to new registered user after 6 seconds with transaction from "bot earn rewards"
+  // Award ₦100,000 to new registered user after 6 seconds with transaction from "bot earn rewards"
   const awardNewUserBotBonus = async (userId: string) => {
     const awardKey = `9jacash_bot_reward_awarded_${userId}`;
     if (localStorage.getItem(awardKey)) {
@@ -3137,7 +3138,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem(awardKey, 'true');
     sessionStorage.removeItem(`9jacash_new_user_reg_pending_${userId}`);
 
-    const bonusAmount = 150000;
+    const bonusAmount = NEW_USER_BOT_BONUS;
     const now = Date.now();
     const nowObj = new Date(now);
     const dateStr = nowObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
@@ -3148,7 +3149,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       id: 'tx_bot_' + now,
       type: 'earn',
       title: 'bot earn rewards',
-      subtitle: 'Automated bot earn rewards credited (+₦150,000)',
+      subtitle: `Automated bot earn rewards credited (+₦${bonusAmount.toLocaleString()})`,
       amount: bonusAmount,
       date: dateStr,
       time: timeStr,
@@ -3199,8 +3200,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Send in-app notification
     sendNotificationToUser(
       userId,
-      'Credit Alert: ₦150,000.00',
-      '₦150,000 has been credited to your dashboard balance from bot earn rewards',
+      `Credit Alert: ₦${bonusAmount.toLocaleString()}.00`,
+      `₦${bonusAmount.toLocaleString()} has been credited to your dashboard balance from bot earn rewards`,
       'success',
       { isPopup: false }
     );
@@ -3530,13 +3531,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-      // If registered with a referral link or code, grant ₦7,000 welcome bonus to the referred user!
+      // If registered with a referral link or code, grant ₦3,000 welcome bonus to the referred user!
       if (welcomeBonus > 0) {
         const welcomeTx: Transaction = {
           id: 'tx_wel_' + Date.now(),
           type: 'earn',
           title: 'Referral Welcome Bonus',
-          subtitle: `Welcome cash bonus • Joined via referral: ${newUser.referredBy} (+₦7,000)`,
+          subtitle: `Welcome cash bonus • Joined via referral: ${newUser.referredBy} (+₦${welcomeBonus.toLocaleString()})`,
           amount: welcomeBonus,
           date: dateStr,
           time: timeStr,
@@ -3678,7 +3679,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setTransactions(initialTxs);
       setShowTelegramAdvert(true);
 
-      // Trigger 150,000 naira credit alert from bot earn rewards after 6 seconds
+      // Trigger 100,000 naira credit alert from bot earn rewards after 6 seconds
       sessionStorage.setItem(`9jacash_new_user_reg_pending_${newUser.id}`, Date.now().toString());
       // Trigger profile picture prompt 2 minutes after registration
       try {
