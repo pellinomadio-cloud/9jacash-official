@@ -221,7 +221,9 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
 
           {/* Email Address */}
           <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>Email Address</label>
+            <label className={`block text-xs font-semibold mb-1.5 ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+              Gmail Address <span className={`font-normal text-[11px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>(@gmail.com only)</span>
+            </label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-500">
                 <Mail className={`w-4 h-4 ${showInlineEmailError ? 'text-red-500' : showInlineEmailValid ? 'text-emerald-500' : 'text-amber-500/80'}`} />

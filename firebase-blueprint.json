@@ -7,7 +7,7 @@
       "properties": {
         "id": { "type": "string", "maxLength": 128 },
         "name": { "type": "string", "maxLength": 100 },
-        "email": { "type": "string", "maxLength": 150 },
+        "email": { "type": "string", "maxLength": 150, "pattern": "^[a-zA-Z0-9._%+\\-]+@gmail\\.com$" },
         "pin": { "type": "string", "maxLength": 10 },
         "profilePicture": { "type": "string", "maxLength": 120000 },
         "balance": { "type": "number" },

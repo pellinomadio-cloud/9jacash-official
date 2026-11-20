@@ -89,14 +89,14 @@ export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Email Address */}
           <div>
-            <label className={`block text-xs font-semibold mb-1.5 ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>Email Address</label>
+            <label className={`block text-xs font-semibold mb-1.5 ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>Gmail Address</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-stone-500">
                 <Mail className="w-4 h-4 text-amber-500/80" />
               </div>
               <input
                 type="email"
-                placeholder="Enter your registered email"
+                placeholder="e.g. yourname@gmail.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm transition-all border ${

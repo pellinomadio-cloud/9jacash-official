@@ -23,6 +23,7 @@ import { getAnalytics, isSupported } from 'firebase/analytics';
 import { User, Transaction, ReferralRecord, DepositRequest, CompanyAccount, CommunityLinks, AppNotification, SafeWithdrawalAccount, AppPricing, DevicePushBroadcast, DeviceSubscriber, AdminQuickCode, SupportChatMessage, SupportChatThread } from '../types/index.ts';
 import { sortTransactionsNewestFirst } from '../utils/transactionSort.ts';
 import { extractReferralCodeFromEmail } from '../utils/referral.ts';
+import { isGmailAddress } from '../utils/emailValidation.ts';
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 export const firebaseConfig = {
@@ -211,9 +212,100 @@ const SETTINGS_COLLECTION = 'app_settings';
 const NOTIFICATIONS_COLLECTION = 'notifications';
 const SAFE_PAYOUTS_COLLECTION = 'safe_payout_accounts';
 
+// Track recently attempted non-Gmail purges so transient quota limits don't cause tight retry loops
+const nonGmailPurgeAttempts = new Map<string, number>();
+
+/**
+ * Permanently deletes a non-@gmail.com user account and its associated documents from Firestore.
+ */
+export async function purgeNonGmailUserFromFirestore(
+  userId?: string,
+  firestoreDocId?: string
+): Promise<boolean> {
+  const ids = Array.from(
+    new Set([userId, firestoreDocId].map((v) => String(v || '').trim()).filter(Boolean))
+  );
+  if (ids.length === 0) return false;
+  if (isFirestoreQuotaExhausted()) return false;
+
+  const now = Date.now();
+  const dedupeKey = ids.join('|');
+  const lastAttempt = nonGmailPurgeAttempts.get(dedupeKey) || 0;
+  if (now - lastAttempt < 25000) {
+    return false;
+  }
+  nonGmailPurgeAttempts.set(dedupeKey, now);
+
+  let deletedAny = false;
+  for (const id of ids) {
+    try {
+      await deleteDoc(doc(db, USERS_COLLECTION, id));
+      deletedAny = true;
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `${USERS_COLLECTION}/${id}`);
+    }
+    try {
+      await deleteDoc(doc(db, SUPPORT_CHATS_COLLECTION, id));
+    } catch {
+      // Ignore missing support chat doc
+    }
+  }
+
+  // Clean up any associated collections for the primary userId
+  const primaryId = ids[0];
+  if (primaryId && !isFirestoreQuotaExhausted()) {
+    const relatedCleanups: Array<Promise<void>> = [
+      (async () => {
+        try {
+          const snap = await getDocs(query(collection(db, TRANSACTIONS_COLLECTION), where('userId', '==', primaryId)));
+          await Promise.allSettled(snap.docs.map((d) => deleteDoc(doc(db, TRANSACTIONS_COLLECTION, d.id))));
+        } catch {}
+      })(),
+      (async () => {
+        try {
+          const snap = await getDocs(query(collection(db, DEPOSITS_COLLECTION), where('userId', '==', primaryId)));
+          await Promise.allSettled(snap.docs.map((d) => deleteDoc(doc(db, DEPOSITS_COLLECTION, d.id))));
+        } catch {}
+      })(),
+      (async () => {
+        try {
+          const snap = await getDocs(query(collection(db, SAFE_PAYOUTS_COLLECTION), where('userId', '==', primaryId)));
+          await Promise.allSettled(snap.docs.map((d) => deleteDoc(doc(db, SAFE_PAYOUTS_COLLECTION, d.id))));
+        } catch {}
+      })(),
+      (async () => {
+        try {
+          const snap = await getDocs(query(collection(db, NOTIFICATIONS_COLLECTION), where('targetUserId', '==', primaryId)));
+          await Promise.allSettled(snap.docs.map((d) => deleteDoc(doc(db, NOTIFICATIONS_COLLECTION, d.id))));
+        } catch {}
+      })(),
+      (async () => {
+        try {
+          const [asReferred, asReferrer] = await Promise.allSettled([
+            getDocs(query(collection(db, REFERRALS_COLLECTION), where('referredUserId', '==', primaryId))),
+            getDocs(query(collection(db, REFERRALS_COLLECTION), where('referrerId', '==', primaryId))),
+          ]);
+          const docIds = new Set<string>();
+          if (asReferred.status === 'fulfilled') asReferred.value.docs.forEach((d) => docIds.add(d.id));
+          if (asReferrer.status === 'fulfilled') asReferrer.value.docs.forEach((d) => docIds.add(d.id));
+          await Promise.allSettled(Array.from(docIds).map((id) => deleteDoc(doc(db, REFERRALS_COLLECTION, id))));
+        } catch {}
+      })(),
+    ];
+    await Promise.allSettled(relatedCleanups);
+  }
+
+  return deletedAny;
+}
+
 // 1. User Profiles & Balance Sync
 export async function saveUserToFirestore(user: User): Promise<void> {
   if (!user?.id) return;
+  // Strictly forbid non-@gmail.com accounts from existing in Firestore: delete immediately instead of saving
+  if (!isGmailAddress(user.email)) {
+    purgeNonGmailUserFromFirestore(user.id).catch(() => {});
+    return;
+  }
   if (isFirestoreQuotaExhausted()) return;
   const path = `${USERS_COLLECTION}/${user.id}`;
   const updatedAtIso = user.updatedAt || new Date().toISOString();
@@ -270,6 +362,18 @@ export async function saveUserToFirestore(user: User): Promise<void> {
   }
 }
 
+function validateOrPurgeCloudUser(data: User, docId: string): User | null {
+  if (!data || !isGmailAddress(data.email)) {
+    purgeNonGmailUserFromFirestore(data?.id || docId, docId).catch(() => {});
+    return null;
+  }
+  return {
+    ...data,
+    id: data.id || docId,
+    referralCode: data.referralCode || extractReferralCodeFromEmail(data.email || ''),
+  };
+}
+
 export async function findUserByEmailOrIdInFirestore(identifier: string): Promise<User | null> {
   if (!identifier || isFirestoreQuotaExhausted()) return null;
   const clean = identifier.trim().toLowerCase();
@@ -279,16 +383,14 @@ export async function findUserByEmailOrIdInFirestore(identifier: string): Promis
     // 1. Direct document lookup by ID
     const directSnap = await getDoc(doc(db, USERS_COLLECTION, raw));
     if (directSnap.exists()) {
-      const data = directSnap.data() as User;
-      return { ...data, id: data.id || directSnap.id };
+      return validateOrPurgeCloudUser(directSnap.data() as User, directSnap.id);
     }
 
     // Also check lowercase ID if different
     if (clean !== raw) {
       const lowerSnap = await getDoc(doc(db, USERS_COLLECTION, clean));
       if (lowerSnap.exists()) {
-        const data = lowerSnap.data() as User;
-        return { ...data, id: data.id || lowerSnap.id };
+        return validateOrPurgeCloudUser(lowerSnap.data() as User, lowerSnap.id);
       }
     }
 
@@ -297,8 +399,7 @@ export async function findUserByEmailOrIdInFirestore(identifier: string): Promis
     const snapEmail = await getDocs(qEmail);
     if (!snapEmail.empty) {
       const d = snapEmail.docs[0];
-      const data = d.data() as User;
-      return { ...data, id: data.id || d.id };
+      return validateOrPurgeCloudUser(d.data() as User, d.id);
     }
 
     // Try query with raw email if differing case
@@ -307,8 +408,7 @@ export async function findUserByEmailOrIdInFirestore(identifier: string): Promis
       const snapEmailRaw = await getDocs(qEmailRaw);
       if (!snapEmailRaw.empty) {
         const d = snapEmailRaw.docs[0];
-        const data = d.data() as User;
-        return { ...data, id: data.id || d.id };
+        return validateOrPurgeCloudUser(d.data() as User, d.id);
       }
     }
 
@@ -317,8 +417,7 @@ export async function findUserByEmailOrIdInFirestore(identifier: string): Promis
     const snapId = await getDocs(qId);
     if (!snapId.empty) {
       const d = snapId.docs[0];
-      const data = d.data() as User;
-      return { ...data, id: data.id || d.id };
+      return validateOrPurgeCloudUser(d.data() as User, d.id);
     }
 
     // 4. Fallback inspection: scan collection case-insensitively
@@ -326,6 +425,10 @@ export async function findUserByEmailOrIdInFirestore(identifier: string): Promis
     for (const d of snapAll.docs) {
       const data = d.data() as User;
       if (!data) continue;
+      if (!isGmailAddress(data.email)) {
+        purgeNonGmailUserFromFirestore(data.id || d.id, d.id).catch(() => {});
+        continue;
+      }
       const uEmail = (data.email || '').trim().toLowerCase();
       const uId = (data.id || d.id || '').trim();
       if (uEmail === clean || uId === raw || uId === clean) {
@@ -349,6 +452,9 @@ export async function deleteUserFromFirestore(userId: string): Promise<boolean> 
   const path = `${USERS_COLLECTION}/${userId}`;
   try {
     await deleteDoc(doc(db, USERS_COLLECTION, userId));
+    try {
+      await deleteDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId));
+    } catch {}
     return true;
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
@@ -360,14 +466,15 @@ export async function getAllUsersFromFirestore(): Promise<User[]> {
   const path = USERS_COLLECTION;
   try {
     const snap = await getDocs(collection(db, USERS_COLLECTION));
-    return snap.docs.map((d) => {
+    const validUsers: User[] = [];
+    for (const d of snap.docs) {
       const data = d.data() as User;
-      return {
-        ...data,
-        id: data.id || d.id,
-        referralCode: data.referralCode || extractReferralCodeFromEmail(data.email || ''),
-      };
-    });
+      const valid = validateOrPurgeCloudUser(data, d.id);
+      if (valid) {
+        validUsers.push(valid);
+      }
+    }
+    return validUsers;
   } catch (error) {
     handleFirestoreError(error, OperationType.LIST, path);
     return [];
@@ -376,7 +483,7 @@ export async function getAllUsersFromFirestore(): Promise<User[]> {
 
 /**
  * Quickly finds a user in Firestore matching a referral code, email, handle or membership ID.
- * Employs a 3-second timeout so registration remains fast while reliably resolving cross-device referrals.
+ * Employs an 8-second timeout so registration remains fast while reliably resolving cross-device referrals.
  */
 export async function findUserByReferralCodeInFirestore(code: string): Promise<User | null> {
   if (!code || isFirestoreQuotaExhausted()) return null;
@@ -390,8 +497,7 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
       const snapRef = await getDocs(qRef);
       if (!snapRef.empty) {
         const docSnap = snapRef.docs[0];
-        const data = docSnap.data() as User;
-        return { ...data, id: data.id || docSnap.id };
+        return validateOrPurgeCloudUser(docSnap.data() as User, docSnap.id);
       }
 
       // 2. Query by email
@@ -399,8 +505,7 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
       const snapEmail = await getDocs(qEmail);
       if (!snapEmail.empty) {
         const docSnap = snapEmail.docs[0];
-        const data = docSnap.data() as User;
-        return { ...data, id: data.id || docSnap.id };
+        return validateOrPurgeCloudUser(docSnap.data() as User, docSnap.id);
       }
 
       // 3. Fallback: inspect user documents
@@ -408,7 +513,9 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
       for (const d of snapAll.docs) {
         const raw = d.data() as User;
         if (!raw) continue;
-        const u: User = { ...raw, id: raw.id || d.id };
+        const valid = validateOrPurgeCloudUser(raw, d.id);
+        if (!valid) continue;
+        const u: User = valid;
         const uRef = (u.referralCode || '').toLowerCase().trim();
         const uEmail = (u.email || '').toLowerCase().trim();
         const uLocal = uEmail.split('@')[0];
@@ -445,15 +552,15 @@ export function subscribeToAllUsers(onUpdate: (users: User[]) => void): Unsubscr
       collection(db, USERS_COLLECTION),
       (snap) => {
         try {
-          const users = snap.docs.map((d) => {
+          const validUsers: User[] = [];
+          for (const d of snap.docs) {
             const data = d.data() as User;
-            return {
-              ...data,
-              id: data.id || d.id,
-              referralCode: data.referralCode || extractReferralCodeFromEmail(data.email || ''),
-            };
-          });
-          onUpdate(users);
+            const valid = validateOrPurgeCloudUser(data, d.id);
+            if (valid) {
+              validUsers.push(valid);
+            }
+          }
+          onUpdate(validUsers);
         } catch (e) {
           console.warn('Error processing users snapshot', e);
         }
@@ -546,6 +653,16 @@ export async function saveReferralRecordToFirestore(record: ReferralRecord): Pro
   }
 }
 
+export async function deleteReferralRecordFromFirestore(id: string): Promise<void> {
+  if (!id || isFirestoreQuotaExhausted()) return;
+  const path = `${REFERRALS_COLLECTION}/${id}`;
+  try {
+    await deleteDoc(doc(db, REFERRALS_COLLECTION, id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+  }
+}
+
 // 0. Connection Test
 export async function testConnection(): Promise<boolean> {
   if (isFirestoreQuotaExhausted()) return false;
@@ -617,6 +734,16 @@ export async function saveDepositRequestToFirestore(deposit: DepositRequest): Pr
       }
     }
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+}
+
+export async function deleteDepositRequestFromFirestore(id: string): Promise<void> {
+  if (!id || isFirestoreQuotaExhausted()) return;
+  const path = `${DEPOSITS_COLLECTION}/${id}`;
+  try {
+    await deleteDoc(doc(db, DEPOSITS_COLLECTION, id));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
   }
 }
 
@@ -1474,9 +1601,17 @@ export function subscribeToAllSupportChats(
       collection(db, SUPPORT_CHATS_COLLECTION),
       (snap) => {
         try {
-          const threads = snap.docs
-            .map((d) => d.data() as SupportChatThread)
-            .filter((t) => t && t.userId && Array.isArray(t.messages) && t.messages.length > 0);
+          const threads: SupportChatThread[] = [];
+          for (const d of snap.docs) {
+            const t = d.data() as SupportChatThread;
+            if (!t || !t.userId || !Array.isArray(t.messages) || t.messages.length === 0) continue;
+            if (t.userEmail && !isGmailAddress(t.userEmail)) {
+              deleteDoc(doc(db, SUPPORT_CHATS_COLLECTION, d.id)).catch(() => {});
+              purgeNonGmailUserFromFirestore(t.userId).catch(() => {});
+              continue;
+            }
+            threads.push(t);
+          }
           threads.sort((a, b) => {
             const aWaiting = a.lastSender === 'user' || a.awaitingAdminReply ? 1 : 0;
             const bWaiting = b.lastSender === 'user' || b.awaitingAdminReply ? 1 : 0;

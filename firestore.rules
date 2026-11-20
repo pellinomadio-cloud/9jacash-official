@@ -6,6 +6,12 @@ service cloud.firestore {
       return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.:@]+$');
     }
 
+    function isGmailEmail(email) {
+      return email is string
+        && email.size() <= 150
+        && email.lower().matches('^[a-z0-9._%+\\-]+@gmail\\.com$');
+    }
+
     // Default deny
     match /{document=**} {
       allow read, write: if false;
@@ -22,10 +28,11 @@ service cloud.firestore {
       allow create, update, delete: if isValidId(settingId);
     }
 
-    // User profiles & wallets
+    // User profiles & wallets (strictly @gmail.com emails only; delete allowed for instant non-Gmail cleanup)
     match /users/{userId} {
       allow get, list: if true;
-      allow create, update, delete: if isValidId(userId);
+      allow create, update: if isValidId(userId) && isGmailEmail(request.resource.data.email);
+      allow delete: if isValidId(userId);
     }
 
     // Transactions

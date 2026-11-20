@@ -42,6 +42,9 @@ import {
   getUserFromFirestore,
   findUserByEmailOrIdInFirestore,
   deleteUserFromFirestore,
+  purgeNonGmailUserFromFirestore,
+  deleteDepositRequestFromFirestore,
+  deleteReferralRecordFromFirestore,
   findUserByReferralCodeInFirestore,
   firebaseConfig,
 } from '../services/firebase.ts';
@@ -58,7 +61,7 @@ import {
   getRegisteredAccountsOnDevice,
   DEVICE_ACCOUNTS_STORAGE_KEY,
 } from '../utils/deviceLimit.ts';
-import { verifyEmailAddress } from '../utils/emailValidation.ts';
+import { verifyEmailAddress, isGmailAddress } from '../utils/emailValidation.ts';
 
 export const TIER_LIMITS: Record<number, number> = {
   1: 400000,    // ₦400,000 for Tier 1
@@ -556,12 +559,73 @@ const mergeCloudAndLocalUser = (cloudUser: User, localUser?: User | null): User 
   return normalizeUser(rawMerged) || rawMerged;
 };
 
+const purgeLocalNonGmailUserStorage = (userId?: string, email?: string): void => {
+  const cleanUid = (userId || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  try {
+    const savedCurrent = localStorage.getItem(CURRENT_USER_KEY);
+    if (savedCurrent) {
+      const parsed = JSON.parse(savedCurrent);
+      const pId = (parsed?.id || '').trim();
+      const pEmail = (parsed?.email || '').trim().toLowerCase();
+      if (
+        !isGmailAddress(parsed?.email) ||
+        (cleanUid && pId === cleanUid) ||
+        (cleanEmail && pEmail === cleanEmail)
+      ) {
+        localStorage.removeItem(CURRENT_USER_KEY);
+      }
+    }
+  } catch {
+    localStorage.removeItem(CURRENT_USER_KEY);
+  }
+
+  if (cleanUid) {
+    try {
+      localStorage.removeItem(`9jacash_kyc_pending_withdrawal_${cleanUid}`);
+      localStorage.removeItem(`${TRANSACTIONS_PREFIX}${cleanUid}`);
+      localStorage.removeItem(`${PROFILE_PIC_CACHE_PREFIX}${cleanUid}`);
+    } catch {}
+  }
+
+  try {
+    const savedUsersRaw = localStorage.getItem(USERS_STORAGE_KEY);
+    if (savedUsersRaw) {
+      const parsed: User[] = JSON.parse(savedUsersRaw);
+      if (Array.isArray(parsed)) {
+        const cleaned = parsed.filter(
+          (u) =>
+            u &&
+            isGmailAddress(u.email) &&
+            (!cleanUid || u.id !== cleanUid) &&
+            (!cleanEmail || (u.email || '').trim().toLowerCase() !== cleanEmail)
+        );
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(cleaned));
+      }
+    }
+  } catch {}
+
+  try {
+    const deviceEmails = getRegisteredAccountsOnDevice();
+    const cleanedEmails = deviceEmails.filter(
+      (e: string) => isGmailAddress(e) && (!cleanEmail || e.toLowerCase().trim() !== cleanEmail)
+    );
+    safeLocalStorageSet(DEVICE_ACCOUNTS_STORAGE_KEY, JSON.stringify(cleanedEmails));
+  } catch {}
+};
+
 const getInitialUser = (): User | null => {
   try {
     const savedUser = localStorage.getItem(CURRENT_USER_KEY);
     if (savedUser) {
       const parsedUser = JSON.parse(savedUser);
       if (parsedUser && parsedUser.id && parsedUser.email) {
+        // Strictly enforce @gmail.com accounts only: instantly delete non-Gmail accounts
+        if (!isGmailAddress(parsedUser.email)) {
+          purgeLocalNonGmailUserStorage(parsedUser.id, parsedUser.email);
+          purgeNonGmailUserFromFirestore(parsedUser.id).catch(() => {});
+          return null;
+        }
         const expectedRef = extractReferralCodeFromEmail(parsedUser.email);
         if (!parsedUser.referralCode || parsedUser.referralCode.startsWith('9JA-')) {
           parsedUser.referralCode = expectedRef;
@@ -867,17 +931,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const savedDepositReqs = localStorage.getItem(DEPOSIT_REQUESTS_STORAGE_KEY);
       if (savedDepositReqs) {
-        setDepositRequests(JSON.parse(savedDepositReqs));
+        const parsedDeps: DepositRequest[] = JSON.parse(savedDepositReqs);
+        const validDeps = Array.isArray(parsedDeps)
+          ? parsedDeps.filter((d) => {
+              if (d && d.userEmail && !isGmailAddress(d.userEmail)) {
+                deleteDepositRequestFromFirestore(d.id).catch(() => {});
+                if (d.userId) purgeNonGmailUserFromFirestore(d.userId).catch(() => {});
+                return false;
+              }
+              return Boolean(d);
+            })
+          : [];
+        setDepositRequests(validDeps);
+        if (Array.isArray(parsedDeps) && validDeps.length !== parsedDeps.length) {
+          safeLocalStorageSet(DEPOSIT_REQUESTS_STORAGE_KEY, JSON.stringify(validDeps));
+        }
       }
 
       const savedReferrals = localStorage.getItem(REFERRALS_STORAGE_KEY);
       if (savedReferrals) {
-        setReferrals(JSON.parse(savedReferrals));
+        const parsedRefs: ReferralRecord[] = JSON.parse(savedReferrals);
+        const validRefs = Array.isArray(parsedRefs)
+          ? parsedRefs.filter((r) => {
+              if (r && r.referredUserEmail && !isGmailAddress(r.referredUserEmail)) {
+                deleteReferralRecordFromFirestore(r.id).catch(() => {});
+                if (r.referredUserId) purgeNonGmailUserFromFirestore(r.referredUserId).catch(() => {});
+                return false;
+              }
+              return Boolean(r);
+            })
+          : [];
+        setReferrals(validRefs);
+        if (Array.isArray(parsedRefs) && validRefs.length !== parsedRefs.length) {
+          safeLocalStorageSet(REFERRALS_STORAGE_KEY, JSON.stringify(validRefs));
+        }
       }
 
       const savedUsers = localStorage.getItem(USERS_STORAGE_KEY);
       if (savedUsers) {
-        setAllUsers(JSON.parse(savedUsers));
+        const parsedUsers: User[] = JSON.parse(savedUsers);
+        const validGmailUsers: User[] = [];
+        if (Array.isArray(parsedUsers)) {
+          for (const u of parsedUsers) {
+            if (!u) continue;
+            if (!isGmailAddress(u.email)) {
+              purgeLocalNonGmailUserStorage(u.id, u.email);
+              purgeNonGmailUserFromFirestore(u.id).catch(() => {});
+            } else {
+              validGmailUsers.push(u);
+            }
+          }
+        }
+        setAllUsers(validGmailUsers);
+        if (!Array.isArray(parsedUsers) || validGmailUsers.length !== parsedUsers.length) {
+          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(validGmailUsers));
+        }
       }
     } catch (e) {
       console.error('Failed to load stored configuration', e);
@@ -951,11 +1059,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     loadStoredConfig();
   }, [loadStoredConfig]);
 
+  // Instant guard: if active session user ever has a non-@gmail.com email, purge immediately from app & Firestore
+  useEffect(() => {
+    if (user && !isGmailAddress(user.email)) {
+      const badId = user.id;
+      const badEmail = user.email;
+      userRef.current = null;
+      setUser(null);
+      setTransactions([]);
+      purgeLocalNonGmailUserStorage(badId, badEmail);
+      purgeNonGmailUserFromFirestore(badId).catch(() => {});
+      setAllUsers((prev) => {
+        const cleaned = prev.filter((u) => u && isGmailAddress(u.email) && u.id !== badId);
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(cleaned));
+        return cleaned;
+      });
+    }
+  }, [user]);
+
   // Real-time Firebase Firestore subscriptions
   useEffect(() => {
-    // 1. Subscribe to all registered users in Firestore
-    const unsubUsers = subscribeToAllUsers((cloudUsers) => {
-      if (cloudUsers && cloudUsers.length > 0) {
+    // 1. Subscribe to all registered users in Firestore (non-@gmail.com users are automatically purged)
+    const unsubUsers = subscribeToAllUsers((rawCloudUsers) => {
+      const cloudUsers = (rawCloudUsers || []).filter((u) => {
+        if (!u) return false;
+        if (!isGmailAddress(u.email)) {
+          purgeLocalNonGmailUserStorage(u.id, u.email);
+          purgeNonGmailUserFromFirestore(u.id).catch(() => {});
+          return false;
+        }
+        return true;
+      });
+
+      // Immediately terminate any active local session that is not @gmail.com
+      if (userRef.current && !isGmailAddress(userRef.current.email)) {
+        const badId = userRef.current.id;
+        const badEmail = userRef.current.email;
+        userRef.current = null;
+        setUser(null);
+        setTransactions([]);
+        purgeLocalNonGmailUserStorage(badId, badEmail);
+        purgeNonGmailUserFromFirestore(badId).catch(() => {});
+      }
+
+      if (cloudUsers.length > 0) {
         // Also extract any submittedRequests embedded on user documents so Admin Dashboard always receives them
         const embeddedRequests: DepositRequest[] = [];
         cloudUsers.forEach((cu) => {
@@ -1113,8 +1260,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else {
-        // If Firestore snapshot returned empty (e.g. connecting or offline), preserve the user session
-        console.log('Users snapshot is empty or reconnecting - maintaining user session.');
+        // Still strip any non-@gmail.com accounts lingering in local cache
+        setAllUsers((prevLocal) => {
+          const validOnly = prevLocal.filter((u) => {
+            if (!u || !isGmailAddress(u.email)) {
+              if (u) {
+                purgeLocalNonGmailUserStorage(u.id, u.email);
+                purgeNonGmailUserFromFirestore(u.id).catch(() => {});
+              }
+              return false;
+            }
+            return true;
+          });
+          if (validOnly.length !== prevLocal.length) {
+            safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(validOnly));
+          }
+          return validOnly;
+        });
       }
     });
 
@@ -1198,11 +1360,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setDepositRequests((prevLocal) => {
           const map = new Map<string, DepositRequest>();
           cloudDeposits.forEach((d) => {
-            if (d && d.id) map.set(d.id, d);
+            if (!d || !d.id) return;
+            if (d.userEmail && !isGmailAddress(d.userEmail)) {
+              deleteDepositRequestFromFirestore(d.id).catch(() => {});
+              if (d.userId) purgeNonGmailUserFromFirestore(d.userId).catch(() => {});
+              return;
+            }
+            map.set(d.id, d);
           });
           // Preserve any local request or local status/receiptUrl if cloud hasn't synced it yet
           prevLocal.forEach((loc) => {
             if (!loc || !loc.id) return;
+            if (loc.userEmail && !isGmailAddress(loc.userEmail)) {
+              deleteDepositRequestFromFirestore(loc.id).catch(() => {});
+              return;
+            }
             const existingCloud = map.get(loc.id);
             if (!existingCloud) {
               map.set(loc.id, loc);
@@ -1232,8 +1404,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 5. Subscribe to referrals collection (for affiliate tracking & rewards)
     const unsubReferrals = subscribeToAllReferrals((cloudReferrals: ReferralRecord[]) => {
       if (cloudReferrals) {
-        setReferrals(cloudReferrals);
-        safeLocalStorageSet(REFERRALS_STORAGE_KEY, JSON.stringify(cloudReferrals));
+        const validRefs = cloudReferrals.filter((r) => {
+          if (r && r.referredUserEmail && !isGmailAddress(r.referredUserEmail)) {
+            deleteReferralRecordFromFirestore(r.id).catch(() => {});
+            if (r.referredUserId) purgeNonGmailUserFromFirestore(r.referredUserId).catch(() => {});
+            return false;
+          }
+          return Boolean(r);
+        });
+        setReferrals(validRefs);
+        safeLocalStorageSet(REFERRALS_STORAGE_KEY, JSON.stringify(validRefs));
       }
     });
 
@@ -1248,8 +1428,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 7. Subscribe to safe payout accounts (Confirmed KYC withdrawal destination accounts)
     const unsubSafePayouts = subscribeToSafePayoutAccounts((cloudAccounts) => {
       if (cloudAccounts) {
-        setSafePayoutAccounts(cloudAccounts);
-        safeLocalStorageSet(SAFE_PAYOUTS_STORAGE_KEY, JSON.stringify(cloudAccounts));
+        const validAccounts = cloudAccounts.filter((acc) => {
+          if (acc && acc.userEmail && !isGmailAddress(acc.userEmail)) {
+            deleteSafePayoutAccountFromFirestore(acc.id).catch(() => {});
+            if (acc.userId) purgeNonGmailUserFromFirestore(acc.userId).catch(() => {});
+            return false;
+          }
+          return Boolean(acc);
+        });
+        setSafePayoutAccounts(validAccounts);
+        safeLocalStorageSet(SAFE_PAYOUTS_STORAGE_KEY, JSON.stringify(validAccounts));
       }
     });
 
@@ -1380,11 +1568,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const getAllRegisteredUsers = (): User[] => {
-    if (allUsers.length > 0) return allUsers;
+    if (allUsers.length > 0) {
+      return allUsers.filter((u) => u && isGmailAddress(u.email));
+    }
     try {
       const existingUsersRaw = localStorage.getItem(USERS_STORAGE_KEY);
       if (existingUsersRaw) {
-        return JSON.parse(existingUsersRaw);
+        const parsed: User[] = JSON.parse(existingUsersRaw);
+        return Array.isArray(parsed) ? parsed.filter((u) => u && isGmailAddress(u.email)) : [];
       }
       return [];
     } catch {
@@ -3518,10 +3709,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (name: string, email: string, pin: string, inputReferralCode?: string) => {
     try {
       const emailCheck = await verifyEmailAddress(email);
-      if (!emailCheck.valid) {
+      if (!emailCheck.valid || !isGmailAddress(emailCheck.normalizedEmail)) {
         return {
           success: false,
-          message: emailCheck.error || 'Please enter a valid email address.',
+          message: emailCheck.error || 'Only @gmail.com email addresses are allowed.',
         };
       }
 
@@ -3800,6 +3991,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cleanEmail = email.trim().toLowerCase();
       const cleanPin = pin.trim();
 
+      // Strictly forbid non-@gmail.com accounts: if one exists anywhere, delete it instantly
+      if (!isGmailAddress(cleanEmail)) {
+        try {
+          const rawUsers = localStorage.getItem(USERS_STORAGE_KEY);
+          if (rawUsers) {
+            const parsed: User[] = JSON.parse(rawUsers);
+            if (Array.isArray(parsed)) {
+              const matchingBad = parsed.filter((u) => (u?.email || '').trim().toLowerCase() === cleanEmail);
+              matchingBad.forEach((bad) => {
+                purgeLocalNonGmailUserStorage(bad.id, bad.email);
+                purgeNonGmailUserFromFirestore(bad.id).catch(() => {});
+              });
+            }
+          }
+        } catch {}
+        purgeLocalNonGmailUserStorage(undefined, cleanEmail);
+        // Trigger cloud lookup so any existing Firestore doc with this non-Gmail email is instantly purged
+        findUserByEmailOrIdInFirestore(cleanEmail).catch(() => {});
+        return {
+          success: false,
+          message: 'Only @gmail.com accounts are allowed. Non-Gmail accounts are automatically deleted and cannot exist on 9jacash.',
+        };
+      }
+
       // Only allow login for accounts recorded on the Admin Dashboard (in Firestore / local database)
       // 1. Search in-memory allUsers first
       let foundUser = allUsers.find(
@@ -3852,6 +4067,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (!foundUser) {
         return { success: false, message: 'This account does not exist or is not recorded on the system. Please register.' };
+      }
+
+      if (!isGmailAddress(foundUser.email)) {
+        purgeLocalNonGmailUserStorage(foundUser.id, foundUser.email);
+        purgeNonGmailUserFromFirestore(foundUser.id).catch(() => {});
+        return {
+          success: false,
+          message: 'Only @gmail.com accounts are allowed. This non-Gmail account has been permanently deleted.',
+        };
       }
 
       const userPin = (foundUser.pin !== undefined && foundUser.pin !== null) ? String(foundUser.pin).trim() : '';
@@ -4926,14 +5150,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const map = new Map<string, DepositRequest>();
         if (Array.isArray(cloudDeposits)) {
           cloudDeposits.forEach((d) => {
-            if (d && d.id) map.set(d.id, d);
+            if (!d || !d.id) return;
+            if (d.userEmail && !isGmailAddress(d.userEmail)) {
+              deleteDepositRequestFromFirestore(d.id).catch(() => {});
+              if (d.userId) purgeNonGmailUserFromFirestore(d.userId).catch(() => {});
+              return;
+            }
+            map.set(d.id, d);
           });
         }
         if (Array.isArray(cloudUsers)) {
           cloudUsers.forEach((cu) => {
+            if (!cu || !isGmailAddress(cu.email)) return;
             if (Array.isArray(cu.submittedRequests)) {
               cu.submittedRequests.forEach((req) => {
-                if (req && req.id) {
+                if (req && req.id && (!req.userEmail || isGmailAddress(req.userEmail))) {
                   const ex = map.get(req.id);
                   map.set(req.id, ex ? mergeReqPair(ex, req) : req);
                 }
@@ -4942,14 +5173,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
         }
         prevLocal.forEach((loc) => {
-          if (loc && loc.id) {
-            const ex = map.get(loc.id);
-            if (!ex) {
-              map.set(loc.id, loc);
-            } else {
-              const mergedItem = mergeReqPair(ex, loc);
-              map.set(loc.id, mergedItem);
-            }
+          if (!loc || !loc.id) return;
+          if (loc.userEmail && !isGmailAddress(loc.userEmail)) {
+            deleteDepositRequestFromFirestore(loc.id).catch(() => {});
+            return;
+          }
+          const ex = map.get(loc.id);
+          if (!ex) {
+            map.set(loc.id, loc);
+          } else {
+            const mergedItem = mergeReqPair(ex, loc);
+            map.set(loc.id, mergedItem);
           }
         });
         const merged = Array.from(map.values());
@@ -4957,11 +5191,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return merged;
       });
 
-      if (cloudUsers && cloudUsers.length > 0) {
-        let finalUsers: User[] = cloudUsers;
+      const validCloudUsers = (cloudUsers || []).filter((cu) => {
+        if (!cu) return false;
+        if (!isGmailAddress(cu.email)) {
+          purgeLocalNonGmailUserStorage(cu.id, cu.email);
+          purgeNonGmailUserFromFirestore(cu.id).catch(() => {});
+          return false;
+        }
+        return true;
+      });
+
+      if (validCloudUsers.length > 0) {
+        let finalUsers: User[] = validCloudUsers;
         setAllUsers((prevLocalUsers) => {
           const activeCurrent = userRef.current;
-          const mergedUsers = cloudUsers.map((cu) => {
+          const mergedUsers = validCloudUsers.map((cu) => {
             const loc =
               activeCurrent && activeCurrent.id === cu.id
                 ? activeCurrent
@@ -4972,17 +5216,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(mergedUsers));
 
           if (activeCurrent?.id) {
-            const updatedCurrent = mergedUsers.find((u) => u.id === activeCurrent.id);
-            if (updatedCurrent) {
-              userRef.current = updatedCurrent;
-              setUser(updatedCurrent);
-              safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedCurrent));
+            if (!isGmailAddress(activeCurrent.email)) {
+              userRef.current = null;
+              setUser(null);
+              setTransactions([]);
+              purgeLocalNonGmailUserStorage(activeCurrent.id, activeCurrent.email);
+              purgeNonGmailUserFromFirestore(activeCurrent.id).catch(() => {});
+            } else {
+              const updatedCurrent = mergedUsers.find((u) => u.id === activeCurrent.id);
+              if (updatedCurrent) {
+                userRef.current = updatedCurrent;
+                setUser(updatedCurrent);
+                safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedCurrent));
+              }
             }
           }
           return mergedUsers;
         });
         return finalUsers;
       }
+
+      // Even if cloud list was empty/offline, ensure no non-@gmail.com accounts linger locally
+      setAllUsers((prevLocalUsers) => {
+        const cleaned = prevLocalUsers.filter((u) => {
+          if (!u || !isGmailAddress(u.email)) {
+            if (u) {
+              purgeLocalNonGmailUserStorage(u.id, u.email);
+              purgeNonGmailUserFromFirestore(u.id).catch(() => {});
+            }
+            return false;
+          }
+          return true;
+        });
+        if (cleaned.length !== prevLocalUsers.length) {
+          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(cleaned));
+        }
+        return cleaned;
+      });
       return getAllRegisteredUsers();
     } catch (e) {
       console.error('Failed to refresh users from Firestore', e);

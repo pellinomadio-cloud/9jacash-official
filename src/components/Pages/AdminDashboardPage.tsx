@@ -7,6 +7,7 @@ import {
   deleteSupportChatFromFirestore,
 } from '../../services/firebase.ts';
 import { formatTelegramUrl, formatTelegramHandle } from '../../utils/telegram.ts';
+import { isGmailAddress } from '../../utils/emailValidation.ts';
 import { compressImageFile } from '../../utils/imageCompressor.ts';
 import { AdminDailyRevenuePage } from './AdminDailyRevenuePage.tsx';
 import { AdminDeviceNotificationPage } from './AdminDeviceNotificationPage.tsx';
@@ -255,15 +256,21 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   const [userPage, setUserPage] = useState<number>(1);
   const USERS_PER_PAGE = 30;
 
-  const registeredUsers: User[] = (allUsers && allUsers.length > 0) ? allUsers : getAllRegisteredUsers();
-  const allUsersList = registeredUsers.length > 0 ? registeredUsers : (user ? [user] : []);
+  const rawRegisteredUsers: User[] = (allUsers && allUsers.length > 0) ? allUsers : getAllRegisteredUsers();
+  const registeredUsers: User[] = (rawRegisteredUsers || []).filter((u) => u && isGmailAddress(u.email));
+  const allUsersList: User[] =
+    registeredUsers.length > 0
+      ? registeredUsers
+      : user && isGmailAddress(user.email)
+      ? [user]
+      : [];
 
   // Merge support_chats collection with users/{userId}.supportChat for guaranteed real-time visibility
   const combinedSupportThreads: SupportChatThread[] = React.useMemo(() => {
     const map = new Map<string, SupportChatThread>();
 
     (allUsersList || []).forEach((u) => {
-      if (u && u.supportChat && Array.isArray(u.supportChat.messages) && u.supportChat.messages.length > 0) {
+      if (u && isGmailAddress(u.email) && u.supportChat && Array.isArray(u.supportChat.messages) && u.supportChat.messages.length > 0) {
         const deletedAt = deletedSupportMap[u.id] || 0;
         const threadTs = u.supportChat.lastTimestamp || 0;
         if (deletedAt > 0 && threadTs <= deletedAt) return;
@@ -279,6 +286,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
 
     (supportThreads || []).forEach((t) => {
       if (!t || !t.userId || !Array.isArray(t.messages) || t.messages.length === 0) return;
+      if (t.userEmail && !isGmailAddress(t.userEmail)) return;
       const deletedAt = deletedSupportMap[t.userId] || 0;
       const threadTs = t.lastTimestamp || 0;
       if (deletedAt > 0 && threadTs <= deletedAt) return;

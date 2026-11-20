@@ -92,19 +92,35 @@ const BLOCKED_DISPOSABLE_DOMAINS = new Set<string>([
   'localdomain',
 ]);
 
-// Known valid major TLDs (not exhaustive; generic TLD syntax still applies, but helps catch 1-letter / malformed TLDs)
+// Known valid local part & domain regexes
 const EMAIL_LOCAL_PART_REGEX = /^[a-z0-9](?:[a-z0-9._+-]{0,62}[a-z0-9])?$/i;
 const EMAIL_DOMAIN_LABEL_REGEX = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
 const EMAIL_TLD_REGEX = /^[a-z]{2,24}$/i;
 
 /**
- * Validates email format, characters, domain structure, typos, and blocks disposable/fake domains.
+ * Strict check verifying that an email address is a valid @gmail.com address.
+ * Any account whose email fails this check must be deleted and cannot exist on the platform.
+ */
+export function isGmailAddress(rawEmail?: string | null): boolean {
+  if (typeof rawEmail !== 'string') return false;
+  const trimmed = rawEmail.trim().toLowerCase();
+  if (!trimmed || /\s/.test(trimmed)) return false;
+  const parts = trimmed.split('@');
+  if (parts.length !== 2) return false;
+  const [localPart, domainPart] = parts;
+  if (!localPart || localPart.length > 64 || localPart.includes('..')) return false;
+  if (!EMAIL_LOCAL_PART_REGEX.test(localPart)) return false;
+  return domainPart === 'gmail.com';
+}
+
+/**
+ * Validates email format, characters, Gmail typos, and strictly enforces @gmail.com addresses only.
  */
 export function validateEmailFormat(rawEmail: string): EmailValidationResult {
   const trimmed = (rawEmail || '').trim().toLowerCase();
 
   if (!trimmed) {
-    return { valid: false, normalizedEmail: trimmed, error: 'Please enter your email address.' };
+    return { valid: false, normalizedEmail: trimmed, error: 'Please enter your @gmail.com email address.' };
   }
 
   if (/\s/.test(trimmed)) {
@@ -120,7 +136,7 @@ export function validateEmailFormat(rawEmail: string): EmailValidationResult {
     return {
       valid: false,
       normalizedEmail: trimmed,
-      error: 'Please enter a valid email address (example: name@gmail.com).',
+      error: 'Please enter a valid @gmail.com address (example: name@gmail.com).',
     };
   }
 
@@ -146,7 +162,7 @@ export function validateEmailFormat(rawEmail: string): EmailValidationResult {
     return {
       valid: false,
       normalizedEmail: trimmed,
-      error: 'Please enter a complete email domain (example: @gmail.com or @yahoo.com).',
+      error: 'Only @gmail.com email addresses are allowed (example: name@gmail.com).',
     };
   }
 
@@ -163,7 +179,7 @@ export function validateEmailFormat(rawEmail: string): EmailValidationResult {
     return {
       valid: false,
       normalizedEmail: trimmed,
-      error: 'Please enter a valid email domain.',
+      error: 'Only @gmail.com email addresses are allowed.',
     };
   }
 
@@ -182,14 +198,14 @@ export function validateEmailFormat(rawEmail: string): EmailValidationResult {
     return {
       valid: false,
       normalizedEmail: trimmed,
-      error: 'Email address has an invalid domain ending (example: .com, .ng, .org).',
+      error: 'Only @gmail.com email addresses are allowed.',
     };
   }
 
-  // Check common provider typos (e.g. gmail.con, gmal.com)
+  // Suggest correction for common Gmail typos (e.g. gmal.com, gmial.com, gmail.con)
   const suggestedDomain = DOMAIN_TYPO_SUGGESTIONS[domainPart];
-  if (suggestedDomain) {
-    const correctedEmail = `${localPart}@${suggestedDomain}`;
+  if (suggestedDomain === 'gmail.com') {
+    const correctedEmail = `${localPart}@gmail.com`;
     return {
       valid: false,
       normalizedEmail: trimmed,
@@ -203,7 +219,16 @@ export function validateEmailFormat(rawEmail: string): EmailValidationResult {
     return {
       valid: false,
       normalizedEmail: trimmed,
-      error: 'Temporary or fake email addresses are not allowed. Please use a real email address.',
+      error: 'Only real @gmail.com email addresses are allowed.',
+    };
+  }
+
+  // Strictly enforce @gmail.com only
+  if (domainPart !== 'gmail.com') {
+    return {
+      valid: false,
+      normalizedEmail: trimmed,
+      error: 'Only @gmail.com email addresses are allowed. Non-Gmail accounts are not permitted.',
     };
   }
 
@@ -214,8 +239,7 @@ export function validateEmailFormat(rawEmail: string): EmailValidationResult {
 }
 
 /**
- * Verifies that the email's domain actually exists and can receive email (DNS MX/A check via DNS-over-HTTPS).
- * Falls back gracefully if DNS lookup is unavailable or times out.
+ * Verifies that the email address is a valid @gmail.com address.
  */
 export async function verifyEmailAddress(rawEmail: string): Promise<EmailValidationResult> {
   const formatResult = validateEmailFormat(rawEmail);
@@ -223,76 +247,12 @@ export async function verifyEmailAddress(rawEmail: string): Promise<EmailValidat
     return formatResult;
   }
 
-  const [, domainPart] = formatResult.normalizedEmail.split('@');
-
-  // Fast-path for well-known verified providers to avoid unnecessary network wait
-  const trustedProviders = new Set([
-    'gmail.com',
-    'yahoo.com',
-    'yahoo.co.uk',
-    'outlook.com',
-    'hotmail.com',
-    'live.com',
-    'icloud.com',
-    'me.com',
-    'proton.me',
-    'protonmail.com',
-    'aol.com',
-    'zoho.com',
-    'ymail.com',
-  ]);
-  if (trustedProviders.has(domainPart)) {
-    return formatResult;
-  }
-
-  // Query public DNS-over-HTTPS for MX records on custom/uncommon domains
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 2500);
-
-    const mxRes = await fetch(
-      `https://dns.google/resolve?name=${encodeURIComponent(domainPart)}&type=MX`,
-      { signal: controller.signal }
-    );
-    clearTimeout(timeoutId);
-
-    if (mxRes.ok) {
-      const mxData = await mxRes.json();
-      // DNS Status 3 = NXDOMAIN (domain does not exist at all)
-      if (mxData.Status === 3) {
-        return {
-          valid: false,
-          normalizedEmail: formatResult.normalizedEmail,
-          error: `The email domain "@${domainPart}" does not exist. Please enter a valid email address.`,
-        };
-      }
-
-      if (Array.isArray(mxData.Answer) && mxData.Answer.length > 0) {
-        return formatResult;
-      }
-
-      // If no MX record found, check A record (some domains use A record fallback for mail)
-      const aController = new AbortController();
-      const aTimeout = setTimeout(() => aController.abort(), 2000);
-      const aRes = await fetch(
-        `https://dns.google/resolve?name=${encodeURIComponent(domainPart)}&type=A`,
-        { signal: aController.signal }
-      );
-      clearTimeout(aTimeout);
-
-      if (aRes.ok) {
-        const aData = await aRes.json();
-        if (aData.Status === 3 || !Array.isArray(aData.Answer) || aData.Answer.length === 0) {
-          return {
-            valid: false,
-            normalizedEmail: formatResult.normalizedEmail,
-            error: `Cannot verify mail server for "@${domainPart}". Please use a valid, active email address.`,
-          };
-        }
-      }
-    }
-  } catch {
-    // Graceful fallback if offline / DNS endpoint unreachable — rely on strict syntax validation
+  if (!isGmailAddress(formatResult.normalizedEmail)) {
+    return {
+      valid: false,
+      normalizedEmail: formatResult.normalizedEmail,
+      error: 'Only @gmail.com email addresses are allowed. Non-Gmail accounts are not permitted.',
+    };
   }
 
   return formatResult;
