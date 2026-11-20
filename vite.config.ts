@@ -101,9 +101,32 @@ function bankVerifyProxyPlugin(): Plugin {
   };
 }
 
+function safeViteClientPlugin(): Plugin {
+  return {
+    name: 'safe-vite-client-ws',
+    apply: 'serve',
+    enforce: 'post',
+    transform(code, id) {
+      if (id.includes('vite/dist/client/client.mjs') || id.includes('@vite/client')) {
+        let patched = code.replace(
+          'ws.send(JSON.stringify(data));',
+          'if (ws && ws.readyState === 1) { ws.send(JSON.stringify(data)); }'
+        );
+        patched = patched.replace(
+          'wsTransport.send(data);',
+          'try { wsTransport && wsTransport.send(data); } catch {}'
+        );
+        return { code: patched, map: null };
+      }
+      return null;
+    },
+  };
+}
+
 export default defineConfig(() => {
   return {
     plugins: [
+      safeViteClientPlugin(),
       bankVerifyProxyPlugin(),
       react(),
       tailwindcss(),

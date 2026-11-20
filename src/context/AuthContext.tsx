@@ -13,6 +13,8 @@ import {
   testConnection,
   saveUserToFirestore,
   subscribeToAllUsers,
+  subscribeToUserProfile,
+  updateUserPartnerCenterInFirestore,
   saveTransactionToFirestore,
   subscribeToUserTransactions,
   saveReferralRecordToFirestore,
@@ -191,7 +193,10 @@ interface AuthContextType {
   approveMembershipDirect: (userId: string) => boolean;
   setUserTierDirect: (userId: string, targetTier: number) => boolean;
   toggleVMode: (userId: string, targetStatus?: boolean) => boolean;
-  togglePartnerCenter: (userId: string, targetStatus?: boolean) => boolean;
+  togglePartnerCenter: (
+    userId: string,
+    targetStatus?: boolean
+  ) => Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }>;
   toggleRequireMembership: (userId: string, targetStatus?: boolean) => boolean;
   updateUserName: (newName: string) => Promise<boolean>;
   updateUserPin: (newPin: string) => Promise<boolean>;
@@ -1203,6 +1208,102 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       purgeNonGmailUserFromFirestore(badId).catch(() => {});
     }
   }, [user, purgeAccountFromPhone]);
+
+  // Dedicated real-time per-user profile subscription + same-browser instant sync
+  // Ensures Admin Dashboard toggles (like turning on P Center) appear IMMEDIATELY on the user's dashboard
+  useEffect(() => {
+    const activeUid = (user?.id || '').trim();
+    const activeEmail = (user?.email || '').trim().toLowerCase();
+    if (!activeUid && !activeEmail) return;
+
+    const applyIncomingProfile = (cloudUser: User) => {
+      if (!cloudUser || !isGmailAddress(cloudUser.email)) return;
+      const localBaseline = userRef.current;
+      const merged = mergeCloudAndLocalUser(cloudUser, localBaseline);
+      userRef.current = merged;
+      setUser(merged);
+      safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(merged));
+      setAllUsers((prev) => {
+        const exists = prev.some((u) => u.id === merged.id);
+        return exists ? prev.map((u) => (u.id === merged.id ? merged : u)) : [merged, ...prev];
+      });
+    };
+
+    // 1. Direct real-time Firestore single-document + email listener
+    const unsubProfile = subscribeToUserProfile(activeUid, activeEmail, (cloudUser) => {
+      applyIncomingProfile(cloudUser);
+    });
+
+    // 2. Instant cross-tab BroadcastChannel listener (sub-10ms sync on same browser/device)
+    let bc: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        bc = new BroadcastChannel('9jacash_user_profile_sync');
+        bc.onmessage = (ev) => {
+          const payload = ev.data;
+          if (!payload || payload.type !== 'partner_center_toggle') return;
+          const pId = (payload.userId || '').trim();
+          const pEmail = (payload.email || '').trim().toLowerCase();
+          if ((activeUid && pId === activeUid) || (activeEmail && pEmail === activeEmail)) {
+            const current = userRef.current;
+            if (!current) return;
+            const nextUser: User = {
+              ...current,
+              isPartnerCenterEnabled: Boolean(payload.enabled),
+              partnerCenterStatus: payload.partnerCenterStatus || current.partnerCenterStatus,
+              updatedAt: payload.updatedAt || new Date().toISOString(),
+            };
+            userRef.current = nextUser;
+            setUser(nextUser);
+            safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(nextUser));
+          }
+        };
+      }
+    } catch {
+      // BroadcastChannel not supported
+    }
+
+    // 3. Cross-tab localStorage event listener
+    const handleStorageSync = (ev: StorageEvent) => {
+      if (ev.key !== USERS_STORAGE_KEY && ev.key !== CURRENT_USER_KEY) return;
+      if (!ev.newValue) return;
+      try {
+        if (ev.key === CURRENT_USER_KEY) {
+          const parsed: User = JSON.parse(ev.newValue);
+          const pId = (parsed?.id || '').trim();
+          const pEmail = (parsed?.email || '').trim().toLowerCase();
+          if ((activeUid && pId === activeUid) || (activeEmail && pEmail === activeEmail)) {
+            applyIncomingProfile(parsed);
+          }
+        } else if (ev.key === USERS_STORAGE_KEY) {
+          const parsedList: User[] = JSON.parse(ev.newValue);
+          if (!Array.isArray(parsedList)) return;
+          const match = parsedList.find(
+            (u) =>
+              u &&
+              ((activeUid && (u.id || '').trim() === activeUid) ||
+                (activeEmail && (u.email || '').trim().toLowerCase() === activeEmail))
+          );
+          if (match) {
+            applyIncomingProfile(match);
+          }
+        }
+      } catch {
+        // Ignore malformed storage payload
+      }
+    };
+    window.addEventListener('storage', handleStorageSync);
+
+    return () => {
+      unsubProfile();
+      window.removeEventListener('storage', handleStorageSync);
+      if (bc) {
+        try {
+          bc.close();
+        } catch {}
+      }
+    };
+  }, [user?.id, user?.email]);
 
   // Real-time Firebase Firestore subscriptions
   useEffect(() => {
@@ -5977,38 +6078,102 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const togglePartnerCenter = (userId: string, targetStatus?: boolean): boolean => {
+  const togglePartnerCenter = async (
+    userId: string,
+    targetStatus?: boolean
+  ): Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }> => {
     try {
-      const existingUsers = getAllRegisteredUsers();
-      const idx = existingUsers.findIndex((u) => u.id === userId);
-      if (idx === -1) return false;
-      const target = existingUsers[idx];
+      const cleanUid = (userId || '').trim();
+      const baseUsers = allUsers.length > 0 ? [...allUsers] : getAllRegisteredUsers();
+      let idx = baseUsers.findIndex((u) => u && (u.id || '').trim() === cleanUid);
+
+      let target: User | undefined = idx !== -1 ? baseUsers[idx] : undefined;
+      if (!target && userRef.current && (userRef.current.id || '').trim() === cleanUid) {
+        target = userRef.current;
+      }
+      if (!target) {
+        const fallbackFromStorage = getAllRegisteredUsers();
+        target = fallbackFromStorage.find((u) => u && (u.id || '').trim() === cleanUid);
+      }
+      if (!target) {
+        return { ok: false, error: 'User record not found.' };
+      }
+
       const newStatus = typeof targetStatus === 'boolean' ? targetStatus : !target.isPartnerCenterEnabled;
+      const nextPartnerStatus = newStatus
+        ? (target.partnerCenterStatus || 'not_started')
+        : target.partnerCenterStatus;
       const nowMs = Date.now();
+      const nowIso = new Date(nowMs).toISOString();
 
       const updatedUser: User = {
         ...target,
         isPartnerCenterEnabled: newStatus,
-        partnerCenterStatus: newStatus
-          ? (target.partnerCenterStatus || 'not_started')
-          : target.partnerCenterStatus,
-        updatedAt: new Date(nowMs).toISOString(),
+        partnerCenterStatus: nextPartnerStatus,
+        updatedAt: nowIso,
       };
 
-      existingUsers[idx] = updatedUser;
-      setAllUsers([...existingUsers]);
-      safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
-      saveUserToFirestore(updatedUser).catch(console.error);
+      // 1. Immediately update React state + localStorage so UI reflects toggle instantly
+      const nextUsersList =
+        idx !== -1
+          ? baseUsers.map((u, i) => (i === idx ? updatedUser : u))
+          : [updatedUser, ...baseUsers];
+      setAllUsers(nextUsersList);
+      safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(nextUsersList));
 
-      if (user && user.id === userId) {
-        userRef.current = updatedUser;
-        setUser(updatedUser);
-        safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+      const activeNow = userRef.current || user;
+      const matchesCurrentUser =
+        activeNow &&
+        ((activeNow.id || '').trim() === (updatedUser.id || '').trim() ||
+          ((activeNow.email || '').trim().toLowerCase() !== '' &&
+            (activeNow.email || '').trim().toLowerCase() === (updatedUser.email || '').trim().toLowerCase()));
+
+      if (matchesCurrentUser) {
+        const mergedCurrent: User = {
+          ...activeNow,
+          isPartnerCenterEnabled: newStatus,
+          partnerCenterStatus: nextPartnerStatus,
+          updatedAt: nowIso,
+        };
+        userRef.current = mergedCurrent;
+        setUser(mergedCurrent);
+        safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(mergedCurrent));
+      }
+
+      // 2. Broadcast instantaneously to any other open tabs on the same device/browser
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          const bc = new BroadcastChannel('9jacash_user_profile_sync');
+          bc.postMessage({
+            type: 'partner_center_toggle',
+            userId: updatedUser.id,
+            email: updatedUser.email,
+            enabled: newStatus,
+            partnerCenterStatus: nextPartnerStatus,
+            updatedAt: nowIso,
+          });
+          bc.close();
+        }
+      } catch {
+        // Ignore BroadcastChannel unavailability
+      }
+
+      // 3. Push targeted lightweight write directly to Firestore so remote phones receive it immediately
+      const cloudResult = await updateUserPartnerCenterInFirestore(
+        updatedUser.id,
+        updatedUser.email,
+        newStatus,
+        nextPartnerStatus
+      );
+
+      // Backup full-doc sync if targeted write succeeded
+      if (cloudResult.ok) {
+        saveUserToFirestore(updatedUser, { forceAttempt: true }).catch(() => {});
       }
 
       if (newStatus && target.partnerCenterStatus !== 'approved') {
         sendNotificationToUser(
-          userId,
+          updatedUser.id,
           'Partners Cashout Line Unlocked (₦2,000,000)',
           'Partnership Center has been enabled on your dashboard. Tap the purple Partners Cashout Line button at the top of your dashboard to activate and receive ₦2,000,000 instantly upon approval.',
           'info',
@@ -6016,10 +6181,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       }
 
-      return true;
+      return cloudResult;
     } catch (e) {
       console.error('Toggle Partner Center error', e);
-      return false;
+      return { ok: false, error: 'Failed to update P Center status.' };
     }
   };
 

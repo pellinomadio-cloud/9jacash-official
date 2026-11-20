@@ -7,15 +7,32 @@
       (function() {
         var isViteWsError = function(msg) {
           if (!msg) return false;
-          var str = typeof msg === 'object' ? (msg.message || msg.reason || String(msg)) : String(msg);
+          var str = typeof msg === 'object'
+            ? ((msg.message || '') + ' ' + (msg.stack || '') + ' ' + (msg.reason || '') + ' ' + String(msg))
+            : String(msg);
           return str.indexOf('ws.send') !== -1 ||
-                 str.indexOf('[vite]') !== -1 ||
-                 str.indexOf('WebSocket') !== -1 ||
+                 str.indexOf('/@vite/client') !== -1 ||
+                 str.indexOf('[vite] failed to connect to websocket') !== -1 ||
                  str.indexOf('evaluating \'ws.send\'') !== -1;
         };
 
+        var origConsoleError = console.error;
+        if (typeof origConsoleError === 'function') {
+          console.error = function() {
+            var first = arguments[0];
+            var second = arguments[1];
+            if (
+              (typeof first === 'string' && first.indexOf('[vite]') !== -1 && (isViteWsError(first) || isViteWsError(second))) ||
+              isViteWsError(first)
+            ) {
+              return;
+            }
+            return origConsoleError.apply(console, arguments);
+          };
+        }
+
         window.addEventListener('error', function(event) {
-          if (isViteWsError(event.message) || (event.error && isViteWsError(event.error.message))) {
+          if (isViteWsError(event.message) || isViteWsError(event.filename) || isViteWsError(event.error)) {
             event.preventDefault();
             event.stopImmediatePropagation();
             return true;

@@ -763,42 +763,42 @@ const DashboardContent: React.FC = () => {
               onOpenNotifications={() => navigateTo('notifications')}
             />
 
+            {/* Purple P Center Button immediately at the top of the user dashboard (Admin-controlled) */}
+            {user?.isPartnerCenterEnabled && (
+              <button
+                type="button"
+                onClick={() => navigateTo('partner_center')}
+                className="w-full min-h-[60px] px-4 py-3.5 rounded-2xl bg-gradient-to-r from-purple-700 via-purple-600 to-violet-600 hover:from-purple-600 hover:via-purple-500 hover:to-violet-500 text-white border border-purple-400/50 shadow-lg shadow-purple-700/30 flex items-center justify-between gap-3 transition-all active:scale-[0.98] cursor-pointer text-left animate-in fade-in slide-in-from-top-2 duration-200"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
+                    <Crown className="w-5 h-5 text-amber-300" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-sm font-extrabold tracking-tight block truncate text-white">
+                      Partners Cashout Line · ₦2,000,000
+                    </span>
+                    <span className="text-[11px] text-purple-100 block truncate">
+                      {user.partnerCenterStatus === 'approved'
+                        ? 'Partnership Center Activated · ₦2,000,000 Credited'
+                        : user.partnerCenterStatus === 'pending'
+                        ? '₦180,000 Proof Submitted · Waiting for Approval'
+                        : 'Tap to activate Partnership Center & get ₦2,000,000 instantly'}
+                    </span>
+                  </div>
+                </div>
+                <div className="w-8 h-8 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                  <ArrowRight className="w-4 h-4 text-white" />
+                </div>
+              </button>
+            )}
+
             {/* Android Device Notification Handler (status bar alerts on dashboard visit) */}
             <DeviceNotificationHandler isActive={currentScreen === 'dashboard'} />
 
             {/* Tab Switcher Content */}
             {activeTab === 'home' && (
               <main className="space-y-4 flex-1">
-                {/* Purple P Center Button at the top of the user dashboard (Admin-controlled) */}
-                {user?.isPartnerCenterEnabled && (
-                  <button
-                    type="button"
-                    onClick={() => navigateTo('partner_center')}
-                    className="w-full min-h-[60px] px-4 py-3.5 rounded-2xl bg-gradient-to-r from-purple-700 via-purple-600 to-violet-600 hover:from-purple-600 hover:via-purple-500 hover:to-violet-500 text-white border border-purple-400/50 shadow-lg shadow-purple-700/30 flex items-center justify-between gap-3 transition-all active:scale-[0.98] cursor-pointer text-left"
-                  >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-10 h-10 rounded-xl bg-white/15 border border-white/20 flex items-center justify-center shrink-0">
-                        <Crown className="w-5 h-5 text-amber-300" />
-                      </div>
-                      <div className="min-w-0">
-                        <span className="text-sm font-extrabold tracking-tight block truncate text-white">
-                          Partners Cashout Line · ₦2,000,000
-                        </span>
-                        <span className="text-[11px] text-purple-100 block truncate">
-                          {user.partnerCenterStatus === 'approved'
-                            ? 'Partnership Center Activated · ₦2,000,000 Credited'
-                            : user.partnerCenterStatus === 'pending'
-                            ? '₦180,000 Proof Submitted · Waiting for Approval'
-                            : 'Tap to activate Partnership Center & get ₦2,000,000 instantly'}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="w-8 h-8 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
-                      <ArrowRight className="w-4 h-4 text-white" />
-                    </div>
-                  </button>
-                )}
-
                 {/* 1. Total Balance Card */}
                 <BalanceCard
                   onNavigateToWithdraw={() => navigateTo('withdraw')}

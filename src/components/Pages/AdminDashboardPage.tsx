@@ -2294,15 +2294,25 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                     {/* P Center (Partners Cashout Line ₦2,000,000) Toggle */}
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         const nextStatus = !u.isPartnerCenterEnabled;
-                        togglePartnerCenter(u.id, nextStatus);
-                        setActionSuccessMsg(
-                          nextStatus
-                            ? `P Center turned ON for ${u.name || 'User'}! The purple Partners Cashout Line (₦2,000,000) button is now visible at the top of their dashboard.`
-                            : `P Center turned OFF for ${u.name || 'User'}.`
-                        );
-                        setTimeout(() => setActionSuccessMsg(''), 4500);
+                        const result = await togglePartnerCenter(u.id, nextStatus);
+                        if (result.ok) {
+                          setActionSuccessMsg(
+                            nextStatus
+                              ? `P Center turned ON for ${u.name || 'User'}! Synced live — the purple Partners Cashout Line (₦2,000,000) button is now visible immediately on their dashboard.`
+                              : `P Center turned OFF for ${u.name || 'User'} (synced live).`
+                          );
+                        } else if (result.quotaExceeded) {
+                          setActionSuccessMsg(
+                            `Firebase daily quota exceeded — could not sync P Center to ${u.name || 'User'}'s phone until quota resets or is upgraded.`
+                          );
+                        } else {
+                          setActionSuccessMsg(
+                            `Saved locally, but cloud sync failed (${result.error || 'network error'}). Please check internet and try again.`
+                          );
+                        }
+                        setTimeout(() => setActionSuccessMsg(''), 5500);
                       }}
                       className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
                         u.isPartnerCenterEnabled

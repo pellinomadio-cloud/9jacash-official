@@ -676,6 +676,137 @@ export function subscribeToAllUsers(
   }
 }
 
+/**
+ * Direct, lightweight Firestore write for toggling P Center (Partners Cashout Line)
+ * so the user's dashboard receives the update immediately without waiting on full-doc writes
+ * or being blocked by transient read-quota cooldowns.
+ */
+export async function updateUserPartnerCenterInFirestore(
+  userId: string,
+  email: string,
+  enabled: boolean,
+  partnerCenterStatus?: User['partnerCenterStatus']
+): Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }> {
+  const cleanUid = (userId || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanUid || !isGmailAddress(cleanEmail)) {
+    return { ok: false, error: 'Invalid Gmail user record.' };
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { ok: false, error: 'Offline. Connect to the internet to sync P Center.' };
+  }
+
+  const nowIso = new Date().toISOString();
+  const patch = sanitizeForFirestore({
+    id: cleanUid,
+    email: cleanEmail,
+    isPartnerCenterEnabled: Boolean(enabled),
+    ...(partnerCenterStatus ? { partnerCenterStatus } : {}),
+    updatedAt: nowIso,
+  });
+
+  try {
+    // 1. Always write directly to primary doc users/{userId}
+    await setDoc(doc(db, USERS_COLLECTION, cleanUid), patch, { merge: true });
+
+    // 2. Also patch any legacy doc whose Firestore doc ID differs from user.id
+    try {
+      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', cleanEmail));
+      const snap = await getDocs(qEmail);
+      const extraWrites: Promise<void>[] = [];
+      snap.docs.forEach((d) => {
+        if (d.id !== cleanUid) {
+          extraWrites.push(setDoc(doc(db, USERS_COLLECTION, d.id), patch, { merge: true }));
+        }
+      });
+      if (extraWrites.length > 0) {
+        await Promise.allSettled(extraWrites);
+      }
+    } catch {
+      // Primary doc already succeeded
+    }
+
+    return { ok: true };
+  } catch (error) {
+    const info = handleFirestoreError(error, OperationType.WRITE, `${USERS_COLLECTION}/${cleanUid}`);
+    const errText = info.error || 'Failed to sync P Center status.';
+    const quotaExceeded =
+      errText.toLowerCase().includes('quota') ||
+      errText.toLowerCase().includes('resource-exhausted') ||
+      errText.toLowerCase().includes('resource has been exhausted');
+    return { ok: false, error: errText, quotaExceeded };
+  }
+}
+
+/**
+ * Direct real-time listener for a single logged-in user's Firestore document (plus email match)
+ * so admin toggles like P Center appear immediately on the user's dashboard without waiting
+ * for full collection broadcasts.
+ */
+export function subscribeToUserProfile(
+  userId: string,
+  email: string | undefined,
+  onUpdate: (cloudUser: User, meta: { fromCache: boolean }) => void
+): Unsubscribe {
+  const cleanUid = (userId || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const unsubs: Unsubscribe[] = [];
+
+  if (cleanUid) {
+    try {
+      const unsubDoc = onSnapshot(
+        doc(db, USERS_COLLECTION, cleanUid),
+        (snap) => {
+          if (!snap.exists()) return;
+          const valid = validateOrPurgeCloudUser(snap.data() as User, snap.id);
+          if (valid) {
+            onUpdate(valid, { fromCache: Boolean(snap.metadata?.fromCache) });
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, `${USERS_COLLECTION}/${cleanUid}`);
+        }
+      );
+      unsubs.push(unsubDoc);
+    } catch {
+      // Ignore listener setup error
+    }
+  }
+
+  if (cleanEmail && isGmailAddress(cleanEmail)) {
+    try {
+      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', cleanEmail));
+      const unsubEmail = onSnapshot(
+        qEmail,
+        (snap) => {
+          if (snap.empty) return;
+          // Prefer exact userId match if multiple docs exist, else first doc
+          const exact = snap.docs.find((d) => d.id === cleanUid || (d.data() as User)?.id === cleanUid);
+          const chosen = exact || snap.docs[0];
+          const valid = validateOrPurgeCloudUser(chosen.data() as User, chosen.id);
+          if (valid) {
+            onUpdate(valid, { fromCache: Boolean(snap.metadata?.fromCache) });
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.LIST, `${USERS_COLLECTION}?email=${cleanEmail}`);
+        }
+      );
+      unsubs.push(unsubEmail);
+    } catch {
+      // Ignore listener setup error
+    }
+  }
+
+  return () => {
+    unsubs.forEach((fn) => {
+      try {
+        fn();
+      } catch {}
+    });
+  };
+}
+
 // 2. Transactions Sync
 export async function saveTransactionToFirestore(tx: Transaction, userId: string): Promise<void> {
   if (isFirestoreQuotaExhausted()) return;
