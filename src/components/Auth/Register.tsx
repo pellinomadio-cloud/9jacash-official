@@ -30,7 +30,7 @@ interface RegisterProps {
 }
 
 export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
-  const { register } = useAuth();
+  const { register, accountRemovedMessage, clearAccountRemovedMessage } = useAuth();
   const { isLight } = useTheme();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -80,6 +80,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (accountRemovedMessage) clearAccountRemovedMessage();
     setEmailTouched(true);
 
     // Enforce 10 accounts limit per device
@@ -190,9 +191,9 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
               <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
-        ) : error ? (
+        ) : (error || accountRemovedMessage) ? (
           <div className="mb-5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 dark:text-red-400 text-xs text-center font-bold animate-shake">
-            {error}
+            {error || accountRemovedMessage}
           </div>
         ) : null}
 

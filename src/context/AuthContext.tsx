@@ -41,6 +41,7 @@ import {
   deleteAdminQuickCodeFromFirestore,
   getUserFromFirestore,
   findUserByEmailOrIdInFirestore,
+  verifyUserExistsOnServerInFirestore,
   deleteUserFromFirestore,
   purgeNonGmailUserFromFirestore,
   deleteDepositRequestFromFirestore,
@@ -89,6 +90,9 @@ interface AuthContextType {
   referrals: ReferralRecord[];
   allUsers: User[];
   isAuthenticated: boolean;
+  accountRemovedMessage: string | null;
+  clearAccountRemovedMessage: () => void;
+  verifyActiveAccountOnAdminDashboard: () => Promise<boolean>;
   isBalanceHidden: boolean;
   toggleBalanceVisibility: () => void;
   showTelegramAdvert: boolean;
@@ -880,6 +884,109 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const userRef = useRef<User | null>(null);
   userRef.current = user;
 
+  const [accountRemovedMessage, setAccountRemovedMessage] = useState<string | null>(null);
+  const clearAccountRemovedMessage = useCallback(() => {
+    setAccountRemovedMessage(null);
+  }, []);
+
+  /**
+   * Completely removes an account from this phone (active session, localStorage, transactions,
+   * profile picture, allUsers cache, and device registry) when it does not exist on the Admin Dashboard.
+   */
+  const purgeAccountFromPhone = useCallback((userId?: string, email?: string, notice?: string) => {
+    const cleanUid = (userId || '').trim();
+    const cleanEmail = (email || '').trim().toLowerCase();
+
+    const active = userRef.current;
+    const matchesActive = Boolean(
+      active &&
+        ((cleanUid && (active.id || '').trim() === cleanUid) ||
+          (cleanEmail && (active.email || '').trim().toLowerCase() === cleanEmail) ||
+          (!cleanUid && !cleanEmail))
+    );
+
+    if (matchesActive) {
+      userRef.current = null;
+      setUser(null);
+      setTransactions([]);
+      setKycPendingWithdrawalState(null);
+      setShowKycNoticeModal(false);
+    }
+
+    purgeLocalNonGmailUserStorage(cleanUid || active?.id, cleanEmail || active?.email);
+
+    // Also explicitly remove matching Gmail user from USERS_STORAGE_KEY and CURRENT_USER_KEY
+    try {
+      const savedCurrent = localStorage.getItem(CURRENT_USER_KEY);
+      if (savedCurrent) {
+        const parsed = JSON.parse(savedCurrent);
+        const pId = (parsed?.id || '').trim();
+        const pEmail = (parsed?.email || '').trim().toLowerCase();
+        if (
+          (cleanUid && pId === cleanUid) ||
+          (cleanEmail && pEmail === cleanEmail) ||
+          matchesActive
+        ) {
+          localStorage.removeItem(CURRENT_USER_KEY);
+        }
+      }
+    } catch {
+      localStorage.removeItem(CURRENT_USER_KEY);
+    }
+
+    setAllUsers((prev) => {
+      const next = prev.filter((u) => {
+        if (!u) return false;
+        const uId = (u.id || '').trim();
+        const uEmail = (u.email || '').trim().toLowerCase();
+        if (cleanUid && uId === cleanUid) return false;
+        if (cleanEmail && uEmail === cleanEmail) return false;
+        return isGmailAddress(u.email);
+      });
+      safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(next));
+      return next;
+    });
+
+    if (notice) {
+      setAccountRemovedMessage(notice);
+    }
+  }, []);
+
+  const verifyActiveAccountOnAdminDashboard = useCallback(async (): Promise<boolean> => {
+    const active = userRef.current;
+    if (!active || (!active.id && !active.email)) return true;
+
+    if (!isGmailAddress(active.email)) {
+      purgeAccountFromPhone(
+        active.id,
+        active.email,
+        'Only @gmail.com accounts are allowed. Non-Gmail accounts have been removed.'
+      );
+      purgeNonGmailUserFromFirestore(active.id).catch(() => {});
+      return false;
+    }
+
+    const verifyRes = await verifyUserExistsOnServerInFirestore(active.id, active.email);
+    if (verifyRes.status === 'not_found') {
+      purgeAccountFromPhone(
+        active.id,
+        active.email,
+        'This account is not listed on the Admin Dashboard and has been removed from this device.'
+      );
+      return false;
+    }
+
+    if (verifyRes.status === 'exists') {
+      const merged = mergeCloudAndLocalUser(verifyRes.user, userRef.current || active);
+      userRef.current = merged;
+      setUser(merged);
+      safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(merged));
+      return true;
+    }
+
+    return true;
+  }, [purgeAccountFromPhone]);
+
   // Load stored fallback data
   const loadStoredConfig = useCallback(() => {
     try {
@@ -1020,17 +1127,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 2. Test Firestore connection on boot
     testConnection();
 
-    // 3. Verify active session user against Firestore (lookup by exact ID first, then email fallback)
+    // 3. Authoritatively verify active session user against LIVE Firestore server (Admin Dashboard)
     const restoredUser = currentUserSession;
     if (restoredUser && (restoredUser.id || restoredUser.email)) {
-      const userLookupKey = restoredUser.id || (restoredUser.email || '').trim().toLowerCase();
-      findUserByEmailOrIdInFirestore(userLookupKey)
-        .then(async (directCloudUser) => {
-          let cloudUser = directCloudUser;
-          if (!cloudUser && restoredUser.email && restoredUser.id) {
-            cloudUser = await findUserByEmailOrIdInFirestore(restoredUser.email.trim().toLowerCase()).catch(() => null);
+      verifyUserExistsOnServerInFirestore(restoredUser.id, restoredUser.email)
+        .then((verifyRes) => {
+          if (verifyRes.status === 'not_found') {
+            // Confirmed by server: account email/data does NOT exist on Admin Dashboard -> wipe from phone immediately!
+            purgeAccountFromPhone(
+              restoredUser.id,
+              restoredUser.email,
+              'This account does not exist on the Admin Dashboard and has been removed from this device.'
+            );
+            return;
           }
-          if (cloudUser) {
+          if (verifyRes.status === 'exists') {
+            const cloudUser = verifyRes.user;
             const localBaseline = userRef.current || restoredUser;
             const merged = mergeCloudAndLocalUser(cloudUser, localBaseline);
             setUser(merged);
@@ -1051,36 +1163,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               saveUserToFirestore(merged).catch(console.error);
             }
           }
-          // Note: If cloudUser is null on cold start (e.g. initial network lag or offline),
-          // we do not purge immediately to prevent false logouts. The live snapshot listener handles verification.
         })
         .catch(() => {});
     }
     loadStoredConfig();
-  }, [loadStoredConfig]);
+  }, [loadStoredConfig, purgeAccountFromPhone]);
 
   // Instant guard: if active session user ever has a non-@gmail.com email, purge immediately from app & Firestore
   useEffect(() => {
     if (user && !isGmailAddress(user.email)) {
       const badId = user.id;
       const badEmail = user.email;
-      userRef.current = null;
-      setUser(null);
-      setTransactions([]);
-      purgeLocalNonGmailUserStorage(badId, badEmail);
+      purgeAccountFromPhone(
+        badId,
+        badEmail,
+        'Only @gmail.com accounts are allowed. Non-Gmail accounts have been removed.'
+      );
       purgeNonGmailUserFromFirestore(badId).catch(() => {});
-      setAllUsers((prev) => {
-        const cleaned = prev.filter((u) => u && isGmailAddress(u.email) && u.id !== badId);
-        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(cleaned));
-        return cleaned;
-      });
     }
-  }, [user]);
+  }, [user, purgeAccountFromPhone]);
 
   // Real-time Firebase Firestore subscriptions
   useEffect(() => {
     // 1. Subscribe to all registered users in Firestore (non-@gmail.com users are automatically purged)
-    const unsubUsers = subscribeToAllUsers((rawCloudUsers) => {
+    const unsubUsers = subscribeToAllUsers((rawCloudUsers, meta) => {
+      const isAuthoritativeServerSnapshot = !meta?.fromCache;
       const cloudUsers = (rawCloudUsers || []).filter((u) => {
         if (!u) return false;
         if (!isGmailAddress(u.email)) {
@@ -1181,22 +1288,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return (currentEmailClean && cuEmail === currentEmailClean) || (currentId && cuId === currentId);
           });
 
-          // Only purge if the user is missing by BOTH email and ID, confirmed via direct query
-          if (currentLoggedIn && (currentLoggedIn.id || currentLoggedIn.email) && !matchingCloudUser) {
-            const searchKey = currentId || currentEmailClean;
-            findUserByEmailOrIdInFirestore(searchKey).then((confirmedUser) => {
-              if (!confirmedUser && userRef.current) {
-                console.warn(`User ${searchKey} is not recorded on the Admin Dashboard. Purging from app.`);
-                userRef.current = null;
-                setUser(null);
-                localStorage.removeItem(CURRENT_USER_KEY);
-                if (currentId) {
-                  localStorage.removeItem(`9jacash_kyc_pending_withdrawal_${currentId}`);
-                  localStorage.removeItem(`${TRANSACTIONS_PREFIX}${currentId}`);
+          // Only purge if the user is missing by BOTH email and ID on an authoritative server snapshot, confirmed via live server check
+          if (
+            isAuthoritativeServerSnapshot &&
+            currentLoggedIn &&
+            (currentLoggedIn.id || currentLoggedIn.email) &&
+            !matchingCloudUser
+          ) {
+            verifyUserExistsOnServerInFirestore(currentId, currentEmailClean)
+              .then((verifyRes) => {
+                if (verifyRes.status === 'not_found' && userRef.current) {
+                  purgeAccountFromPhone(
+                    currentId,
+                    currentEmailClean,
+                    'This account is not listed on the Admin Dashboard and has been removed from this device.'
+                  );
                 }
-                setTransactions([]);
-              }
-            }).catch(() => {});
+              })
+              .catch(() => {});
           }
 
           // Clean device account registry so deleted/unrecorded accounts do not linger on device
@@ -1245,22 +1354,43 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               lastAutoSyncedHashRef.current = syncHash;
               saveUserToFirestore(mergedUser).catch(console.error);
             }
-          } else if (userRef.current) {
-            // Confirm missing status before purging
-            const searchKey = currentEmail || currentUid;
-            findUserByEmailOrIdInFirestore(searchKey).then((confirmedUser) => {
-              if (!confirmedUser && userRef.current) {
-                console.warn(`User ${searchKey} does not exist on Admin Dashboard. Logging out.`);
-                userRef.current = null;
-                setUser(null);
-                localStorage.removeItem(CURRENT_USER_KEY);
-                setTransactions([]);
-              }
-            }).catch(() => {});
+          } else if (isAuthoritativeServerSnapshot && userRef.current) {
+            // Confirm directly on live Firestore server before purging
+            verifyUserExistsOnServerInFirestore(currentUid, currentEmail)
+              .then((verifyRes) => {
+                if (verifyRes.status === 'not_found' && userRef.current) {
+                  purgeAccountFromPhone(
+                    currentUid,
+                    currentEmail,
+                    'This account is not listed on the Admin Dashboard and has been removed from this device.'
+                  );
+                }
+              })
+              .catch(() => {});
           }
         }
+      } else if (isAuthoritativeServerSnapshot) {
+        // Authoritative server snapshot confirmed 0 registered users on Admin Dashboard:
+        // wipe local user caches and verify/purge active session on this phone
+        setAllUsers([]);
+        safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([]));
+        safeLocalStorageSet(DEVICE_ACCOUNTS_STORAGE_KEY, JSON.stringify([]));
+        const activeUser = userRef.current;
+        if (activeUser && (activeUser.id || activeUser.email)) {
+          verifyUserExistsOnServerInFirestore(activeUser.id, activeUser.email)
+            .then((verifyRes) => {
+              if (verifyRes.status === 'not_found' && userRef.current) {
+                purgeAccountFromPhone(
+                  activeUser.id,
+                  activeUser.email,
+                  'This account is not listed on the Admin Dashboard and has been removed from this device.'
+                );
+              }
+            })
+            .catch(() => {});
+        }
       } else {
-        // Still strip any non-@gmail.com accounts lingering in local cache
+        // Cache snapshot was empty; still strip any non-@gmail.com accounts lingering in local cache
         setAllUsers((prevLocal) => {
           const validOnly = prevLocal.filter((u) => {
             if (!u || !isGmailAddress(u.email)) {
@@ -1300,8 +1430,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsCompanyAccountLoading(false);
     }, 3500);
 
-    // Auto-retry fetching company account when mobile network reconnects or app returns to foreground
-    const handleReconnectRefresh = () => {
+    // Auto-retry fetching company account and verifying user existence on reconnect / foreground resume
+    let lastVisibilityVerifyTs = 0;
+    const handleReconnectRefresh = (ev?: Event) => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       getCompanyAccountFromFirestore()
         .then((raw) => {
@@ -1318,6 +1449,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         })
         .catch(() => {});
+
+      const nowMs = Date.now();
+      const isOnlineEvent = ev?.type === 'online';
+      if (userRef.current && (isOnlineEvent || nowMs - lastVisibilityVerifyTs > 30000)) {
+        lastVisibilityVerifyTs = nowMs;
+        verifyActiveAccountOnAdminDashboard().catch(() => {});
+      }
     };
 
     if (typeof window !== 'undefined') {
@@ -3705,9 +3843,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user?.id, allUsers.length]);
 
-  // Firebase Registration with real-time Firestore synchronization and Instant Referral Credit
+  // Firebase Registration with strict Admin Dashboard / Firestore server persistence
   const register = async (name: string, email: string, pin: string, inputReferralCode?: string) => {
     try {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return {
+          success: false,
+          message: 'You are offline. Please connect to the internet to create an account.',
+        };
+      }
+
       const emailCheck = await verifyEmailAddress(email);
       if (!emailCheck.valid || !isGmailAddress(emailCheck.normalizedEmail)) {
         return {
@@ -3719,18 +3864,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const cleanEmail = emailCheck.normalizedEmail;
       let existingUsers = getAllRegisteredUsers();
 
-      // Check if user already exists locally or in cloud
-      let existing = existingUsers.find((u) => (u?.email || '').toLowerCase() === cleanEmail);
-      if (!existing && existingUsers.length === 0) {
-        try {
-          const cloudCheck = await findUserByReferralCodeInFirestore(cleanEmail);
-          if (cloudCheck && (cloudCheck.email || '').toLowerCase().trim() === cleanEmail) {
-            existing = cloudCheck;
-          }
-        } catch {}
-      }
-
-      if (existing) {
+      // Check live Firestore server FIRST so duplicate emails on Admin Dashboard are caught accurately
+      const serverDupCheck = await verifyUserExistsOnServerInFirestore(undefined, cleanEmail);
+      if (serverDupCheck.status === 'exists') {
         return { success: false, message: 'An account with this email already exists. Please log in.' };
       }
 
@@ -3810,13 +3946,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedAt: new Date(regNowMs).toISOString(),
       };
 
-      // Record account on device to enforce the 10 accounts limit
+      // CRITICAL: Persist new user to Firebase Firestore (Admin Dashboard) BEFORE allowing account to exist on phone!
+      const primarySaveResult = await Promise.race([
+        saveUserToFirestore(newUser, { forceAttempt: true }),
+        new Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }>((resolve) =>
+          setTimeout(() => resolve({ ok: false, error: 'Connection timed out while registering account on server.' }), 10000)
+        ),
+      ]);
+
+      if (!primarySaveResult.ok) {
+        return {
+          success: false,
+          message: primarySaveResult.quotaExceeded
+            ? 'Server database is temporarily busy (daily quota reached). Accounts cannot be created until they can be recorded on the Admin Dashboard. Please try again later.'
+            : 'Unable to register your account on the server right now. Please check your internet connection and try again.',
+        };
+      }
+
+      // Record account on device only after confirmed server registration
       recordAccountOnDevice(cleanEmail);
+      setAccountRemovedMessage(null);
 
       let initialTxs: Transaction[] = [];
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+
+      const firestoreTasks: Promise<any>[] = [];
 
       // If registered with a referral link or code, grant ₦3,000 welcome bonus to the referred user!
       if (welcomeBonus > 0) {
@@ -3835,10 +3991,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: now.toISOString(),
         };
         initialTxs.push(welcomeTx);
-        saveTransactionToFirestore(welcomeTx, newUser.id).catch(console.error);
+        firestoreTasks.push(saveTransactionToFirestore(welcomeTx, newUser.id));
       }
-
-      const firestoreTasks: Promise<any>[] = [saveUserToFirestore(newUser)];
 
       // If registered with a valid referrer, credit ₦15,000 bonus directly to the referrer's wallet balance!
       let updatedReferrerToStore: User | null = null;
@@ -3933,11 +4087,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       }
 
-      // Wait up to 2.5s for Firestore writes so cross-device referral rewards are persisted reliably
-      await Promise.race([
-        Promise.all(firestoreTasks),
-        new Promise((resolve) => setTimeout(resolve, 2500)),
-      ]).catch(console.error);
+      if (firestoreTasks.length > 0) {
+        await Promise.race([
+          Promise.all(firestoreTasks),
+          new Promise((resolve) => setTimeout(resolve, 2500)),
+        ]).catch(console.error);
+      }
 
       // Update local state and storage - accurately ensuring the updated referrer is persisted
       let updatedAll = existingUsers.filter((u) => u.id !== newUser.id);
@@ -4015,62 +4170,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      // Only allow login for accounts recorded on the Admin Dashboard (in Firestore / local database)
-      // 1. Search in-memory allUsers first
-      let foundUser = allUsers.find(
-        (u) => (u?.email || '').trim().toLowerCase() === cleanEmail
-      );
-
-      // 2. Search local storage registered users (admin dashboard users cache)
-      if (!foundUser) {
-        const localList = getAllRegisteredUsers();
-        foundUser = localList.find(
-          (u) => (u?.email || '').trim().toLowerCase() === cleanEmail
-        );
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        return {
+          success: false,
+          message: 'You are offline. Please connect to the internet to sign in.',
+        };
       }
 
-      // 3. Query Firestore directly by email or ID
-      if (!foundUser) {
-        try {
-          const directMatch = await findUserByEmailOrIdInFirestore(cleanEmail);
-          if (directMatch) {
-            foundUser = directMatch;
-          }
-        } catch (e) {
-          console.warn('Direct Firestore email lookup error:', e);
-        }
+      // ALWAYS verify directly against the LIVE Firestore server (Admin Dashboard) — never trust stale local cache!
+      const serverCheck = await verifyUserExistsOnServerInFirestore(undefined, cleanEmail);
+
+      if (serverCheck.status === 'not_found') {
+        // Account does NOT exist on Admin Dashboard -> wipe any local trace from this phone immediately
+        purgeAccountFromPhone(undefined, cleanEmail);
+        return {
+          success: false,
+          message: 'This account does not exist on the Admin Dashboard and cannot exist on this device. Please register a new account.',
+        };
       }
 
-      // 4. Query all users from Firestore
-      if (!foundUser) {
-        try {
-          const cloudUsersList = await getAllUsersFromFirestore();
-          if (cloudUsersList && cloudUsersList.length > 0) {
-            foundUser = cloudUsersList.find(
-              (u) => (u?.email || '').trim().toLowerCase() === cleanEmail
-            );
-          }
-        } catch (e) {
-          console.warn('getAllUsersFromFirestore lookup error:', e);
-        }
+      if (serverCheck.status === 'error') {
+        return {
+          success: false,
+          message: serverCheck.quotaExceeded
+            ? 'Server database is temporarily busy (daily quota reached). Please try again shortly.'
+            : 'Unable to verify your account with the server right now. Please check your internet connection and try again.',
+        };
       }
 
-      // 5. Final fallback: find by referral code or handle
-      if (!foundUser) {
-        try {
-          const refMatch = await findUserByReferralCodeInFirestore(cleanEmail);
-          if (refMatch && (refMatch.email || '').trim().toLowerCase() === cleanEmail) {
-            foundUser = refMatch;
-          }
-        } catch {}
-      }
-
-      if (!foundUser) {
-        return { success: false, message: 'This account does not exist or is not recorded on the system. Please register.' };
-      }
+      const foundUser = serverCheck.user;
+      setAccountRemovedMessage(null);
 
       if (!isGmailAddress(foundUser.email)) {
-        purgeLocalNonGmailUserStorage(foundUser.id, foundUser.email);
+        purgeAccountFromPhone(foundUser.id, foundUser.email);
         purgeNonGmailUserFromFirestore(foundUser.id).catch(() => {});
         return {
           success: false,
@@ -5968,6 +6100,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         referrals,
         allUsers,
         isAuthenticated: !!user,
+        accountRemovedMessage,
+        clearAccountRemovedMessage,
+        verifyActiveAccountOnAdminDashboard,
         isBalanceHidden,
         toggleBalanceVisibility,
         showTelegramAdvert,

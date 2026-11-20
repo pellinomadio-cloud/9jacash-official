@@ -58,6 +58,7 @@ import { BannedAccountScreen } from './components/Pages/BannedAccountScreen.tsx'
 import { OfflineScreen } from './components/Common/OfflineScreen.tsx';
 import { ActiveTab, CurrentScreen, Transaction, SupportChatThread } from './types/index.ts';
 import { subscribeToUserSupportChat } from './services/firebase.ts';
+import { verifyInternetConnection } from './utils/networkCheck.ts';
 
 const SCREEN_TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -841,41 +842,105 @@ const DashboardContent: React.FC = () => {
 };
 
 const MainApp: React.FC = () => {
-  const { isAuthenticated, user } = useAuth();
-  
-  // Offline Guard: Prevent users from using the app when offline
+  const { isAuthenticated, user, verifyActiveAccountOnAdminDashboard } = useAuth();
+  const { isLight } = useTheme();
+
+  // Strict Real-Internet Offline Guard:
+  // Blocks dashboard whenever navigator.onLine is false OR real internet probe fails
+  // (catches Wi-Fi with no internet, exhausted mobile data, and PWA cached opens).
   const [isOffline, setIsOffline] = useState<boolean>(() => {
-    return typeof navigator !== 'undefined' ? !navigator.onLine : false;
+    return typeof navigator !== 'undefined' ? navigator.onLine === false : false;
   });
+  const [hasCheckedInitialOnline, setHasCheckedInitialOnline] = useState<boolean>(() => {
+    return typeof navigator !== 'undefined' ? navigator.onLine === false : true;
+  });
+  const checkInFlightRef = useRef<boolean>(false);
+
+  const runLiveConnectivityCheck = async (triggerAccountCheckIfBackOnline = false): Promise<boolean> => {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setIsOffline(true);
+      setHasCheckedInitialOnline(true);
+      return false;
+    }
+    if (checkInFlightRef.current) {
+      return !isOffline;
+    }
+    checkInFlightRef.current = true;
+    try {
+      const online = await verifyInternetConnection(3500);
+      setIsOffline((wasOffline) => {
+        if (wasOffline && online && triggerAccountCheckIfBackOnline) {
+          verifyActiveAccountOnAdminDashboard().catch(() => {});
+        }
+        return !online;
+      });
+      setHasCheckedInitialOnline(true);
+      return online;
+    } finally {
+      checkInFlightRef.current = false;
+    }
+  };
 
   useEffect(() => {
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
+    let isMounted = true;
 
-    window.addEventListener('online', handleOnline);
+    const performCheck = async (reconnected = false) => {
+      if (!isMounted) return;
+      await runLiveConnectivityCheck(reconnected);
+    };
+
+    // 1. Immediate real-internet probe on mount so offline PWA opens never show cached dashboard
+    performCheck(false);
+
+    // 2. Instant offline listener & verified online listener
+    const handleOffline = () => {
+      if (!isMounted) return;
+      setIsOffline(true);
+      setHasCheckedInitialOnline(true);
+    };
+    const handleOnline = () => {
+      if (!isMounted) return;
+      performCheck(true);
+    };
+    const handleVisibilityOrFocus = () => {
+      if (!isMounted) return;
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      performCheck(true);
+    };
+
     window.addEventListener('offline', handleOffline);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    // 3. Background heartbeat every 10s to catch silent data exhaustion / dead Wi-Fi mid-session
+    const heartbeat = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      performCheck(true);
+    }, 10000);
 
     return () => {
-      window.removeEventListener('online', handleOnline);
+      isMounted = false;
+      clearInterval(heartbeat);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
     };
   }, []);
 
   const handleRetryConnection = async (): Promise<boolean> => {
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setIsOffline(true);
       return false;
     }
-    try {
-      await fetch('/favicon.ico?_ping=' + Date.now(), { method: 'HEAD', cache: 'no-store' });
-      setIsOffline(false);
-      return true;
-    } catch {
-      if (typeof navigator !== 'undefined' && navigator.onLine) {
-        setIsOffline(false);
-        return true;
-      }
-      return false;
+    const online = await verifyInternetConnection(4000);
+    setIsOffline(!online);
+    setHasCheckedInitialOnline(true);
+    if (online) {
+      verifyActiveAccountOnAdminDashboard().catch(() => {});
     }
+    return online;
   };
 
   // If registered users already exist on this device, default to 'login' rather than 'register', UNLESS arriving via referral link
@@ -898,9 +963,26 @@ const MainApp: React.FC = () => {
     return 'register';
   });
 
-  // If user is offline, strictly block app usage
+  // If user is offline, strictly hide dashboard and show OfflineScreen
   if (isOffline) {
     return <OfflineScreen onRetry={handleRetryConnection} />;
+  }
+
+  // While initial real-internet probe is running for a logged-in session, never flash cached dashboard
+  if (!hasCheckedInitialOnline && (isAuthenticated || user)) {
+    return (
+      <div
+        className={`fixed inset-0 z-[99998] flex flex-col items-center justify-center p-6 text-center ${
+          isLight ? 'bg-[#f4f6fa] text-slate-900' : 'bg-[#0b0c0e] text-white'
+        }`}
+      >
+        <div className="w-12 h-12 rounded-2xl border-2 border-amber-500/30 border-t-amber-400 animate-spin mb-4" />
+        <p className="text-sm font-bold tracking-wide">Connecting to 9jacash...</p>
+        <p className={`text-xs mt-1 ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+          Verifying internet connection
+        </p>
+      </div>
+    );
   }
 
   // If user is authenticated or restored from session, immediately show their current dashboard!

@@ -8,7 +8,7 @@ interface LoginProps {
 }
 
 export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
-  const { login } = useAuth();
+  const { login, accountRemovedMessage, clearAccountRemovedMessage } = useAuth();
   const { isLight } = useTheme();
   const [email, setEmail] = useState('');
   const [pin, setPin] = useState('');
@@ -23,6 +23,7 @@ export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    if (accountRemovedMessage) clearAccountRemovedMessage();
 
     if (!email.trim()) {
       setError('Please enter your registered email address');
@@ -80,9 +81,9 @@ export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
           <p className={`text-xs mt-0.5 ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Enter your registered email and 4-digit PIN to login</p>
         </div>
 
-        {error && (
+        {(error || accountRemovedMessage) && (
           <div className="mb-5 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 dark:text-red-400 text-xs text-center font-bold animate-shake">
-            {error}
+            {error || accountRemovedMessage}
           </div>
         )}
 

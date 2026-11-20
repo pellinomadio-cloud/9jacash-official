@@ -48,13 +48,13 @@ export const OfflineScreen: React.FC<OfflineScreenProps> = ({ onRetry }) => {
         <div className="space-y-2">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-red-500/15 border border-red-500/30 text-red-400 text-xs font-bold">
             <ShieldAlert className="w-3.5 h-3.5" />
-            <span>Connection Required</span>
+            <span>No Internet Connection</span>
           </div>
           <h2 className="text-xl font-extrabold text-white">
-            You Are Currently Offline
+            User Is Offline
           </h2>
           <p className="text-xs text-stone-300 leading-relaxed max-w-xs mx-auto">
-            9jacash requires an active internet connection to access your digital wallet, verify transactions, and secure your account.
+            Your dashboard cannot be shown without an active internet connection. Please connect to mobile data or Wi-Fi to continue.
           </p>
         </div>
 

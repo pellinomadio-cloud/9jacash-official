@@ -13,6 +13,7 @@ import {
   getDoc,
   getDocs,
   getDocFromServer,
+  getDocsFromServer,
   onSnapshot,
   query,
   where,
@@ -299,14 +300,22 @@ export async function purgeNonGmailUserFromFirestore(
 }
 
 // 1. User Profiles & Balance Sync
-export async function saveUserToFirestore(user: User): Promise<void> {
-  if (!user?.id) return;
+export async function saveUserToFirestore(
+  user: User,
+  options?: { forceAttempt?: boolean }
+): Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }> {
+  if (!user?.id) return { ok: false, error: 'Invalid user ID.' };
   // Strictly forbid non-@gmail.com accounts from existing in Firestore: delete immediately instead of saving
   if (!isGmailAddress(user.email)) {
     purgeNonGmailUserFromFirestore(user.id).catch(() => {});
-    return;
+    return { ok: false, error: 'Only @gmail.com email addresses are allowed.' };
   }
-  if (isFirestoreQuotaExhausted()) return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { ok: false, error: 'You are offline. Connect to the internet and try again.' };
+  }
+  if (!options?.forceAttempt && isFirestoreQuotaExhausted()) {
+    return { ok: false, error: 'Database daily quota exceeded.', quotaExceeded: true };
+  }
   const path = `${USERS_COLLECTION}/${user.id}`;
   const updatedAtIso = user.updatedAt || new Date().toISOString();
   try {
@@ -337,6 +346,7 @@ export async function saveUserToFirestore(user: User): Promise<void> {
       updatedAt: updatedAtIso,
     });
     await setDoc(doc(db, USERS_COLLECTION, user.id), sanitized, { merge: true });
+    return { ok: true };
   } catch (error) {
     // Fallback: strip embedded receipts & bulky chat history so core balance, withdrawal & profilePicture always save
     try {
@@ -356,8 +366,15 @@ export async function saveUserToFirestore(user: User): Promise<void> {
         updatedAt: updatedAtIso,
       });
       await setDoc(doc(db, USERS_COLLECTION, user.id), lightUser, { merge: true });
+      return { ok: true };
     } catch (retryErr) {
-      handleFirestoreError(retryErr, OperationType.WRITE, path);
+      const info = handleFirestoreError(retryErr, OperationType.WRITE, path);
+      const errText = info.error || 'Failed to save user to server.';
+      const quotaExceeded =
+        errText.toLowerCase().includes('quota') ||
+        errText.toLowerCase().includes('resource-exhausted') ||
+        errText.toLowerCase().includes('resource has been exhausted');
+      return { ok: false, error: errText, quotaExceeded };
     }
   }
 }
@@ -372,6 +389,89 @@ function validateOrPurgeCloudUser(data: User, docId: string): User | null {
     id: data.id || docId,
     referralCode: data.referralCode || extractReferralCodeFromEmail(data.email || ''),
   };
+}
+
+export type ServerUserVerifyResult =
+  | { status: 'exists'; user: User }
+  | { status: 'not_found' }
+  | { status: 'error'; quotaExceeded?: boolean; error?: string };
+
+/**
+ * Authoritatively checks the LIVE Firestore server (never local IndexedDB cache)
+ * to confirm whether a user's email/data actually exists on the Admin Dashboard.
+ */
+export async function verifyUserExistsOnServerInFirestore(
+  userId?: string,
+  email?: string
+): Promise<ServerUserVerifyResult> {
+  const cleanUid = (userId || '').trim();
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanUid && !cleanEmail) {
+    return { status: 'not_found' };
+  }
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return { status: 'error', error: 'offline' };
+  }
+
+  let confirmedServerReachable = false;
+
+  try {
+    // 1. Direct server doc lookup by userId
+    if (cleanUid) {
+      const directSnap = await getDocFromServer(doc(db, USERS_COLLECTION, cleanUid));
+      confirmedServerReachable = true;
+      if (directSnap.exists()) {
+        const valid = validateOrPurgeCloudUser(directSnap.data() as User, directSnap.id);
+        if (valid) {
+          return { status: 'exists', user: valid };
+        }
+        return { status: 'not_found' };
+      }
+    }
+
+    // 2. Direct server query by email (exact lowercase)
+    if (cleanEmail) {
+      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', cleanEmail));
+      const snapEmail = await getDocsFromServer(qEmail);
+      confirmedServerReachable = true;
+      if (!snapEmail.empty) {
+        const d = snapEmail.docs[0];
+        const valid = validateOrPurgeCloudUser(d.data() as User, d.id);
+        if (valid) {
+          return { status: 'exists', user: valid };
+        }
+        return { status: 'not_found' };
+      }
+    }
+
+    // 3. Direct server query by id field (in case doc ID differed from user.id)
+    if (cleanUid) {
+      const qId = query(collection(db, USERS_COLLECTION), where('id', '==', cleanUid));
+      const snapId = await getDocsFromServer(qId);
+      confirmedServerReachable = true;
+      if (!snapId.empty) {
+        const d = snapId.docs[0];
+        const valid = validateOrPurgeCloudUser(d.data() as User, d.id);
+        if (valid) {
+          return { status: 'exists', user: valid };
+        }
+        return { status: 'not_found' };
+      }
+    }
+
+    if (confirmedServerReachable) {
+      return { status: 'not_found' };
+    }
+    return { status: 'error', error: 'Could not reach server' };
+  } catch (error) {
+    const info = handleFirestoreError(error, OperationType.GET, `${USERS_COLLECTION}/${cleanUid || cleanEmail}`);
+    const errText = info.error || 'Server verification failed';
+    const quotaExceeded =
+      errText.toLowerCase().includes('quota') ||
+      errText.toLowerCase().includes('resource-exhausted') ||
+      errText.toLowerCase().includes('resource has been exhausted');
+    return { status: 'error', quotaExceeded, error: errText };
+  }
 }
 
 export async function findUserByEmailOrIdInFirestore(identifier: string): Promise<User | null> {
@@ -545,7 +645,9 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
   return Promise.race([searchOperation, timeoutPromise]);
 }
 
-export function subscribeToAllUsers(onUpdate: (users: User[]) => void): Unsubscribe {
+export function subscribeToAllUsers(
+  onUpdate: (users: User[], meta: { fromCache: boolean }) => void
+): Unsubscribe {
   const path = USERS_COLLECTION;
   try {
     return onSnapshot(
@@ -560,7 +662,7 @@ export function subscribeToAllUsers(onUpdate: (users: User[]) => void): Unsubscr
               validUsers.push(valid);
             }
           }
-          onUpdate(validUsers);
+          onUpdate(validUsers, { fromCache: Boolean(snap.metadata?.fromCache) });
         } catch (e) {
           console.warn('Error processing users snapshot', e);
         }

@@ -15,6 +15,13 @@ function bankVerifyProxyPlugin(): Plugin {
       ) => void
     ) => void;
   }) => {
+    middlewares.use('/api/ping', (_req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.end(JSON.stringify({ ok: true, ts: Date.now() }));
+    });
+
     middlewares.use('/api/verify-account', async (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
