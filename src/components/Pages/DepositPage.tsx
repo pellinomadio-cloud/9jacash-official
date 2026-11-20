@@ -25,7 +25,15 @@ interface DepositPageProps {
 }
 
 export const DepositPage: React.FC<DepositPageProps> = ({ onBack }) => {
-  const { user, formatNaira, companyAccount, submitDepositRequest, depositRequests } = useAuth();
+  const {
+    user,
+    formatNaira,
+    companyAccount,
+    isCompanyAccountLoading,
+    refreshCompanyAccount,
+    submitDepositRequest,
+    depositRequests,
+  } = useAuth();
   
   // Steps: 'amount' | 'payment' | 'submitted_pending'
   const [step, setStep] = useState<'amount' | 'payment' | 'submitted_pending'>('amount');
@@ -39,10 +47,16 @@ export const DepositPage: React.FC<DepositPageProps> = ({ onBack }) => {
 
   const isCompanyAccountSet = !!(
     companyAccount &&
-    companyAccount.isConfigured &&
-    companyAccount.accountNumber &&
-    companyAccount.bankName
+    companyAccount.isConfigured !== false &&
+    companyAccount.accountNumber?.trim() &&
+    companyAccount.bankName?.trim()
   );
+
+  React.useEffect(() => {
+    if (!isCompanyAccountSet) {
+      refreshCompanyAccount().catch(() => {});
+    }
+  }, [isCompanyAccountSet, refreshCompanyAccount]);
 
   if (!user) return null;
 
@@ -246,15 +260,33 @@ export const DepositPage: React.FC<DepositPageProps> = ({ onBack }) => {
             </div>
           </div>
 
-          {/* Warning Notice if Company Account is not configured yet */}
+          {/* Warning Notice if Company Account is syncing or not configured yet */}
           {!isCompanyAccountSet && (
             <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex gap-2.5 items-start">
-              <Clock className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5 animate-pulse" />
-              <div>
-                <p className="font-bold text-white">Company Deposit Account Not Available</p>
-                <p className="text-[11px] text-stone-300 leading-relaxed mt-0.5">
-                  The company account for receiving deposits has not been set by company management from the control center yet. Deposits are temporarily on hold until the company account is set.
+              {isCompanyAccountLoading ? (
+                <RefreshCw className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5 animate-spin" />
+              ) : (
+                <Clock className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5 animate-pulse" />
+              )}
+              <div className="space-y-1.5 flex-1">
+                <p className="font-bold text-white">
+                  {isCompanyAccountLoading ? 'Syncing Company Deposit Account...' : 'Company Deposit Account Not Available'}
                 </p>
+                <p className="text-[11px] text-stone-300 leading-relaxed mt-0.5">
+                  {isCompanyAccountLoading
+                    ? 'Fetching the official company deposit account from the server...'
+                    : 'Could not load the company account on this device right now. Tap Refresh Account to sync.'}
+                </p>
+                {!isCompanyAccountLoading && (
+                  <button
+                    type="button"
+                    onClick={() => refreshCompanyAccount()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-[11px] cursor-pointer transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Refresh Account</span>
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -306,13 +338,24 @@ export const DepositPage: React.FC<DepositPageProps> = ({ onBack }) => {
                   The company account for receiving deposits has not been set by management from the control center yet. Please check back shortly or check our community channels for official updates.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setStep('amount')}
-                className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold transition-colors cursor-pointer"
-              >
-                Change Deposit Amount
-              </button>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => refreshCompanyAccount()}
+                  disabled={isCompanyAccountLoading}
+                  className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-extrabold transition-colors cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isCompanyAccountLoading ? 'animate-spin' : ''}`} />
+                  <span>{isCompanyAccountLoading ? 'Syncing...' : 'Refresh Account'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep('amount')}
+                  className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Change Deposit Amount
+                </button>
+              </div>
             </div>
           ) : (
             <>

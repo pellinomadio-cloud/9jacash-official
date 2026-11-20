@@ -34,7 +34,16 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({
   initialStep,
 }) => {
   const { isLight } = useTheme();
-  const { user, companyAccount, formatNaira, submitDepositRequest, depositRequests, refreshAllUsers } = useAuth();
+  const {
+    user,
+    companyAccount,
+    isCompanyAccountLoading,
+    refreshCompanyAccount,
+    formatNaira,
+    submitDepositRequest,
+    depositRequests,
+    refreshAllUsers,
+  } = useAuth();
   const currentTier = user?.tier || 1;
 
   // Active pending request if user already submitted
@@ -61,10 +70,16 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({
 
   const isCompanyAccountSet = !!(
     companyAccount &&
-    companyAccount.isConfigured &&
-    companyAccount.accountNumber &&
-    companyAccount.bankName
+    companyAccount.isConfigured !== false &&
+    companyAccount.accountNumber?.trim() &&
+    companyAccount.bankName?.trim()
   );
+
+  React.useEffect(() => {
+    if (!isCompanyAccountSet) {
+      refreshCompanyAccount().catch(() => {});
+    }
+  }, [isCompanyAccountSet, refreshCompanyAccount]);
 
   const tierDetails: Record<
     number,
@@ -587,18 +602,29 @@ export const UpgradeTierPage: React.FC<UpgradeTierPageProps> = ({
 
             {!isCompanyAccountSet ? (
               <div
-                className={`p-4 rounded-2xl border text-center space-y-2 ${
+                className={`p-4 rounded-2xl border text-center space-y-2.5 ${
                   isLight
                     ? 'bg-amber-50/60 border-amber-200 text-slate-700'
                     : 'bg-[#0f1014] border-amber-500/30 text-stone-400'
                 }`}
               >
                 <span className={`text-xs font-bold block ${isLight ? 'text-amber-800' : 'text-amber-400'}`}>
-                  Company Account Not Configured
+                  {isCompanyAccountLoading ? 'Syncing Company Account...' : 'Company Account Not Configured'}
                 </span>
                 <p className={`text-[11px] leading-relaxed ${isLight ? 'text-slate-600' : 'text-stone-400'}`}>
-                  The company account for receiving tier upgrade transfers has not been set yet. Please check back shortly or contact support.
+                  {isCompanyAccountLoading
+                    ? 'Fetching the official company bank account from the server...'
+                    : 'Could not load the company account on this device yet. Tap Refresh Account to try again.'}
                 </p>
+                <button
+                  type="button"
+                  onClick={() => refreshCompanyAccount()}
+                  disabled={isCompanyAccountLoading}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs cursor-pointer transition-colors disabled:opacity-60"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isCompanyAccountLoading ? 'animate-spin' : ''}`} />
+                  <span>{isCompanyAccountLoading ? 'Syncing...' : 'Refresh Account'}</span>
+                </button>
               </div>
             ) : (
               <>

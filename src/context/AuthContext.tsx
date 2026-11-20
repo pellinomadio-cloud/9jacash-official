@@ -20,7 +20,10 @@ import {
   saveDepositRequestToFirestore,
   subscribeToDepositRequests,
   saveCompanyAccountToFirestore,
+  getCompanyAccountFromFirestore,
   subscribeToCompanyAccount,
+  normalizeCompanyAccount,
+  isValidCompanyAccount,
   saveCommunityLinksToFirestore,
   subscribeToCommunityLinks,
   savePricingToFirestore,
@@ -116,7 +119,9 @@ interface AuthContextType {
   ) => boolean;
   deleteNotification: (id: string) => void;
   clearAllNotifications: () => void;
-  updateCompanyAccount: (account: CompanyAccount) => void;
+  isCompanyAccountLoading: boolean;
+  refreshCompanyAccount: () => Promise<CompanyAccount | null>;
+  updateCompanyAccount: (account: CompanyAccount) => Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }>;
   updateCommunityLinks: (links: Partial<CommunityLinks>) => Promise<boolean>;
   submitDepositRequest: (
     amount: number,
@@ -605,7 +610,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return getInitialTransactions(initU);
   });
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
-  const [companyAccount, setCompanyAccount] = useState<CompanyAccount>(DEFAULT_COMPANY_ACCOUNT);
+  const [companyAccount, setCompanyAccount] = useState<CompanyAccount>(() => {
+    try {
+      const saved = localStorage.getItem(COMPANY_ACCOUNT_STORAGE_KEY);
+      if (saved) {
+        const normalized = normalizeCompanyAccount(JSON.parse(saved));
+        if (normalized && isValidCompanyAccount(normalized)) {
+          return normalized;
+        }
+      }
+    } catch {
+      // Fallback to default
+    }
+    return DEFAULT_COMPANY_ACCOUNT;
+  });
+  const [isCompanyAccountLoading, setIsCompanyAccountLoading] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(COMPANY_ACCOUNT_STORAGE_KEY);
+      if (saved) {
+        const normalized = normalizeCompanyAccount(JSON.parse(saved));
+        if (normalized && isValidCompanyAccount(normalized)) {
+          return false;
+        }
+      }
+    } catch {}
+    return true;
+  });
+  const companyAccountRef = useRef<CompanyAccount>(companyAccount);
+  useEffect(() => {
+    companyAccountRef.current = companyAccount;
+  }, [companyAccount]);
   const [communityLinks, setCommunityLinks] = useState<CommunityLinks>(() => {
     try {
       const saved = localStorage.getItem(COMMUNITY_LINKS_STORAGE_KEY);
@@ -804,25 +838,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const savedCompanyAcc = localStorage.getItem(COMPANY_ACCOUNT_STORAGE_KEY);
       if (savedCompanyAcc) {
         try {
-          const parsed: CompanyAccount = JSON.parse(savedCompanyAcc);
-          if (
-            parsed &&
-            parsed.isConfigured &&
-            parsed.accountNumber &&
-            parsed.accountNumber !== '9048291048' &&
-            parsed.bankName
-          ) {
+          const parsed = normalizeCompanyAccount(JSON.parse(savedCompanyAcc));
+          if (parsed && isValidCompanyAccount(parsed)) {
             setCompanyAccount(parsed);
-          } else {
+            setIsCompanyAccountLoading(false);
+          } else if (!isValidCompanyAccount(companyAccountRef.current)) {
             setCompanyAccount(DEFAULT_COMPANY_ACCOUNT);
-            safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(DEFAULT_COMPANY_ACCOUNT));
           }
         } catch {
-          setCompanyAccount(DEFAULT_COMPANY_ACCOUNT);
+          if (!isValidCompanyAccount(companyAccountRef.current)) {
+            setCompanyAccount(DEFAULT_COMPANY_ACCOUNT);
+          }
         }
-      } else {
-        safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(DEFAULT_COMPANY_ACCOUNT));
-        setCompanyAccount(DEFAULT_COMPANY_ACCOUNT);
       }
 
       const savedCommunityLinks = localStorage.getItem(COMMUNITY_LINKS_STORAGE_KEY);
@@ -1091,22 +1118,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     });
 
-    // 2. Subscribe to company bank account info
-    const unsubCompany = subscribeToCompanyAccount((account) => {
-      if (
-        account &&
-        account.isConfigured &&
-        account.accountNumber &&
-        account.accountNumber !== '9048291048' &&
-        account.bankName
-      ) {
+    // 2. Subscribe to company bank account info (with instant server read + retry)
+    const unsubCompany = subscribeToCompanyAccount((rawAccount) => {
+      const account = normalizeCompanyAccount(rawAccount);
+      setIsCompanyAccountLoading(false);
+      if (account && isValidCompanyAccount(account)) {
+        companyAccountRef.current = account;
         setCompanyAccount(account);
         safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(account));
       } else if (account && account.isConfigured === false) {
+        companyAccountRef.current = DEFAULT_COMPANY_ACCOUNT;
         setCompanyAccount(DEFAULT_COMPANY_ACCOUNT);
         safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(DEFAULT_COMPANY_ACCOUNT));
       }
     });
+
+    // Clear initial loading indicator after a brief timeout even if device is offline/quota-limited
+    const companyLoadFallbackTimer = setTimeout(() => {
+      setIsCompanyAccountLoading(false);
+    }, 3500);
+
+    // Auto-retry fetching company account when mobile network reconnects or app returns to foreground
+    const handleReconnectRefresh = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      getCompanyAccountFromFirestore()
+        .then((raw) => {
+          const normalized = normalizeCompanyAccount(raw);
+          setIsCompanyAccountLoading(false);
+          if (normalized && isValidCompanyAccount(normalized)) {
+            companyAccountRef.current = normalized;
+            setCompanyAccount(normalized);
+            safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(normalized));
+          } else if (normalized && normalized.isConfigured === false) {
+            companyAccountRef.current = DEFAULT_COMPANY_ACCOUNT;
+            setCompanyAccount(DEFAULT_COMPANY_ACCOUNT);
+            safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(DEFAULT_COMPANY_ACCOUNT));
+          }
+        })
+        .catch(() => {});
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', handleReconnectRefresh);
+      document.addEventListener('visibilitychange', handleReconnectRefresh);
+    }
 
     // 3. Subscribe to official community links (Telegram & WhatsApp & Agent Telegram)
     const unsubCommunity = subscribeToCommunityLinks((cloudLinks) => {
@@ -1222,6 +1277,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     return () => {
+      clearTimeout(companyLoadFallbackTimer);
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('online', handleReconnectRefresh);
+        document.removeEventListener('visibilitychange', handleReconnectRefresh);
+      }
       unsubUsers();
       unsubCompany();
       unsubCommunity();
@@ -1253,15 +1313,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsBalanceHidden((prev) => !prev);
   };
 
-  const updateCompanyAccount = (newAccount: CompanyAccount) => {
+  const refreshCompanyAccount = useCallback(async (): Promise<CompanyAccount | null> => {
+    setIsCompanyAccountLoading(true);
+    try {
+      const raw = await getCompanyAccountFromFirestore();
+      const normalized = normalizeCompanyAccount(raw);
+      if (normalized && isValidCompanyAccount(normalized)) {
+        companyAccountRef.current = normalized;
+        setCompanyAccount(normalized);
+        safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(normalized));
+        return normalized;
+      } else if (normalized && normalized.isConfigured === false) {
+        companyAccountRef.current = DEFAULT_COMPANY_ACCOUNT;
+        setCompanyAccount(DEFAULT_COMPANY_ACCOUNT);
+        safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(DEFAULT_COMPANY_ACCOUNT));
+        return DEFAULT_COMPANY_ACCOUNT;
+      }
+      return companyAccountRef.current;
+    } catch {
+      return companyAccountRef.current;
+    } finally {
+      setIsCompanyAccountLoading(false);
+    }
+  }, []);
+
+  const updateCompanyAccount = async (
+    newAccount: CompanyAccount
+  ): Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }> => {
+    const accountNumber = String(newAccount.accountNumber || '').trim();
+    const bankName = String(newAccount.bankName || '').trim();
+    const accountName = String(newAccount.accountName || '').trim();
+    const shouldBeConfigured =
+      newAccount.isConfigured === false ? false : Boolean(accountNumber && bankName);
+
     const updated: CompanyAccount = {
-      ...newAccount,
-      isConfigured: newAccount.isConfigured !== undefined ? newAccount.isConfigured : true,
+      accountNumber: shouldBeConfigured ? accountNumber : '',
+      bankName: shouldBeConfigured ? bankName : '',
+      accountName: shouldBeConfigured ? accountName : '',
+      isConfigured: shouldBeConfigured,
       updatedAt: new Date().toISOString(),
     };
+    companyAccountRef.current = updated;
     safeLocalStorageSet(COMPANY_ACCOUNT_STORAGE_KEY, JSON.stringify(updated));
     setCompanyAccount(updated);
-    saveCompanyAccountToFirestore(updated).catch(console.error);
+    setIsCompanyAccountLoading(false);
+    return saveCompanyAccountToFirestore(updated);
   };
 
   const updateCommunityLinks = async (newLinks: Partial<CommunityLinks>): Promise<boolean> => {
@@ -4808,6 +4904,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const [cloudUsers, cloudDeposits] = await Promise.all([
         getAllUsersFromFirestore().catch(() => []),
         getAllDepositRequestsFromFirestore().catch(() => []),
+        refreshCompanyAccount().catch(() => null),
       ]);
 
       const mergeReqPair = (existing: DepositRequest, incoming: DepositRequest): DepositRequest => {
@@ -5624,6 +5721,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sendNotificationToUser,
         deleteNotification,
         clearAllNotifications,
+        isCompanyAccountLoading,
+        refreshCompanyAccount,
         updateCompanyAccount,
         updateCommunityLinks,
         submitDepositRequest,

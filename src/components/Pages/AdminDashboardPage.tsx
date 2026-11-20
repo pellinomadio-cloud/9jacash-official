@@ -774,33 +774,45 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     }
   };
 
-  const handleSaveCompanyAccount = (e: React.FormEvent) => {
+  const handleSaveCompanyAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!accountNumber.trim() || !bankName.trim() || !accountName.trim()) {
       setAccountSaveMsg('Please fill in all company account fields.');
       return;
     }
 
-    updateCompanyAccount({
+    const result = await updateCompanyAccount({
       accountNumber: accountNumber.trim(),
       bankName: bankName.trim(),
       accountName: accountName.trim(),
+      isConfigured: true,
     });
 
-    setAccountSaveMsg('Company account details saved & updated across all deposit pages!');
-    setTimeout(() => setAccountSaveMsg(''), 4000);
+    if (result.ok) {
+      setAccountSaveMsg('Company account details saved & synced across all users and devices!');
+      setTimeout(() => setAccountSaveMsg(''), 5000);
+    } else if (result.quotaExceeded) {
+      setAccountSaveMsg('Saved locally on this device, but cloud sync failed: Firebase daily quota exceeded. Other phones cannot fetch updates until quota resets or Firebase is upgraded.');
+    } else {
+      setAccountSaveMsg(`Saved locally, but cloud sync failed (${result.error || 'network error'}). Tap Save Bank Account again once online.`);
+    }
   };
 
-  const handleClearCompanyAccount = () => {
-    updateCompanyAccount({
+  const handleClearCompanyAccount = async () => {
+    const result = await updateCompanyAccount({
       accountNumber: '',
       bankName: '',
       accountName: '',
+      isConfigured: false,
     });
     setAccountNumber('');
     setBankName('');
     setAccountName('');
-    setAccountSaveMsg('Company account has been deactivated. Pages will now show as not configured until a new account is set.');
+    setAccountSaveMsg(
+      result.ok
+        ? 'Company account has been deactivated across all devices.'
+        : 'Deactivated locally, but cloud sync failed. Please retry once online.'
+    );
     setTimeout(() => setAccountSaveMsg(''), 5000);
   };
 
@@ -2710,12 +2722,25 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
               </p>
             </div>
 
-            {accountSaveMsg && (
-              <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                <span>{accountSaveMsg}</span>
-              </div>
-            )}
+            {accountSaveMsg && (() => {
+              const isWarning = /failed|quota|only saved on this device/i.test(accountSaveMsg);
+              return (
+                <div
+                  className={`p-3 rounded-xl border text-xs flex items-center gap-2 ${
+                    isWarning
+                      ? 'bg-amber-500/10 border-amber-500/40 text-amber-300'
+                      : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  }`}
+                >
+                  {isWarning ? (
+                    <AlertTriangle className="w-4 h-4 flex-shrink-0 text-amber-400" />
+                  ) : (
+                    <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
+                  )}
+                  <span>{accountSaveMsg}</span>
+                </div>
+              );
+            })()}
 
             <form onSubmit={handleSaveCompanyAccount} className="space-y-3 text-xs">
               <div>

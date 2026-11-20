@@ -43,7 +43,17 @@ interface Plan {
 }
 
 export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWithdraw }) => {
-  const { user, formatNaira, companyAccount, submitDepositRequest, depositRequests, refreshAllUsers, appPricing } = useAuth();
+  const {
+    user,
+    formatNaira,
+    companyAccount,
+    isCompanyAccountLoading,
+    refreshCompanyAccount,
+    submitDepositRequest,
+    depositRequests,
+    refreshAllUsers,
+    appPricing,
+  } = useAuth();
   const { isLight } = useTheme();
 
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
@@ -57,10 +67,16 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
 
   const isCompanyAccountSet = !!(
     companyAccount &&
-    companyAccount.isConfigured &&
-    companyAccount.accountNumber &&
-    companyAccount.bankName
+    companyAccount.isConfigured !== false &&
+    companyAccount.accountNumber?.trim() &&
+    companyAccount.bankName?.trim()
   );
+
+  React.useEffect(() => {
+    if (!isCompanyAccountSet) {
+      refreshCompanyAccount().catch(() => {});
+    }
+  }, [isCompanyAccountSet, refreshCompanyAccount]);
 
   const plans: Plan[] = [
     { id: '1', name: '1 Withdrawal Plan', amount: appPricing?.quickCodePlan1 ?? 7800, withdrawals: 1 },
@@ -449,15 +465,33 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
                 </p>
               </div>
 
-              {/* Notice if Company Account is not configured by management yet */}
+              {/* Notice if Company Account is loading or not configured */}
               {!isCompanyAccountSet && (
                 <div className="p-4 rounded-3xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex gap-3 items-start animate-in fade-in">
-                  <Clock className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5 animate-pulse" />
-                  <div className="space-y-1">
-                    <p className="font-bold text-amber-400">Company Payment Account Not Set</p>
-                    <p className="text-[11px] text-stone-300 leading-relaxed">
-                      The official company account for receiving Quick Code payments has not been set from the company dashboard yet. Payments cannot be accepted until management sets the account.
+                  {isCompanyAccountLoading ? (
+                    <RefreshCw className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5 animate-spin" />
+                  ) : (
+                    <Clock className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5 animate-pulse" />
+                  )}
+                  <div className="space-y-1.5 flex-1">
+                    <p className="font-bold text-amber-400">
+                      {isCompanyAccountLoading ? 'Syncing Company Payment Account...' : 'Company Payment Account Not Set'}
                     </p>
+                    <p className="text-[11px] text-stone-300 leading-relaxed">
+                      {isCompanyAccountLoading
+                        ? 'Fetching the latest official payment account from the server...'
+                        : 'Could not load the official company account on this device yet. Tap Refresh Account to sync again.'}
+                    </p>
+                    {!isCompanyAccountLoading && (
+                      <button
+                        type="button"
+                        onClick={() => refreshCompanyAccount()}
+                        className="mt-1 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-[11px] cursor-pointer transition-colors"
+                      >
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Refresh Account</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -543,24 +577,43 @@ export const QuickCodePage: React.FC<QuickCodePageProps> = ({ onBack, onGoToWith
 
                 <div className="p-6 rounded-3xl bg-[#15161c] border border-amber-500/30 text-center space-y-4 shadow-xl">
                   <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                    <Clock className="w-7 h-7 animate-pulse" />
+                    {isCompanyAccountLoading ? (
+                      <RefreshCw className="w-7 h-7 animate-spin" />
+                    ) : (
+                      <Clock className="w-7 h-7 animate-pulse" />
+                    )}
                   </div>
                   <div className="space-y-1">
                     <span className="text-[10px] uppercase font-black tracking-widest text-amber-400 px-3 py-0.5 rounded-full bg-amber-500/10 border border-amber-500/30 inline-block">
-                      ACCOUNT NOT CONFIGURED
+                      {isCompanyAccountLoading ? 'SYNCING ACCOUNT' : 'ACCOUNT NOT LOADED'}
                     </span>
-                    <h3 className="text-base font-bold text-white">Company Payment Account Not Set</h3>
+                    <h3 className="text-base font-bold text-white">
+                      {isCompanyAccountLoading ? 'Fetching Company Account...' : 'Company Payment Account Not Set'}
+                    </h3>
                     <p className="text-xs text-stone-400 max-w-xs mx-auto leading-relaxed">
-                      The official company payment account for Quick Code activation has not been configured by management yet. Please check back shortly or check the community channels once an account is activated.
+                      {isCompanyAccountLoading
+                        ? 'Please wait a moment while we fetch the official company payment account.'
+                        : 'Unable to load the official company payment account on this device right now. Tap Refresh Account to try again.'}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setStep('select')}
-                    className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold transition-colors cursor-pointer"
-                  >
-                    Change Selected Plan
-                  </button>
+                  <div className="flex items-center justify-center gap-2 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => refreshCompanyAccount()}
+                      disabled={isCompanyAccountLoading}
+                      className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black text-xs font-extrabold transition-colors cursor-pointer inline-flex items-center gap-1.5 disabled:opacity-60"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isCompanyAccountLoading ? 'animate-spin' : ''}`} />
+                      <span>Refresh Account</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStep('select')}
+                      className="px-4 py-2.5 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-300 text-xs font-semibold transition-colors cursor-pointer"
+                    >
+                      Change Selected Plan
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (

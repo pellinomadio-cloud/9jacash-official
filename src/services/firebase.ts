@@ -3,6 +3,8 @@ import {
   initializeFirestore,
   getFirestore,
   memoryLocalCache,
+  persistentLocalCache,
+  persistentMultipleTabManager,
   setLogLevel,
   doc,
   collection,
@@ -56,15 +58,23 @@ try {
   // Ignore in environments where setLogLevel is restricted
 }
 
-// Configure Firestore with in-memory cache and auto-detect long polling
+// Configure Firestore with persistent IndexedDB cache (fallback to memory cache in private browsing)
+// Persistent cache dramatically cuts daily read usage across page refreshes & keeps settings available offline
 function initFirestoreInstance() {
   try {
     return initializeFirestore(app, {
       experimentalAutoDetectLongPolling: true,
-      localCache: memoryLocalCache(),
+      localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
     });
   } catch {
-    return getFirestore(app);
+    try {
+      return initializeFirestore(app, {
+        experimentalAutoDetectLongPolling: true,
+        localCache: memoryLocalCache(),
+      });
+    } catch {
+      return getFirestore(app);
+    }
   }
 }
 
@@ -659,41 +669,201 @@ export function subscribeToDepositRequests(onUpdate: (requests: DepositRequest[]
 }
 
 // 5. Company Bank Account Settings Sync
-export async function saveCompanyAccountToFirestore(account: CompanyAccount): Promise<void> {
-  if (isFirestoreQuotaExhausted()) return;
+export function normalizeCompanyAccount(raw: Partial<CompanyAccount> | null | undefined): CompanyAccount | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const accountNumber = String(raw.accountNumber || '').trim();
+  const bankName = String(raw.bankName || '').trim();
+  const accountName = String(raw.accountName || '').trim();
+  const hasValidDetails =
+    accountNumber.length > 0 &&
+    accountNumber !== '9048291048' &&
+    bankName.length > 0;
+  const isConfigured = raw.isConfigured === false ? false : hasValidDetails;
+
+  return {
+    accountNumber: isConfigured ? accountNumber : '',
+    bankName: isConfigured ? bankName : '',
+    accountName: isConfigured ? accountName : '',
+    isConfigured,
+    updatedAt: raw.updatedAt || '',
+  };
+}
+
+export function isValidCompanyAccount(account: Partial<CompanyAccount> | null | undefined): boolean {
+  const normalized = normalizeCompanyAccount(account);
+  return Boolean(normalized && normalized.isConfigured && normalized.accountNumber && normalized.bankName);
+}
+
+export async function saveCompanyAccountToFirestore(
+  account: CompanyAccount
+): Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }> {
   const path = `${SETTINGS_COLLECTION}/company_account`;
   try {
+    const accountNumber = String(account.accountNumber || '').trim();
+    const bankName = String(account.bankName || '').trim();
+    const accountName = String(account.accountName || '').trim();
+    const isConfigured =
+      account.isConfigured === false ? false : Boolean(accountNumber && bankName);
+
     const sanitized = sanitizeForFirestore({
-      ...account,
-      updatedAt: new Date().toISOString(),
+      accountNumber: isConfigured ? accountNumber : '',
+      bankName: isConfigured ? bankName : '',
+      accountName: isConfigured ? accountName : '',
+      isConfigured,
+      updatedAt: account.updatedAt || new Date().toISOString(),
     });
     await setDoc(doc(db, SETTINGS_COLLECTION, 'company_account'), sanitized, { merge: true });
+    return { ok: true };
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, path);
+    const info = handleFirestoreError(error, OperationType.WRITE, path);
+    const errText = info.error || 'Failed to sync company account to cloud database.';
+    const quotaExceeded =
+      errText.toLowerCase().includes('quota') ||
+      errText.toLowerCase().includes('resource-exhausted') ||
+      errText.toLowerCase().includes('resource has been exhausted');
+    return { ok: false, error: errText, quotaExceeded };
   }
+}
+
+function parseRestFirestoreString(field: any): string {
+  if (!field || typeof field !== 'object') return '';
+  if (typeof field.stringValue === 'string') return field.stringValue;
+  if (typeof field.integerValue === 'string') return field.integerValue;
+  return '';
+}
+
+async function fetchCompanyAccountViaRest(): Promise<CompanyAccount | null> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${firebaseConfig.projectId}/databases/(default)/documents/${SETTINGS_COLLECTION}/company_account`;
+    const res = await fetch(url, { cache: 'no-store' });
+    if (res.status === 429) {
+      setFirestoreQuotaExhausted(true);
+      return null;
+    }
+    if (!res.ok) return null;
+    const json = await res.json();
+    const fields = json?.fields;
+    if (!fields) return null;
+    const raw: Partial<CompanyAccount> = {
+      accountNumber: parseRestFirestoreString(fields.accountNumber),
+      bankName: parseRestFirestoreString(fields.bankName),
+      accountName: parseRestFirestoreString(fields.accountName),
+      isConfigured:
+        typeof fields.isConfigured?.booleanValue === 'boolean'
+          ? fields.isConfigured.booleanValue
+          : undefined,
+      updatedAt: parseRestFirestoreString(fields.updatedAt),
+    };
+    return normalizeCompanyAccount(raw);
+  } catch {
+    return null;
+  }
+}
+
+export async function getCompanyAccountFromFirestore(): Promise<CompanyAccount | null> {
+  const path = `${SETTINGS_COLLECTION}/company_account`;
+  const docRef = doc(db, SETTINGS_COLLECTION, 'company_account');
+
+  // 1. Try direct server read first so mobile clients always get the latest saved company account
+  try {
+    const serverSnap = await getDocFromServer(docRef);
+    if (serverSnap.exists()) {
+      return normalizeCompanyAccount(serverSnap.data() as CompanyAccount);
+    }
+  } catch (serverErr) {
+    handleFirestoreError(serverErr, OperationType.GET, path);
+  }
+
+  // 2. Fallback to Firestore cache/standard getDoc
+  try {
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      return normalizeCompanyAccount(snap.data() as CompanyAccount);
+    }
+  } catch (err) {
+    handleFirestoreError(err, OperationType.GET, path);
+  }
+
+  // 3. Final fallback via direct HTTPS REST GET (bypasses stalled mobile WebChannel streams)
+  return fetchCompanyAccountViaRest();
 }
 
 export function subscribeToCompanyAccount(onUpdate: (account: CompanyAccount | null) => void): Unsubscribe {
   const path = `${SETTINGS_COLLECTION}/company_account`;
-  try {
-    return onSnapshot(
-      doc(db, SETTINGS_COLLECTION, 'company_account'),
-      (snap) => {
-        try {
-          if (snap.exists()) {
-            onUpdate(snap.data() as CompanyAccount);
-          }
-        } catch (e) {
-          console.warn('Error processing company account snapshot', e);
-        }
-      },
-      (error) => {
-        handleFirestoreError(error, OperationType.GET, path);
+  let isDisposed = false;
+  let activeUnsub: Unsubscribe | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let retryAttempt = 0;
+
+  // Immediate one-shot fetch in parallel so fresh phones receive the account without waiting for WebChannel
+  getCompanyAccountFromFirestore()
+    .then((account) => {
+      if (!isDisposed && account) {
+        onUpdate(account);
       }
-    );
-  } catch {
-    return () => {};
-  }
+    })
+    .catch(() => {});
+
+  const attachListener = () => {
+    if (isDisposed) return;
+    try {
+      activeUnsub = onSnapshot(
+        doc(db, SETTINGS_COLLECTION, 'company_account'),
+        (snap) => {
+          retryAttempt = 0;
+          try {
+            if (snap.exists()) {
+              const normalized = normalizeCompanyAccount(snap.data() as CompanyAccount);
+              if (normalized) {
+                onUpdate(normalized);
+              }
+            }
+          } catch (e) {
+            console.warn('Error processing company account snapshot', e);
+          }
+        },
+        (error) => {
+          handleFirestoreError(error, OperationType.GET, path);
+          if (activeUnsub) {
+            try {
+              activeUnsub();
+            } catch {}
+            activeUnsub = null;
+          }
+          // Retry listener automatically on transient mobile disconnects/backoff instead of dying permanently
+          if (!isDisposed) {
+            const delayMs = Math.min(30000, 3000 * Math.pow(2, retryAttempt));
+            retryAttempt = Math.min(retryAttempt + 1, 4);
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimer = setTimeout(() => {
+              if (!isDisposed) {
+                getCompanyAccountFromFirestore()
+                  .then((account) => {
+                    if (!isDisposed && account) onUpdate(account);
+                  })
+                  .catch(() => {});
+                attachListener();
+              }
+            }, delayMs);
+          }
+        }
+      );
+    } catch {
+      // Ignore attach errors
+    }
+  };
+
+  attachListener();
+
+  return () => {
+    isDisposed = true;
+    if (retryTimer) clearTimeout(retryTimer);
+    if (activeUnsub) {
+      try {
+        activeUnsub();
+      } catch {}
+    }
+  };
 }
 
 // 6. Community Links Settings Sync
