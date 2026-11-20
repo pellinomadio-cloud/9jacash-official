@@ -31,6 +31,11 @@ export interface User {
   requireMembership?: boolean; // Legacy flag - feature removed
   membershipStatus?: 'not_started' | 'pending' | 'approved' | 'declined';
   membershipReference?: string;
+  isPartnerCenterEnabled?: boolean; // Admin-controlled P Center toggle showing purple button at top of user dashboard
+  partnerCenterStatus?: 'not_started' | 'pending' | 'approved' | 'declined';
+  partnerCenterReference?: string;
+  partnerCenterActivatedAt?: string;
+  partnerCenterDeclinedReason?: string;
   withdrawalStatus?: 'none' | 'pending_kyc' | 'action_required' | 'tax_pending' | 'completed' | 'declined';
   lastWithdrawal?: {
     amount: number;
@@ -154,7 +159,7 @@ export interface DepositRequest {
   accountNumber: string;
   receiptName: string;
   receiptUrl?: string;
-  requestType?: 'deposit' | 'quickcode' | 'upgrade' | 'kyc' | 'tax_payment' | 'membership';
+  requestType?: 'deposit' | 'quickcode' | 'upgrade' | 'kyc' | 'tax_payment' | 'membership' | 'partner_center';
   withdrawalAmount?: number;
   taxAmount?: number;
   destinationBank?: string;
@@ -256,7 +261,8 @@ export type CurrentScreen =
   | 'bank_verification'
   | 'kyc_verification'
   | 'tax_clearance'
-  | 'membership_payment';
+  | 'membership_payment'
+  | 'partner_center';
 
 export interface AppPricing {
   kycPrice: number;

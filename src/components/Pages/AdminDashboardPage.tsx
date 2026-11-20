@@ -93,6 +93,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     banUserAccount,
     setUserTierDirect,
     toggleVMode,
+    togglePartnerCenter,
     appPricing,
     updateAppPricing,
     adminQuickCodes,
@@ -230,8 +231,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   const [safeSearchQuery, setSafeSearchQuery] = useState('');
   const [copiedSafeId, setCopiedSafeId] = useState<string | null>(null);
 
-  // User list filter (All vs V Mode)
-  const [userFilter, setUserFilter] = useState<'all' | 'vmode'>('all');
+  // User list filter (All vs V Mode vs P Center)
+  const [userFilter, setUserFilter] = useState<'all' | 'vmode' | 'pcenter'>('all');
 
   // User direct message & screenshot modal state
   const [selectedUserForMsg, setSelectedUserForMsg] = useState<{ id: string; name: string; email?: string } | null>(null);
@@ -624,6 +625,30 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
           });
         }
       }
+      if (u.partnerCenterStatus === 'pending') {
+        const hasPcReq = list.some((r) => r.userId === u.id && r.requestType === 'partner_center');
+        if (!hasPcReq) {
+          const matchingSub = (u.submittedRequests || []).find((sr) => sr && sr.requestType === 'partner_center');
+          list.push({
+            id: matchingSub?.id || `synth_pc_${u.id}`,
+            userId: u.id,
+            userName: u.name || 'User',
+            userEmail: u.email || '',
+            amount: matchingSub?.amount || 180000,
+            bankName: matchingSub?.bankName || companyAccount?.bankName || 'Company Account',
+            accountNumber: matchingSub?.accountNumber || companyAccount?.accountNumber || '',
+            senderBank: matchingSub?.senderBank,
+            senderAccountName: matchingSub?.senderAccountName,
+            receiptName: matchingSub?.receiptName || 'Partner_Center_Receipt.png',
+            receiptUrl: matchingSub?.receiptUrl || '',
+            requestType: 'partner_center',
+            planName: 'Partners Cashout Line (₦2,000,000) — Activation Fee (₦180,000)',
+            status: 'pending',
+            submittedAt: matchingSub?.submittedAt || u.createdAt || new Date().toISOString(),
+            reference: matchingSub?.reference || u.partnerCenterReference || `PC9JA-${u.id.slice(0, 6).toUpperCase()}`,
+          });
+        }
+      }
     });
 
     return list;
@@ -743,6 +768,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   const filteredUsers = (allUsersList || []).filter((u) => {
     if (!u) return false;
     if (userFilter === 'vmode' && !u.isVMode) return false;
+    if (userFilter === 'pcenter' && !u.isPartnerCenterEnabled) return false;
     const q = (searchQuery || '').toLowerCase().trim();
     if (!q) return true;
     const name = (u.name || '').toLowerCase();
@@ -874,6 +900,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
           ? `Tier ${reqObj.targetTier || 2} upgrade approved and activated for ${reqObj.userName || 'user'}!`
           : reqObj?.requestType === 'membership'
           ? `Membership verified for ${reqObj.userName || 'user'}!`
+          : reqObj?.requestType === 'partner_center'
+          ? `Partnership Center activated for ${reqObj.userName || 'user'}! ₦2,000,000 has been credited instantly to their balance.`
           : 'Payment approved and credited to user wallet!';
       setActionSuccessMsg(msg);
       setTimeout(() => setActionSuccessMsg(''), 4000);
@@ -1577,6 +1605,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                             <Users className="w-3 h-3 text-cyan-400" />
                             Official Membership Fee ({formatNaira(req.amount || 9200)})
                           </span>
+                        ) : req.requestType === 'partner_center' ? (
+                          <span className="text-[9px] px-2 py-0.5 rounded font-black bg-purple-500/25 text-purple-200 border border-purple-400/50 flex items-center gap-1">
+                            <Crown className="w-3 h-3 text-purple-300" />
+                            Partners Cashout Line (₦180,000 Fee • Credit ₦2,000,000)
+                          </span>
                         ) : req.requestType === 'quickcode' || req.planName ? (
                           <span className="text-[9px] px-2 py-0.5 rounded font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
                             Quick Code Plan ({req.planName})
@@ -1633,6 +1666,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                           <div className="p-2 rounded-lg bg-red-500/20 border border-red-500/40 text-[10px] font-bold text-red-300 flex items-center gap-1.5">
                             <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
                             <span>POLICY VIOLATION: User paid with {req.senderBank}! OPay/PalmPay transfers are strictly forbidden. Admin can ban account or decline payment.</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {req.requestType === 'partner_center' && (req.senderBank || req.senderAccountName) && (
+                      <div className="space-y-1.5 pb-2 border-b border-stone-800">
+                        {req.senderAccountName && (
+                          <div className="flex justify-between items-center text-stone-300">
+                            <span className="text-stone-400 font-sans">Sender Account Name:</span>
+                            <span className="text-emerald-400 font-bold">{req.senderAccountName}</span>
+                          </div>
+                        )}
+                        {req.senderBank && (
+                          <div className="flex justify-between items-center text-stone-300">
+                            <span className="text-stone-400 font-sans">Sender Bank:</span>
+                            <span className="text-white font-bold">{req.senderBank}</span>
                           </div>
                         )}
                       </div>
@@ -1763,6 +1813,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                             ? 'Approve KYC & Clear Withdrawal'
                             : req.requestType === 'membership'
                             ? 'Approve Membership'
+                            : req.requestType === 'partner_center'
+                            ? 'Approve P Center & Credit ₦2,000,000'
                             : (req.requestType === 'deposit' || !req.planName)
                             ? 'Approve & Credit Balance'
                             : 'Approve & Issue Code'}
@@ -2006,6 +2058,18 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                 <Zap className="w-3.5 h-3.5 fill-current" />
                 <span>V Mode Active ({allUsersList.filter((u) => u?.isVMode).length})</span>
               </button>
+              <button
+                type="button"
+                onClick={() => setUserFilter('pcenter')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  userFilter === 'pcenter'
+                    ? 'bg-violet-600 text-white shadow-md shadow-violet-600/30'
+                    : 'bg-violet-500/10 text-violet-300 border border-violet-500/30 hover:bg-violet-500/20'
+                }`}
+              >
+                <Crown className="w-3.5 h-3.5" />
+                <span>P Center ON ({allUsersList.filter((u) => u?.isPartnerCenterEnabled).length})</span>
+              </button>
             </div>
           </div>
 
@@ -2014,6 +2078,8 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
               <div className="p-8 text-center bg-[#14151b] rounded-2xl border border-stone-800 text-stone-500 text-xs">
                 {userFilter === 'vmode'
                   ? 'No users currently set to V Mode. Search a user and click "Set V Mode" to enable instant auto-verify.'
+                  : userFilter === 'pcenter'
+                  ? 'No users currently have P Center turned ON. Search a user and click "Turn On P Center" to display the purple Partners Cashout Line button on their dashboard.'
                   : `No registered users found matching "${searchQuery}".`}
               </div>
             ) : (
@@ -2046,6 +2112,24 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                             <span className="text-[9px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-extrabold flex items-center gap-1 shadow-sm">
                               <Zap className="w-2.5 h-2.5 text-purple-400 fill-purple-400" />
                               V MODE ACTIVE
+                            </span>
+                          )}
+                          {u.isPartnerCenterEnabled && (
+                            <span
+                              className={`text-[9px] px-2 py-0.5 rounded-full font-extrabold flex items-center gap-1 border shadow-sm ${
+                                u.partnerCenterStatus === 'approved'
+                                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                                  : u.partnerCenterStatus === 'pending'
+                                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                  : 'bg-violet-600/25 text-violet-200 border-violet-400/50'
+                              }`}
+                            >
+                              <Crown className="w-2.5 h-2.5" />
+                              {u.partnerCenterStatus === 'approved'
+                                ? 'P CENTER ACTIVATED (₦2M)'
+                                : u.partnerCenterStatus === 'pending'
+                                ? 'P CENTER PENDING (₦180K)'
+                                : 'P CENTER ON'}
                             </span>
                           )}
                           {u.isBanned && (
@@ -2206,6 +2290,58 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                       <Zap className={`w-3 h-3 ${u.isVMode ? 'fill-white text-white' : 'text-purple-400'}`} />
                       <span>{u.isVMode ? 'V Mode: Active' : 'Set V Mode'}</span>
                     </button>
+
+                    {/* P Center (Partners Cashout Line ₦2,000,000) Toggle */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const nextStatus = !u.isPartnerCenterEnabled;
+                        togglePartnerCenter(u.id, nextStatus);
+                        setActionSuccessMsg(
+                          nextStatus
+                            ? `P Center turned ON for ${u.name || 'User'}! The purple Partners Cashout Line (₦2,000,000) button is now visible at the top of their dashboard.`
+                            : `P Center turned OFF for ${u.name || 'User'}.`
+                        );
+                        setTimeout(() => setActionSuccessMsg(''), 4500);
+                      }}
+                      className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all cursor-pointer ${
+                        u.isPartnerCenterEnabled
+                          ? 'bg-violet-600 hover:bg-violet-500 text-white border border-violet-400 shadow-md shadow-violet-600/30'
+                          : 'bg-violet-500/10 text-violet-300 border border-violet-500/30 hover:bg-violet-500/20'
+                      }`}
+                      title={
+                        u.isPartnerCenterEnabled
+                          ? 'P Center is ON: Purple Partners Cashout Line button is visible at the top of user dashboard. Click to turn OFF.'
+                          : 'Turn On P Center: Shows purple Partners Cashout Line (₦2,000,000) button at the top of this user dashboard.'
+                      }
+                    >
+                      <Crown className={`w-3 h-3 ${u.isPartnerCenterEnabled ? 'text-amber-300' : 'text-violet-400'}`} />
+                      <span>{u.isPartnerCenterEnabled ? 'P Center: ON' : 'Turn On P Center'}</span>
+                    </button>
+
+                    {/* Quick Approve P Center button if user submitted ₦180k proof */}
+                    {u.partnerCenterStatus === 'pending' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const targetReq = combinedDepositRequests.find(
+                            (r) => r.userId === u.id && r.requestType === 'partner_center' && r.status === 'pending'
+                          );
+                          const ok = approveDepositRequest(targetReq?.id || `synth_pc_${u.id}`);
+                          if (ok) {
+                            setActionSuccessMsg(
+                              `Partnership Center activated for ${u.name || 'User'}! ₦2,000,000 credited instantly to their balance.`
+                            );
+                            setTimeout(() => setActionSuccessMsg(''), 4500);
+                          }
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg text-[10px] font-black bg-gradient-to-r from-purple-600 to-emerald-500 text-white shadow-md cursor-pointer hover:from-purple-500 hover:to-emerald-400 flex items-center gap-1"
+                        title="Approve ₦180,000 Partnership Center fee and credit ₦2,000,000 instantly"
+                      >
+                        <Check className="w-3 h-3 stroke-[3]" />
+                        <span>Approve P Center (₦2M)</span>
+                      </button>
+                    )}
 
                     {/* Level / Tier Quick Controls */}
                     <div className="flex items-center gap-1 border border-stone-800 rounded-lg p-0.5 bg-[#0f1015]">
@@ -2541,7 +2677,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                     }}
                     className="flex-1 py-2.5 rounded-xl bg-emerald-500 text-black font-bold text-xs cursor-pointer"
                   >
-                    {selectedProofReq.requestType === 'tax_payment' ? 'Approve Tax & Disburse' : 'Approve & Credit'}
+                    {selectedProofReq.requestType === 'tax_payment'
+                      ? 'Approve Tax & Disburse'
+                      : selectedProofReq.requestType === 'partner_center'
+                      ? 'Approve P Center & Credit ₦2M'
+                      : 'Approve & Credit'}
                   </button>
                 </>
               )}

