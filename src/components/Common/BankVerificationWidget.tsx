@@ -196,16 +196,13 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
             <Building2 className="w-3.5 h-3.5 text-amber-500" />
             <span>Select Bank</span>
           </span>
-          <span className={`text-[10px] font-mono ${isLight ? 'text-slate-500' : 'text-stone-500'}`}>
-            Code: {selectedBank.code}
-          </span>
         </label>
 
         {/* Selected Bank Trigger */}
         <button
           type="button"
           onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-          className={`w-full px-3.5 py-2.5 min-h-[52px] rounded-xl text-left flex items-center justify-between text-xs focus:outline-none transition-colors cursor-pointer border ${
+          className={`w-full px-3.5 py-2.5 min-h-[50px] rounded-xl text-left flex items-center justify-between text-xs focus:outline-none transition-colors cursor-pointer border ${
             isLight
               ? 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-900 focus:border-emerald-500 shadow-sm'
               : 'bg-[#1a1c24] border-stone-800 hover:border-stone-700 text-white focus:border-amber-500'
@@ -213,12 +210,7 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
         >
           <div className="flex items-center gap-3 min-w-0">
             <BankAppIcon bank={selectedBank} size="md" />
-            <div className="min-w-0">
-              <span className="font-bold text-[13px] truncate block leading-tight">{selectedBank.name}</span>
-              <span className={`text-[10px] font-mono tabular-nums block ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
-                Bank Code · {selectedBank.code}
-              </span>
-            </div>
+            <span className="font-bold text-[13px] truncate block leading-tight">{selectedBank.name}</span>
           </div>
           <ChevronDown
             className={`w-4 h-4 flex-shrink-0 ml-2 transition-transform ${
@@ -238,7 +230,7 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
                 <Search className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${isLight ? 'text-slate-400' : 'text-stone-500'}`} />
                 <input
                   type="text"
-                  placeholder="Search bank name or bank code..."
+                  placeholder="Search bank name..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   autoFocus
@@ -321,14 +313,9 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
                           )}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <span className={`text-[10px] font-mono tabular-nums ${
-                          isLight ? 'text-slate-500' : 'text-stone-400'
-                        }`}>
-                          {bank.code}
-                        </span>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
-                      </div>
+                      {isSelected && (
+                        <Check className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                      )}
                     </button>
                   );
                 })
