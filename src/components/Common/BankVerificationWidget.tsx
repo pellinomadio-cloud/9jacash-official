@@ -19,6 +19,18 @@ import {
   VerificationResponse,
 } from '../../utils/bankVerification.ts';
 import { useTheme } from '../../context/ThemeContext.tsx';
+import { BankAppIcon } from './BankAppIcon.tsx';
+
+const QUICK_PICK_BANKS: Array<{ code: string; shortLabel: string }> = [
+  { code: '100004', shortLabel: 'OPay' },
+  { code: '100033', shortLabel: 'PalmPay' },
+  { code: '090405', shortLabel: 'Moniepoint' },
+  { code: '090267', shortLabel: 'Kuda' },
+  { code: '058', shortLabel: 'GTBank' },
+  { code: '044', shortLabel: 'Access' },
+  { code: '033', shortLabel: 'UBA' },
+  { code: '057', shortLabel: 'Zenith' },
+];
 
 interface BankVerificationWidgetProps {
   initialBankCode?: string;
@@ -193,34 +205,35 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
         <button
           type="button"
           onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-          className={`w-full p-3.5 rounded-xl text-left flex items-center justify-between text-xs focus:outline-none transition-colors cursor-pointer border ${
+          className={`w-full px-3.5 py-2.5 min-h-[52px] rounded-xl text-left flex items-center justify-between text-xs focus:outline-none transition-colors cursor-pointer border ${
             isLight
               ? 'bg-slate-50 border-slate-200 hover:border-slate-300 text-slate-900 focus:border-emerald-500 shadow-sm'
               : 'bg-[#1a1c24] border-stone-800 hover:border-stone-700 text-white focus:border-amber-500'
           }`}
         >
-          <div className="flex items-center gap-2.5 truncate">
-            <div className={`w-6 h-6 rounded-lg border flex items-center justify-center flex-shrink-0 ${
-              isLight ? 'bg-amber-100/60 border-amber-300 text-amber-700' : 'bg-stone-800 border-stone-700/60 text-amber-400'
-            }`}>
-              <Building2 className="w-3.5 h-3.5" />
+          <div className="flex items-center gap-3 min-w-0">
+            <BankAppIcon bank={selectedBank} size="md" />
+            <div className="min-w-0">
+              <span className="font-bold text-[13px] truncate block leading-tight">{selectedBank.name}</span>
+              <span className={`text-[10px] font-mono tabular-nums block ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                Bank Code · {selectedBank.code}
+              </span>
             </div>
-            <span className="font-semibold truncate">{selectedBank.name}</span>
           </div>
           <ChevronDown
-            className={`w-4 h-4 transition-transform ${
+            className={`w-4 h-4 flex-shrink-0 ml-2 transition-transform ${
               isDropdownOpen ? 'rotate-180 text-amber-500' : (isLight ? 'text-slate-400' : 'text-stone-400')
             }`}
           />
         </button>
 
-        {/* Dropdown Menu with Search */}
+        {/* Dropdown Menu with Search & Bank App Icons */}
         {isDropdownOpen && (
           <div className={`absolute left-0 right-0 top-full mt-1.5 z-40 rounded-2xl shadow-2xl overflow-hidden backdrop-blur-md animate-in fade-in zoom-in-95 duration-100 border ${
             isLight ? 'bg-white border-slate-200 text-slate-900 shadow-slate-400/20' : 'bg-[#14161f] border-stone-700/80 text-white'
           }`}>
             {/* Search Input Box */}
-            <div className={`p-2 border-b ${isLight ? 'border-slate-100 bg-slate-50' : 'border-stone-800 bg-[#12131a]'}`}>
+            <div className={`p-2.5 border-b ${isLight ? 'border-slate-100 bg-slate-50' : 'border-stone-800 bg-[#12131a]'}`}>
               <div className="relative">
                 <Search className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${isLight ? 'text-slate-400' : 'text-stone-500'}`} />
                 <input
@@ -236,45 +249,89 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
               </div>
             </div>
 
-            {/* Banks List */}
-            <div className="max-h-60 overflow-y-auto no-scrollbar py-1">
+            {/* Quick-Pick Popular Bank App Icons Grid (when not searching) */}
+            {!query && (
+              <div className={`p-2.5 border-b ${isLight ? 'border-slate-100 bg-slate-50/60' : 'border-stone-800/80 bg-[#101219]'}`}>
+                <div className={`text-[10px] font-semibold mb-2 px-0.5 ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                  Popular Banks
+                </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  {QUICK_PICK_BANKS.map(({ code, shortLabel }) => {
+                    const bankObj = NIGERIAN_BANKS.find((b) => b.code === code);
+                    if (!bankObj) return null;
+                    const isSelected = selectedBank.code === bankObj.code;
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => handleSelectBank(bankObj)}
+                        className={`flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-xl transition-all cursor-pointer active:scale-95 border ${
+                          isSelected
+                            ? (isLight
+                                ? 'bg-amber-50 border-amber-400 text-amber-900'
+                                : 'bg-amber-500/15 border-amber-500/50 text-amber-200')
+                            : (isLight
+                                ? 'bg-white border-slate-200/80 hover:border-slate-300 text-slate-700'
+                                : 'bg-[#181a24] border-stone-800 hover:border-stone-700 text-stone-300')
+                        }`}
+                      >
+                        <BankAppIcon bank={bankObj} size="md" />
+                        <span className="text-[10px] font-semibold truncate max-w-full leading-tight">
+                          {shortLabel}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Full Searchable Banks List with App Icons */}
+            <div className="max-h-64 overflow-y-auto no-scrollbar py-1">
               {filteredBanks.length === 0 ? (
                 <div className={`p-4 text-center text-xs ${isLight ? 'text-slate-500' : 'text-stone-500'}`}>
                   No bank found matching &ldquo;{searchQuery}&rdquo;
                 </div>
               ) : (
-                filteredBanks.map((bank) => (
-                  <button
-                    key={`${bank.code}_${bank.name}`}
-                    type="button"
-                    onClick={() => handleSelectBank(bank)}
-                    className={`w-full px-3.5 py-2.5 text-left text-xs flex items-center justify-between transition-colors cursor-pointer ${
-                      isLight
-                        ? (selectedBank.code === bank.code
-                            ? 'bg-amber-100 text-amber-900 font-bold'
-                            : 'text-slate-700 hover:bg-slate-100')
-                        : (selectedBank.code === bank.code
-                            ? 'bg-amber-500/10 text-amber-300 font-bold'
-                            : 'text-stone-300 hover:bg-stone-800/60')
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 truncate">
-                      <span className="truncate">{bank.name}</span>
-                      {bank.popular && (
-                        <span className={`text-[9px] px-1.5 py-0.2 rounded font-bold border ${
-                          isLight ? 'bg-amber-100 text-amber-800 border-amber-300' : 'bg-amber-400/10 text-amber-400 border-amber-400/20'
+                filteredBanks.map((bank) => {
+                  const isSelected = selectedBank.code === bank.code && selectedBank.name === bank.name;
+                  return (
+                    <button
+                      key={`${bank.code}_${bank.name}`}
+                      type="button"
+                      onClick={() => handleSelectBank(bank)}
+                      className={`w-full px-3 py-2 min-h-[48px] text-left text-xs flex items-center justify-between gap-2.5 transition-colors cursor-pointer ${
+                        isLight
+                          ? (isSelected
+                              ? 'bg-amber-50 text-amber-950 font-bold'
+                              : 'text-slate-800 hover:bg-slate-100')
+                          : (isSelected
+                              ? 'bg-amber-500/10 text-amber-200 font-bold'
+                              : 'text-stone-200 hover:bg-stone-800/60')
+                      }`}
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <BankAppIcon bank={bank} size="sm" />
+                        <div className="min-w-0">
+                          <span className="truncate block leading-snug">{bank.name}</span>
+                          {bank.popular && (
+                            <span className={`text-[10px] font-medium block ${isLight ? 'text-amber-700' : 'text-amber-400/80'}`}>
+                              Popular bank
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span className={`text-[10px] font-mono tabular-nums ${
+                          isLight ? 'text-slate-500' : 'text-stone-400'
                         }`}>
-                          Popular
+                          {bank.code}
                         </span>
-                      )}
-                    </div>
-                    <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded flex-shrink-0 ml-2 ${
-                      isLight ? 'bg-slate-200 text-slate-600' : 'bg-stone-800 text-stone-400'
-                    }`}>
-                      {bank.code}
-                    </span>
-                  </button>
-                ))
+                        {isSelected && <Check className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />}
+                      </div>
+                    </button>
+                  );
+                })
               )}
             </div>
           </div>
@@ -367,19 +424,16 @@ export const BankVerificationWidget: React.FC<BankVerificationWidgetProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
-            <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-bold flex-shrink-0 ${
-              isLight ? 'bg-emerald-100 text-emerald-800' : 'bg-emerald-500/20 text-emerald-300'
-            }`}>
-              <UserCheck className="w-4 h-4" />
-            </div>
-            <div>
-              <h4 className={`text-sm font-black uppercase tracking-wide ${isLight ? 'text-slate-900' : 'text-white'}`}>
+            <BankAppIcon bank={selectedBank} size="md" />
+            <div className="min-w-0 flex-1">
+              <h4 className={`text-sm font-black uppercase tracking-wide truncate ${isLight ? 'text-slate-900' : 'text-white'}`}>
                 {verifiedName}
               </h4>
-              <p className={`text-[10px] font-mono ${isLight ? 'text-emerald-700' : 'text-emerald-400/80'}`}>
-                {selectedBank.name} • {accountNumber}
+              <p className={`text-[10px] font-mono tabular-nums truncate ${isLight ? 'text-emerald-700' : 'text-emerald-400/80'}`}>
+                {selectedBank.name} · {accountNumber}
               </p>
             </div>
+            <UserCheck className={`w-4 h-4 flex-shrink-0 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
           </div>
         </div>
       )}

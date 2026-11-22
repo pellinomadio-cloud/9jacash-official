@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from 'lucide-react';
 import { BankVerificationWidget } from '../Common/BankVerificationWidget.tsx';
+import { BankAppIcon } from '../Common/BankAppIcon.tsx';
 import { sendWithdrawalDeviceNotification } from '../../utils/deviceNotifications.ts';
 import { useTheme } from '../../context/ThemeContext.tsx';
 
@@ -38,7 +39,8 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   const { user, formatNaira, withdrawFunds, depositRequests, appPricing } = useAuth();
   const { isLight } = useTheme();
   const kycFee = appPricing?.kycPrice ?? 22000;
-  const [selectedBank, setSelectedBank] = useState('GTBank');
+  const [selectedBank, setSelectedBank] = useState('Access Bank');
+  const [selectedBankCode, setSelectedBankCode] = useState('044');
   const [accountNumber, setAccountNumber] = useState('');
   const [accountName, setAccountName] = useState('');
   const [amount, setAmount] = useState('');
@@ -176,10 +178,11 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
                   {formatNaira(withdrawnAmount)}
                 </span>
               </div>
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center gap-2">
                 <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Destination:</span>
-                <span className={`font-medium ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                  {selectedBank} ({accountNumber})
+                <span className={`font-medium flex items-center gap-1.5 min-w-0 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  <BankAppIcon bankCode={selectedBankCode} bankName={selectedBank} size="xs" />
+                  <span className="truncate">{selectedBank} ({accountNumber})</span>
                 </span>
               </div>
               <div className="flex justify-between items-center">
@@ -260,10 +263,11 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
                   {formatNaira(withdrawnAmount)}
                 </span>
               </div>
-              <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
+              <div className={`flex justify-between items-center gap-2 ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
                 <span className={`font-sans ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Destination Bank:</span>
-                <span className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                  {selectedBank} ({accountNumber})
+                <span className={`font-bold flex items-center gap-1.5 min-w-0 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  <BankAppIcon bankCode={selectedBankCode} bankName={selectedBank} size="xs" />
+                  <span className="truncate">{selectedBank} ({accountNumber})</span>
                 </span>
               </div>
               <div className={`flex justify-between items-center ${isLight ? 'text-slate-700' : 'text-stone-300'}`}>
@@ -355,9 +359,12 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
                   {formatNaira(withdrawnAmount)}
                 </span>
               </div>
-              <div className="flex justify-between items-center">
+              <div className="flex justify-between items-center gap-2">
                 <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Destination Bank:</span>
-                <span className={`font-medium ${isLight ? 'text-slate-900' : 'text-white'}`}>{selectedBank}</span>
+                <span className={`font-medium flex items-center gap-1.5 min-w-0 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                  <BankAppIcon bankCode={selectedBankCode} bankName={selectedBank} size="xs" />
+                  <span className="truncate">{selectedBank}</span>
+                </span>
               </div>
               <div className="flex justify-between items-center">
                 <span className={isLight ? 'text-slate-500' : 'text-stone-400'}>Account Number:</span>
@@ -438,6 +445,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
             <BankVerificationWidget
               onVerified={(data) => {
                 setSelectedBank(data.bank.name);
+                setSelectedBankCode(data.bank.code);
                 setAccountNumber(data.accountNumber);
                 setAccountName(data.accountName);
                 setError('');
