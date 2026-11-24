@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { usePWAInstall } from '../../hooks/usePWAInstall.ts';
 import { Download, Smartphone, X, CheckCircle2, ExternalLink, MoreVertical } from 'lucide-react';
+import { BrandIcon } from './BrandIcon.tsx';
 
 export const PWAInstallButton: React.FC = () => {
   const {
@@ -50,12 +51,9 @@ export const PWAInstallButton: React.FC = () => {
           <div className="w-full max-w-sm rounded-3xl bg-[#11131a] border border-amber-500/35 p-6 space-y-4 text-stone-200 shadow-2xl">
             <div className="flex items-center justify-between border-b border-stone-800 pb-3.5">
               <div className="flex items-center gap-3">
-                <img
-                  src="/pwa-192x192.png?v=4"
-                  alt="9jacash App Icon"
-                  referrerPolicy="no-referrer"
-                  className="w-12 h-12 rounded-2xl border border-amber-400/50 shadow-lg shadow-amber-500/20 object-cover shrink-0"
-                />
+                <div className="w-12 h-12 rounded-2xl border border-amber-400/50 shadow-lg shadow-amber-500/20 overflow-hidden shrink-0 bg-[#090d16]">
+                  <BrandIcon alt="9jacash App Icon" className="w-full h-full object-cover" />
+                </div>
                 <div>
                   <h3 className="font-extrabold text-base text-white leading-tight">
                     Install 9jacash App

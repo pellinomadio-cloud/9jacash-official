@@ -142,7 +142,7 @@ export default defineConfig(() => {
           'pwa-512x512.png',
           'pwa-maskable-512x512.png',
           'icon-badge.png',
-          'sw.js',
+          'sw-notifications.js',
           'audio/quickcode-voice-guide.mp3',
           'audio/quickcode-voice-guide.wav',
         ],
@@ -158,19 +158,19 @@ export default defineConfig(() => {
           scope: '/',
           icons: [
             {
-              src: '/pwa-192x192.png?v=4',
+              src: '/pwa-192x192.png',
               sizes: '192x192',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-512x512.png?v=4',
+              src: '/pwa-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'any',
             },
             {
-              src: '/pwa-maskable-512x512.png?v=4',
+              src: '/pwa-maskable-512x512.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
@@ -184,6 +184,8 @@ export default defineConfig(() => {
         workbox: {
           maximumFileSizeToCacheInBytes: 6 * 1024 * 1024,
           cleanupOutdatedCaches: true,
+          ignoreURLParametersMatching: [/^v$/, /^utm_/, /^fbclid$/],
+          importScripts: ['/sw-notifications.js'],
           navigateFallbackDenylist: [/^\/api\//],
         },
       }),

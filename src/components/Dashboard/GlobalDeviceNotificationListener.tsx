@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import { BrandIcon } from '../Common/BrandIcon.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
 import {
   subscribeToDeviceBroadcasts,
@@ -177,11 +178,9 @@ export const GlobalDeviceNotificationListener: React.FC = () => {
       className="fixed top-3 left-1/2 -translate-x-1/2 z-[99999] w-[calc(100%-24px)] max-w-sm animate-in fade-in slide-in-from-top-3 duration-200"
     >
       <div className="rounded-2xl bg-[#161820]/95 backdrop-blur-xl border border-stone-700/80 shadow-2xl shadow-black/50 p-3 flex items-start gap-3 text-white">
-        <img
-          src="/pwa-192x192.png?v=4"
-          alt="9jacash"
-          className="w-10 h-10 rounded-xl object-cover border border-amber-400/40 shrink-0 shadow-md"
-        />
+        <div className="w-10 h-10 rounded-xl overflow-hidden border border-amber-400/40 shrink-0 shadow-md bg-[#090d16]">
+          <BrandIcon alt="9jacash" className="w-full h-full object-cover" />
+        </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-extrabold text-amber-400 truncate">

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
 import { Landmark, Mail, KeyRound, ArrowRight, ShieldCheck } from 'lucide-react';
+import { BrandIcon } from '../Common/BrandIcon.tsx';
 
 interface LoginProps {
   onSwitchToRegister: () => void;
@@ -51,24 +52,19 @@ export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
         <div className={`absolute bottom-[-15%] right-[-10%] w-80 h-80 rounded-full blur-3xl ${isLight ? 'bg-amber-300/15' : 'bg-amber-600/10'}`} />
       </div>
 
-      <div className={`relative w-full max-w-md rounded-3xl p-7 shadow-2xl backdrop-blur-md border transition-colors ${
+      <div className={`relative z-10 w-full max-w-md rounded-3xl p-7 shadow-2xl backdrop-blur-md border transition-colors ${
         isLight
           ? 'bg-white border-slate-200/90 shadow-slate-900/10 text-slate-800'
           : 'bg-[#131418] border-stone-800 text-stone-200'
       }`}>
         {/* Brand Header */}
         <div className="flex flex-col items-center text-center mb-7">
-          <div className={`w-16 h-16 rounded-2xl border overflow-hidden flex items-center justify-center mb-3 shadow-lg ${
+          <div className={`w-16 h-16 rounded-2xl border overflow-hidden flex items-center justify-center mb-3 shadow-lg bg-[#090d16] ${
             isLight
               ? 'border-amber-400 shadow-amber-500/15'
               : 'border-amber-500/50 shadow-amber-500/20'
           }`}>
-            <img
-              src="/pwa-192x192.png?v=4"
-              alt="9jacash"
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-            />
+            <BrandIcon alt="9jacash" className="w-full h-full object-cover" />
           </div>
           <h1 className={`text-2xl font-extrabold tracking-tight flex items-center gap-1.5 ${isLight ? 'text-slate-900' : 'text-white'}`}>
             9ja<span className="text-amber-500">cash</span>
