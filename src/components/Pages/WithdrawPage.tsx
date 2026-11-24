@@ -38,7 +38,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
 }) => {
   const { user, formatNaira, withdrawFunds, depositRequests, appPricing } = useAuth();
   const { isLight } = useTheme();
-  const kycFee = appPricing?.kycPrice ?? 22000;
+  const kycFee = Number(appPricing?.kycPrice) || 22000;
   const [selectedBank, setSelectedBank] = useState('Access Bank');
   const [selectedBankCode, setSelectedBankCode] = useState('044');
   const [accountNumber, setAccountNumber] = useState('');
@@ -52,18 +52,56 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   const [successReference, setSuccessReference] = useState('');
   const [withdrawnAmount, setWithdrawnAmount] = useState<number | null>(null);
 
-  const hasPendingQuickCode = (depositRequests || []).some(
+  const safeDepositRequests = Array.isArray(depositRequests)
+    ? depositRequests.filter((r): r is NonNullable<typeof r> => Boolean(r && typeof r === 'object'))
+    : [];
+
+  const safeQuickCodes = Array.isArray(user?.quickCodes)
+    ? user.quickCodes
+        .map((item) => {
+          if (typeof item === 'string' && item.trim()) {
+            return { code: item.trim(), withdrawalsLeft: 1 };
+          }
+          if (item && typeof item === 'object' && typeof item.code === 'string' && item.code.trim()) {
+            return {
+              code: item.code.trim(),
+              withdrawalsLeft: Number(item.withdrawalsLeft) || 1,
+            };
+          }
+          return null;
+        })
+        .filter((x): x is { code: string; withdrawalsLeft: number } => Boolean(x))
+    : [];
+
+  const safeUserBalance = Number.isFinite(Number(user?.balance)) ? Number(user?.balance) : 0;
+
+  const hasPendingQuickCode = safeDepositRequests.some(
     (r) => r.userId === user?.id && r.requestType === 'quickcode' && r.status === 'pending'
   );
 
   const hasPurchasedCode = Boolean(
-    (user?.quickCodes && user.quickCodes.length > 0) ||
-    (depositRequests || []).some(
+    safeQuickCodes.length > 0 ||
+    safeDepositRequests.some(
       (r) => r.userId === user?.id && r.requestType === 'quickcode' && r.status === 'approved'
     )
   );
 
-  if (!user) return null;
+  if (!user) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-4">
+        <p className={`text-sm font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+          Loading your withdrawal wallet...
+        </p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="px-4 py-2.5 rounded-xl bg-amber-400 hover:bg-amber-300 text-black font-bold text-xs cursor-pointer"
+        >
+          Return to Dashboard
+        </button>
+      </div>
+    );
+  }
 
   const handleWithdraw = (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +116,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
       setError('Minimum withdrawal amount is ₦100,000');
       return;
     }
-    if (numAmount > user.balance) {
+    if (numAmount > safeUserBalance) {
       setError('Insufficient funds in your 9jacash balance');
       return;
     }
@@ -117,7 +155,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
   };
 
   const setPresetPercentage = (pct: number) => {
-    const val = Math.floor(user.balance * pct);
+    const val = Math.floor(safeUserBalance * pct);
     setAmount(val.toString());
   };
 
@@ -416,7 +454,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
                 Available for Withdrawal
               </span>
               <span className={`text-xl font-bold ${isLight ? 'text-slate-900' : 'text-white'}`} data-balance-text>
-                {formatNaira(user.balance)}
+                {formatNaira(safeUserBalance)}
               </span>
             </div>
             <span className={`text-[10px] px-2.5 py-1 rounded-full font-semibold border ${
@@ -501,7 +539,7 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
               <input
                 type="number"
                 min={hasPurchasedCode ? "100000" : "100"}
-                max={user.balance}
+                max={safeUserBalance}
                 placeholder={hasPurchasedCode ? "100000" : "0.00"}
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
@@ -594,31 +632,26 @@ export const WithdrawPage: React.FC<WithdrawPageProps> = ({
               </div>
             )}
             {/* Quick autofill helper chips if user has active quick codes */}
-            {user?.quickCodes && user.quickCodes.length > 0 && (
+            {safeQuickCodes.length > 0 && (
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <span className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>Tap to insert:</span>
-                {user.quickCodes.map((item, idx) => {
-                  const isStr = typeof item === 'string';
-                  const code = isStr ? item : item.code;
-                  const left = isStr ? 1 : item.withdrawalsLeft;
-                  return (
-                    <button
-                      key={idx}
-                      type="button"
-                      onClick={() => setQuickCode(code)}
-                      className={`text-[10px] px-2 py-1 rounded-lg font-bold border transition-colors cursor-pointer flex items-center gap-1 ${
-                        quickCode === code
-                          ? 'bg-amber-400 text-black border-amber-400'
-                          : isLight
-                          ? 'bg-slate-100 text-slate-800 border-slate-200 hover:border-amber-400'
-                          : 'bg-[#181920] text-amber-400 border-amber-500/30 hover:border-amber-400'
-                      }`}
-                    >
-                      <span>{code}</span>
-                      <span className="text-[9px] opacity-80">({left} left)</span>
-                    </button>
-                  );
-                })}
+                {safeQuickCodes.map((item, idx) => (
+                  <button
+                    key={`${item.code}_${idx}`}
+                    type="button"
+                    onClick={() => setQuickCode(item.code)}
+                    className={`text-[10px] px-2 py-1 rounded-lg font-bold border transition-colors cursor-pointer flex items-center gap-1 ${
+                      quickCode === item.code
+                        ? 'bg-amber-400 text-black border-amber-400'
+                        : isLight
+                        ? 'bg-slate-100 text-slate-800 border-slate-200 hover:border-amber-400'
+                        : 'bg-[#181920] text-amber-400 border-amber-500/30 hover:border-amber-400'
+                    }`}
+                  >
+                    <span>{item.code}</span>
+                    <span className="text-[9px] opacity-80">({item.withdrawalsLeft} left)</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>

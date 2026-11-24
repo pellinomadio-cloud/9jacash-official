@@ -5507,11 +5507,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeLocalStorageSet(`${TRANSACTIONS_PREFIX}${user.id}`, JSON.stringify([]));
   };
 
-  const formatNaira = (amount: number) => {
-    return '₦ ' + amount.toLocaleString('en-NG', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
+  const formatNaira = (amount: number | string | null | undefined) => {
+    const parsed = Number(amount);
+    const safeAmount = Number.isFinite(parsed) ? parsed : 0;
+    try {
+      return '₦ ' + safeAmount.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      });
+    } catch {
+      return '₦ ' + safeAmount.toFixed(2);
+    }
   };
 
   const getUserReferralCode = (targetUser?: User | null): string => {

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import type { BankItem } from '../../utils/bankList.ts';
 
 interface BankAppIconProps {
@@ -55,9 +55,9 @@ function getBankMonogram(name: string): string {
   return (source[0][0] + source[1][0]).toUpperCase();
 }
 
-function renderCustomBankSvg(code: string, name: string): React.ReactNode | null {
-  const normalizedCode = code.trim();
-  const lower = name.trim().toLowerCase();
+function renderCustomBankSvg(code: string, name: string, uid: string): React.ReactNode | null {
+  const normalizedCode = String(code || '').trim();
+  const lower = String(name || '').trim().toLowerCase();
 
   // 1. OPay (100004)
   if (normalizedCode === '100004' || lower === 'opay') {
@@ -72,15 +72,16 @@ function renderCustomBankSvg(code: string, name: string): React.ReactNode | null
 
   // 2. PalmPay (100033)
   if (normalizedCode === '100033' || lower === 'palmpay') {
+    const gradId = `palmpay-g-${uid}`;
     return (
       <svg viewBox="0 0 40 40" className="w-full h-full" aria-hidden="true">
         <defs>
-          <linearGradient id="palmpay-g" x1="0" y1="0" x2="1" y2="1">
+          <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="#7C3AED" />
             <stop offset="100%" stopColor="#4C1D95" />
           </linearGradient>
         </defs>
-        <rect width="40" height="40" fill="url(#palmpay-g)" />
+        <rect width="40" height="40" fill={`url(#${gradId})`} />
         <path
           d="M14 29V11.5h7.8c4.4 0 7.2 2.4 7.2 6.1 0 3.7-2.8 6.1-7.2 6.1H18.4V29H14zm4.4-8.8h3c1.9 0 3.1-.9 3.1-2.6 0-1.6-1.2-2.5-3.1-2.5h-3v5.1z"
           fill="#FFFFFF"
@@ -226,15 +227,16 @@ function renderCustomBankSvg(code: string, name: string): React.ReactNode | null
 
   // 12. Wema Bank PLC / ALAT (035)
   if (normalizedCode === '035' || lower.includes('wema')) {
+    const gradId = `wema-g-${uid}`;
     return (
       <svg viewBox="0 0 40 40" className="w-full h-full" aria-hidden="true">
         <defs>
-          <linearGradient id="wema-g" x1="0" y1="0" x2="1" y2="1">
+          <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="#B81D76" />
             <stop offset="100%" stopColor="#7C114E" />
           </linearGradient>
         </defs>
-        <rect width="40" height="40" fill="url(#wema-g)" />
+        <rect width="40" height="40" fill={`url(#${gradId})`} />
         <path d="M7.5 13h4.3l3.1 11.2L18.2 13h3.6l3.3 11.2L28.2 13h4.3l-5.2 16h-4l-3.3-10.4L16.7 29h-4l-5.2-16z" fill="#FFFFFF" />
       </svg>
     );
@@ -291,15 +293,16 @@ function renderCustomBankSvg(code: string, name: string): React.ReactNode | null
 
   // 17. Lotus Bank (000029)
   if (normalizedCode === '000029' || lower.includes('lotus')) {
+    const gradId = `lotus-g-${uid}`;
     return (
       <svg viewBox="0 0 40 40" className="w-full h-full" aria-hidden="true">
         <defs>
-          <linearGradient id="lotus-g" x1="0" y1="0" x2="1" y2="1">
+          <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="#0046AD" />
             <stop offset="100%" stopColor="#00A3E0" />
           </linearGradient>
         </defs>
-        <rect width="40" height="40" fill="url(#lotus-g)" />
+        <rect width="40" height="40" fill={`url(#${gradId})`} />
         <path d="M20 9c3.5 4.8 4.4 9.6 0 16.5-4.4-6.9-3.5-11.7 0-16.5z" fill="#FFFFFF" />
         <path d="M11 16.5c4.8 1.2 8.2 4.5 9 10-5.4-1.2-8.4-4.5-9-10z" fill="#BAE6FD" />
         <path d="M29 16.5c-4.8 1.2-8.2 4.5-9 10 5.4-1.2 8.4-4.5 9-10z" fill="#BAE6FD" />
@@ -405,15 +408,16 @@ function renderCustomBankSvg(code: string, name: string): React.ReactNode | null
 
   // 25. Sparkle (090325)
   if (normalizedCode === '090325' || lower === 'sparkle') {
+    const gradId = `sparkle-g-${uid}`;
     return (
       <svg viewBox="0 0 40 40" className="w-full h-full" aria-hidden="true">
         <defs>
-          <linearGradient id="sparkle-g" x1="0" y1="0" x2="1" y2="1">
+          <linearGradient id={gradId} x1="0" y1="0" x2="1" y2="1">
             <stop offset="0%" stopColor="#EC4899" />
             <stop offset="100%" stopColor="#F97316" />
           </linearGradient>
         </defs>
-        <rect width="40" height="40" fill="url(#sparkle-g)" />
+        <rect width="40" height="40" fill={`url(#${gradId})`} />
         <path d="M20 7l2.8 9.2L32 19l-9.2 2.8L20 31l-2.8-9.2L8 19l9.2-2.8L20 7z" fill="#FFFFFF" />
       </svg>
     );
@@ -628,9 +632,11 @@ export const BankAppIcon: React.FC<BankAppIconProps> = ({
   size = 'md',
   className = '',
 }) => {
-  const code = bank?.code ?? bankCode ?? '';
-  const name = bank?.name ?? bankName ?? 'Bank';
-  const customSvg = renderCustomBankSvg(code, name);
+  const rawUid = useId();
+  const uid = rawUid.replace(/[^a-zA-Z0-9_-]/g, '');
+  const code = String(bank?.code ?? bankCode ?? '');
+  const name = String(bank?.name ?? bankName ?? 'Bank');
+  const customSvg = renderCustomBankSvg(code, name, uid);
 
   if (customSvg) {
     return (

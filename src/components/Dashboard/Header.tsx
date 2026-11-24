@@ -1,12 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth, isNotificationVisibleToUser } from '../../context/AuthContext.tsx';
-import { User, Bell, Settings, LogOut, Shield, Copy, Check, Smartphone } from 'lucide-react';
+import { User, Bell, Settings, LogOut, Shield, Copy, Check, Loader2 } from 'lucide-react';
 import { PWAInstallButton } from '../Common/PWAInstallButton.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
 import {
   getDeviceNotificationPermission,
-  requestDeviceNotificationPermission,
-  triggerDashboardVisitDeviceNotification,
+  isInAppNotificationsEnabled,
+  enableNotificationsFromUserGesture,
+  NOTIF_STATE_EVENT,
 } from '../../utils/deviceNotifications.ts';
 
 interface HeaderProps {
@@ -19,6 +20,25 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
   const { isLight } = useTheme();
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [isEnablingNotif, setIsEnablingNotif] = useState(false);
+  const [notifFeedback, setNotifFeedback] = useState<string | null>(null);
+  const [notifActive, setNotifActive] = useState<boolean>(() => {
+    return getDeviceNotificationPermission() === 'granted' || isInAppNotificationsEnabled();
+  });
+
+  useEffect(() => {
+    const syncNotif = () => {
+      setNotifActive(
+        getDeviceNotificationPermission() === 'granted' || isInAppNotificationsEnabled()
+      );
+    };
+    window.addEventListener(NOTIF_STATE_EVENT, syncNotif);
+    window.addEventListener('focus', syncNotif);
+    return () => {
+      window.removeEventListener(NOTIF_STATE_EVENT, syncNotif);
+      window.removeEventListener('focus', syncNotif);
+    };
+  }, []);
 
   // Count notifications visible to this particular user (global broadcasts + their personal notices)
   const broadcastCount = (notifications || []).filter((n) =>
@@ -204,37 +224,62 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
             </div>
 
             {/* Device Notifications */}
-            <button
-              type="button"
-              onClick={async () => {
-                const perm = getDeviceNotificationPermission();
-                if (perm !== 'granted') {
-                  const res = await requestDeviceNotificationPermission();
-                  if (res === 'granted') {
-                    await triggerDashboardVisitDeviceNotification(user, true);
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                disabled={isEnablingNotif}
+                onClick={async () => {
+                  if (isEnablingNotif) return;
+                  setIsEnablingNotif(true);
+                  setNotifFeedback(null);
+                  try {
+                    const res = await enableNotificationsFromUserGesture(user);
+                    setNotifActive(res.permission === 'granted' || res.inAppEnabled);
+                    setNotifFeedback(res.message);
+                  } catch {
+                    setNotifFeedback('In-app alerts activated for your session.');
+                  } finally {
+                    setIsEnablingNotif(false);
                   }
-                } else {
-                  await triggerDashboardVisitDeviceNotification(user, true);
-                }
-              }}
-              className={`w-full flex items-center justify-between p-2 rounded-xl font-medium text-xs border transition-colors cursor-pointer ${
-                isLight
-                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
-                  : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-              }`}
-            >
-              <div className="flex items-center gap-2">
-                <Bell className="w-3.5 h-3.5 text-emerald-500" />
-                <span>Turn on notification</span>
-              </div>
-              <span
-                className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
-                  isLight ? 'text-emerald-700 bg-emerald-100' : 'text-emerald-400 bg-emerald-500/20'
+                }}
+                className={`w-full flex items-center justify-between p-2.5 rounded-xl font-medium text-xs border transition-colors cursor-pointer disabled:opacity-70 ${
+                  isLight
+                    ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                    : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
                 }`}
               >
-                Alerts
-              </span>
-            </button>
+                <div className="flex items-center gap-2">
+                  {isEnablingNotif ? (
+                    <Loader2 className="w-3.5 h-3.5 text-emerald-500 animate-spin" />
+                  ) : (
+                    <Bell className="w-3.5 h-3.5 text-emerald-500" />
+                  )}
+                  <span>
+                    {isEnablingNotif
+                      ? 'Enabling notifications...'
+                      : notifActive
+                      ? 'Notifications Active'
+                      : 'Turn on notification'}
+                  </span>
+                </div>
+                <span
+                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                    isLight ? 'text-emerald-700 bg-emerald-100' : 'text-emerald-400 bg-emerald-500/20'
+                  }`}
+                >
+                  {notifActive ? 'ON' : 'Alerts'}
+                </span>
+              </button>
+              {notifFeedback && (
+                <p
+                  className={`text-[10px] leading-snug px-1.5 ${
+                    isLight ? 'text-emerald-700' : 'text-emerald-300/90'
+                  }`}
+                >
+                  {notifFeedback}
+                </p>
+              )}
+            </div>
           </div>
 
           <div className={`pt-2 border-t ${isLight ? 'border-slate-200' : 'border-stone-800'}`}>

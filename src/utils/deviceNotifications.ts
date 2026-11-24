@@ -126,25 +126,80 @@ export function playNotificationChime(): void {
 let lastNotificationTimestamp = 0;
 const MIN_NOTIFICATION_INTERVAL_MS = 10000; // 10s cooldown for automatic visits to avoid spamming system tray
 
+export const IN_APP_NOTIF_STORAGE_KEY = '9jacash_inapp_notifications_enabled';
+export const NOTIF_STATE_EVENT = '9jacash-notifications-state-changed';
+
+export type EnableNotificationsOutcome =
+  | 'granted'
+  | 'denied'
+  | 'ios_needs_pwa'
+  | 'iframe_or_restricted'
+  | 'unsupported'
+  | 'dismissed';
+
+export interface EnableNotificationsResult {
+  outcome: EnableNotificationsOutcome;
+  permission: NotificationPermissionState;
+  inAppEnabled: boolean;
+  message: string;
+}
+
+export function isInAppNotificationsEnabled(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return localStorage.getItem(IN_APP_NOTIF_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setInAppNotificationsEnabled(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (enabled) {
+      localStorage.setItem(IN_APP_NOTIF_STORAGE_KEY, 'true');
+    } else {
+      localStorage.removeItem(IN_APP_NOTIF_STORAGE_KEY);
+    }
+    window.dispatchEvent(new CustomEvent(NOTIF_STATE_EVENT));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function isRunningInsideIframe(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    return window.self !== window.top;
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Check if the browser and device support the Notification API
  */
 export function isDeviceNotificationSupported(): boolean {
-  return typeof window !== 'undefined' && 'Notification' in window;
+  return typeof window !== 'undefined' && 'Notification' in window && typeof window.Notification !== 'undefined';
 }
 
 /**
- * Get current notification permission
+ * Get current notification permission safely
  */
 export function getDeviceNotificationPermission(): NotificationPermissionState {
   if (!isDeviceNotificationSupported()) {
     return 'unsupported';
   }
-  return Notification.permission as NotificationPermissionState;
+  try {
+    return (Notification.permission as NotificationPermissionState) || 'default';
+  } catch {
+    return 'unsupported';
+  }
 }
 
 /**
  * Register or retrieve the active service worker for showing device notifications
+ * Uses a strict timeout so navigator.serviceWorker.ready can NEVER hang indefinitely.
  */
 export async function getNotificationServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
@@ -156,9 +211,17 @@ export async function getNotificationServiceWorker(): Promise<ServiceWorkerRegis
     if (!registration) {
       registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
-    // Wait for the service worker to become ready/active
-    await navigator.serviceWorker.ready;
-    return registration;
+    if (registration?.active) {
+      return registration;
+    }
+
+    // Race navigator.serviceWorker.ready against a 2s timeout so it never hangs
+    const readyReg = await Promise.race<ServiceWorkerRegistration | null>([
+      navigator.serviceWorker.ready,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+    ]);
+
+    return readyReg || registration || null;
   } catch (err) {
     console.warn('Could not retrieve or register Notification Service Worker:', err);
     return null;
@@ -166,7 +229,8 @@ export async function getNotificationServiceWorker(): Promise<ServiceWorkerRegis
 }
 
 /**
- * Request notification permission from the user
+ * Request notification permission from the user (supports both Promise & legacy callback APIs)
+ * Must be invoked directly from a user click/tap gesture for Chrome, Safari & Android browsers.
  */
 export async function requestDeviceNotificationPermission(): Promise<NotificationPermissionState> {
   if (!isDeviceNotificationSupported()) {
@@ -174,16 +238,150 @@ export async function requestDeviceNotificationPermission(): Promise<Notificatio
   }
 
   try {
-    const permission = await Notification.requestPermission();
-    if (permission === 'granted') {
-      // Warm up service worker registration
-      await getNotificationServiceWorker();
+    if (Notification.permission === 'granted') {
+      getNotificationServiceWorker().catch(() => {});
+      return 'granted';
     }
-    return permission as NotificationPermissionState;
+
+    const permissionPromise = new Promise<NotificationPermissionState>((resolve) => {
+      try {
+        const result = Notification.requestPermission((cbPerm) => {
+          resolve((cbPerm as NotificationPermissionState) || getDeviceNotificationPermission());
+        });
+        if (result && typeof (result as Promise<NotificationPermission>).then === 'function') {
+          (result as Promise<NotificationPermission>)
+            .then((p) => resolve((p as NotificationPermissionState) || getDeviceNotificationPermission()))
+            .catch(() => resolve(getDeviceNotificationPermission()));
+        }
+      } catch {
+        resolve(getDeviceNotificationPermission());
+      }
+    });
+
+    // Guard against browsers/WebViews where requestPermission never settles
+    const permission = await Promise.race<NotificationPermissionState>([
+      permissionPromise,
+      new Promise<NotificationPermissionState>((resolve) =>
+        setTimeout(() => resolve(getDeviceNotificationPermission()), 6000)
+      ),
+    ]);
+
+    if (permission === 'granted') {
+      // Warm up service worker registration without blocking indefinitely
+      getNotificationServiceWorker().catch(() => {});
+    }
+
+    return permission;
   } catch (err) {
     console.warn('Error requesting device notification permission:', err);
-    return Notification.permission as NotificationPermissionState;
+    return getDeviceNotificationPermission();
   }
+}
+
+/**
+ * Unified user-triggered activation flow for "Turn On Notification" buttons.
+ * Always produces clear, immediate feedback (never silently fails or hangs).
+ */
+export async function enableNotificationsFromUserGesture(user?: {
+  name?: string;
+  balance?: number;
+  availableBalance?: number;
+  id?: string;
+} | null): Promise<EnableNotificationsResult> {
+  const platform = detectDevicePlatform();
+  const installedPwa = isPwaInstalled();
+  const inIframe = isRunningInsideIframe();
+
+  // iOS Safari browser tabs only support Web Push when added to Home Screen
+  if (platform === 'ios' && !installedPwa && !isDeviceNotificationSupported()) {
+    setInAppNotificationsEnabled(true);
+    playNotificationChime();
+    return {
+      outcome: 'ios_needs_pwa',
+      permission: 'unsupported',
+      inAppEnabled: true,
+      message: 'In-app alerts are now ON! For iPhone lock-screen alerts, tap Share → "Add to Home Screen".',
+    };
+  }
+
+  if (!isDeviceNotificationSupported()) {
+    setInAppNotificationsEnabled(true);
+    playNotificationChime();
+    return {
+      outcome: 'unsupported',
+      permission: 'unsupported',
+      inAppEnabled: true,
+      message: 'In-app instant alerts are now ON! Your current browser does not support system push notifications.',
+    };
+  }
+
+  // Request permission immediately while still inside the user's click gesture
+  const perm = await requestDeviceNotificationPermission();
+
+  if (perm === 'granted') {
+    setInAppNotificationsEnabled(true);
+    playNotificationChime();
+    // Sync subscriber metadata in background (never block UI)
+    syncDeviceSubscriber(user?.id, user?.name).catch(() => {});
+
+    // Always send a clear confirmation notification right away so user sees it working immediately
+    const firstName = user?.name ? user.name.split(' ')[0] : 'Member';
+    await sendDeviceNotification('9jacash • Notifications Enabled 🔔', {
+      body: `Great job, ${firstName}! You will now receive instant alerts for deposits, withdrawals, and rewards.`,
+      tag: `9jacash-enabled-${Date.now()}`,
+      renotify: true,
+    });
+    markDashboardVisitNotificationShown(user?.id);
+
+    return {
+      outcome: 'granted',
+      permission: 'granted',
+      inAppEnabled: true,
+      message: 'Notifications turned on! You will receive instant withdrawal and account alerts.',
+    };
+  }
+
+  if (perm === 'denied') {
+    setInAppNotificationsEnabled(true);
+    playNotificationChime();
+    return {
+      outcome: 'denied',
+      permission: 'denied',
+      inAppEnabled: true,
+      message: inIframe
+        ? 'In-app alerts are now ON! System push prompts are restricted inside embedded frames — open directly in Chrome/Safari for lock-screen alerts.'
+        : 'Notifications are blocked in your browser settings. Tap the lock icon next to the website address → Allow Notifications. In-app alerts are active.',
+    };
+  }
+
+  // Permission remained 'default' (dismissed or blocked by iframe/in-app browser)
+  setInAppNotificationsEnabled(true);
+  playNotificationChime();
+
+  if (inIframe) {
+    return {
+      outcome: 'iframe_or_restricted',
+      permission: 'default',
+      inAppEnabled: true,
+      message: 'In-app instant alerts are now ON! Open the app directly in Chrome or Safari to enable phone lock-screen push alerts.',
+    };
+  }
+
+  if (platform === 'ios' && !installedPwa) {
+    return {
+      outcome: 'ios_needs_pwa',
+      permission: 'default',
+      inAppEnabled: true,
+      message: 'In-app alerts are now ON! On iPhone, tap Share → "Add to Home Screen" to enable lock-screen alerts.',
+    };
+  }
+
+  return {
+    outcome: 'dismissed',
+    permission: 'default',
+    inAppEnabled: true,
+    message: 'In-app alerts are now ON! Tap "Turn On Notification" again and choose "Allow" if you also want lock-screen alerts.',
+  };
 }
 
 /**
@@ -200,11 +398,7 @@ export async function sendDeviceNotification(
   }
 
   if (Notification.permission !== 'granted') {
-    // If not granted, try requesting
-    const perm = await requestDeviceNotificationPermission();
-    if (perm !== 'granted') {
-      return false;
-    }
+    return false;
   }
 
   const notificationOptions = {

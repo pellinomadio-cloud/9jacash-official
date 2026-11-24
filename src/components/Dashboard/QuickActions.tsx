@@ -13,17 +13,28 @@ export const QuickActions: React.FC<QuickActionsProps> = ({ onActionClick }) => 
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   // Check if user has an active pending request for quick code
-  const hasPendingQuickCode = depositRequests.some(
-    (r) => r.userId === user?.id && r.requestType === 'quickcode' && r.status === 'pending'
+  const hasPendingQuickCode = (Array.isArray(depositRequests) ? depositRequests : []).some(
+    (r) => r && r.userId === user?.id && r.requestType === 'quickcode' && r.status === 'pending'
   );
 
-  // Normalize active quick codes
-  const activeQuickCodes: { code: string; planName: string; withdrawalsLeft: number }[] = (user?.quickCodes || []).map((item) => {
-    if (typeof item === 'string') {
-      return { code: item, planName: 'Quick Code', withdrawalsLeft: 1 };
-    }
-    return item;
-  });
+  // Normalize active quick codes safely
+  const activeQuickCodes: { code: string; planName: string; withdrawalsLeft: number }[] = (
+    Array.isArray(user?.quickCodes) ? user.quickCodes : []
+  )
+    .map((item) => {
+      if (typeof item === 'string' && item.trim()) {
+        return { code: item.trim(), planName: 'Quick Code', withdrawalsLeft: 1 };
+      }
+      if (item && typeof item === 'object' && typeof item.code === 'string' && item.code.trim()) {
+        return {
+          code: item.code.trim(),
+          planName: item.planName || 'Quick Code',
+          withdrawalsLeft: Number(item.withdrawalsLeft) || 1,
+        };
+      }
+      return null;
+    })
+    .filter((x): x is { code: string; planName: string; withdrawalsLeft: number } => Boolean(x));
 
   const primaryCode = activeQuickCodes.length > 0 ? activeQuickCodes[0] : null;
 

@@ -58,9 +58,59 @@ import { TaxApprovedTier3Modal } from './components/Modals/TaxApprovedTier3Modal
 import { ProfilePicturePromptModal } from './components/Modals/ProfilePicturePromptModal.tsx';
 import { BannedAccountScreen } from './components/Pages/BannedAccountScreen.tsx';
 import { OfflineScreen } from './components/Common/OfflineScreen.tsx';
+import { AppErrorBoundary } from './components/Common/AppErrorBoundary.tsx';
 import { ActiveTab, CurrentScreen, Transaction, SupportChatThread } from './types/index.ts';
 import { subscribeToUserSupportChat } from './services/firebase.ts';
 import { verifyInternetConnection } from './utils/networkCheck.ts';
+
+const VALID_DEDICATED_SCREENS: CurrentScreen[] = [
+  'earn',
+  'quickcode',
+  'deposit',
+  'withdraw',
+  'account_details',
+  'transaction_history',
+  'notifications',
+  'settings',
+  'terms',
+  'admin',
+  'live_chat',
+  'upgrade_tier',
+  'referrals',
+  'bank_verification',
+  'kyc_verification',
+  'tax_clearance',
+  'partner_center',
+];
+
+const normalizeScreen = (raw?: string | null): CurrentScreen => {
+  if (!raw || typeof raw !== 'string') return 'dashboard';
+  const cleaned = raw.replace(/^#/, '').split('?')[0].trim() as CurrentScreen;
+  if (VALID_DEDICATED_SCREENS.includes(cleaned)) {
+    return cleaned;
+  }
+  return 'dashboard';
+};
+
+const safeHistoryReplace = (screen: CurrentScreen) => {
+  try {
+    if (typeof window === 'undefined' || !window.history?.replaceState) return;
+    const url = screen === 'dashboard' ? window.location.pathname : `#${screen}`;
+    window.history.replaceState({ screen }, '', url);
+  } catch {
+    // Ignore history API restrictions in embedded webviews/private mode
+  }
+};
+
+const safeHistoryPush = (screen: CurrentScreen) => {
+  try {
+    if (typeof window === 'undefined' || !window.history?.pushState) return;
+    const url = screen === 'dashboard' ? window.location.pathname : `#${screen}`;
+    window.history.pushState({ screen }, '', url);
+  } catch {
+    // Ignore history API restrictions in embedded webviews/private mode
+  }
+};
 
 const SCREEN_TITLES: Record<string, string> = {
   dashboard: 'Dashboard',
@@ -124,29 +174,7 @@ const DashboardContent: React.FC = () => {
 
   const [currentScreen, setCurrentScreen] = useState<CurrentScreen>(() => {
     if (typeof window !== 'undefined' && window.location.hash) {
-      const hashScreen = window.location.hash.replace('#', '') as CurrentScreen;
-      const validScreens: CurrentScreen[] = [
-        'earn',
-        'quickcode',
-        'deposit',
-        'withdraw',
-        'account_details',
-        'transaction_history',
-        'notifications',
-        'settings',
-        'terms',
-        'admin',
-        'live_chat',
-        'upgrade_tier',
-        'referrals',
-        'bank_verification',
-        'kyc_verification',
-        'tax_clearance',
-        'partner_center',
-      ];
-      if (validScreens.includes(hashScreen)) {
-        return hashScreen;
-      }
+      return normalizeScreen(window.location.hash);
     }
     return 'dashboard';
   });
@@ -391,7 +419,24 @@ const DashboardContent: React.FC = () => {
   // 3-Second Loading State (only for Quick Code, plan select, withdraw, or resuming after minimizing)
   const [isPageLoading, setIsPageLoading] = useState<boolean>(false);
   const [loadingTargetTitle, setLoadingTargetTitle] = useState<string>('9jacash');
-  const loadingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const loadingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearPendingPageTransition = () => {
+    if (loadingTimerRef.current) {
+      clearTimeout(loadingTimerRef.current);
+      loadingTimerRef.current = null;
+    }
+    setIsPageLoading(false);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (loadingTimerRef.current) {
+        clearTimeout(loadingTimerRef.current);
+        loadingTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const triggerPageTransition = (title: string, onFinish: () => void) => {
     if (loadingTimerRef.current) {
@@ -401,6 +446,7 @@ const DashboardContent: React.FC = () => {
     setIsPageLoading(true);
 
     loadingTimerRef.current = setTimeout(() => {
+      loadingTimerRef.current = null;
       setIsPageLoading(false);
       onFinish();
     }, 3000);
@@ -409,49 +455,55 @@ const DashboardContent: React.FC = () => {
   // Synchronize browser history so device hardware/gesture back button returns to dashboard
   useEffect(() => {
     // 1. Establish base dashboard state in browser history
-    if (!window.history.state || window.history.state.screen === undefined) {
-      window.history.replaceState({ screen: 'dashboard' }, '', window.location.pathname);
+    try {
+      if (!window.history.state || window.history.state.screen === undefined) {
+        safeHistoryReplace('dashboard');
+      }
+    } catch {
+      // Ignore history read restrictions
     }
 
     // 2. If entered with a specific hash URL, push the screen into history
     if (currentScreen !== 'dashboard') {
-      window.history.pushState({ screen: currentScreen }, '', `#${currentScreen}`);
+      safeHistoryPush(currentScreen);
     }
 
     // 3. Handle device hardware/browser back button popstate
     const handlePopState = (event: PopStateEvent) => {
-      const stateScreen = event.state?.screen as CurrentScreen | undefined;
-      const target = !stateScreen || stateScreen === 'dashboard' ? 'dashboard' : stateScreen;
-      
+      const target = normalizeScreen(event.state?.screen);
+
       // Returning back to dashboard from any page -> NO loading page
       if (target === 'dashboard') {
+        clearPendingPageTransition();
         setCurrentScreen('dashboard');
         setSelectedTxForPage(null);
-        window.history.replaceState({ screen: 'dashboard' }, '', window.location.pathname);
+        safeHistoryReplace('dashboard');
       } else if (target === 'quickcode' || target === 'withdraw') {
         triggerPageTransition(SCREEN_TITLES[target] || 'Page', () => {
           setCurrentScreen(target);
         });
       } else {
+        clearPendingPageTransition();
         setCurrentScreen(target);
       }
     };
 
     // 4. Handle hash changes from address bar or back actions
     const handleHashChange = () => {
-      const hashScreen = window.location.hash.replace('#', '') as CurrentScreen;
-      const target = !hashScreen || hashScreen === 'dashboard' ? 'dashboard' : hashScreen;
-      
+      const target = normalizeScreen(window.location.hash);
+
       // Returning back to dashboard from any page -> NO loading page
       if (target === 'dashboard') {
+        clearPendingPageTransition();
         setCurrentScreen('dashboard');
         setSelectedTxForPage(null);
       } else if (target === 'quickcode' || target === 'withdraw') {
         triggerPageTransition(SCREEN_TITLES[target] || 'Page', () => {
-          setCurrentScreen(hashScreen);
+          setCurrentScreen(target);
         });
       } else {
-        setCurrentScreen(hashScreen);
+        clearPendingPageTransition();
+        setCurrentScreen(target);
       }
     };
 
@@ -464,45 +516,52 @@ const DashboardContent: React.FC = () => {
   }, []);
 
   const navigateTo = (screen: CurrentScreen, tx?: Transaction | null) => {
+    const safeScreen = normalizeScreen(screen);
+
     if (tx !== undefined) {
       setSelectedTxForPage(tx);
     }
 
     // Returning back to dashboard from any page -> NO loading page
-    if (screen === 'dashboard') {
+    if (safeScreen === 'dashboard') {
+      clearPendingPageTransition();
       setCurrentScreen('dashboard');
       setSelectedTxForPage(null);
-      window.history.replaceState({ screen: 'dashboard' }, '', window.location.pathname);
+      safeHistoryReplace('dashboard');
       window.scrollTo(0, 0);
       return;
     }
 
     // Only Quick Code and Withdraw buttons trigger the 3-second loading page
-    const shouldLoad = screen === 'quickcode' || screen === 'withdraw';
+    const shouldLoad = safeScreen === 'quickcode' || safeScreen === 'withdraw';
 
     if (shouldLoad) {
-      const title = SCREEN_TITLES[screen] || (screen === 'quickcode' ? 'Quick Code Service' : 'Bank Withdrawal');
+      const title =
+        SCREEN_TITLES[safeScreen] ||
+        (safeScreen === 'quickcode' ? 'Quick Code Service' : 'Bank Withdrawal');
       triggerPageTransition(title, () => {
-        window.history.replaceState({ screen: 'dashboard' }, '', window.location.pathname);
-        window.history.pushState({ screen }, '', `#${screen}`);
-        setCurrentScreen(screen);
+        setCurrentScreen(safeScreen);
+        safeHistoryReplace('dashboard');
+        safeHistoryPush(safeScreen);
         window.scrollTo(0, 0);
       });
     } else {
       // Immediate navigation without loading page
-      window.history.replaceState({ screen: 'dashboard' }, '', window.location.pathname);
-      window.history.pushState({ screen }, '', `#${screen}`);
-      setCurrentScreen(screen);
+      clearPendingPageTransition();
+      setCurrentScreen(safeScreen);
+      safeHistoryReplace('dashboard');
+      safeHistoryPush(safeScreen);
       window.scrollTo(0, 0);
     }
   };
 
   const handleTabChange = (tab: ActiveTab) => {
     // No loading page on payments, more, community, or any tab button
+    clearPendingPageTransition();
     setActiveTab(tab);
     setCurrentScreen('dashboard');
     setSelectedTxForPage(null);
-    window.history.replaceState({ screen: 'dashboard' }, '', window.location.pathname);
+    safeHistoryReplace('dashboard');
     window.scrollTo(0, 0);
   };
 
@@ -635,6 +694,15 @@ const DashboardContent: React.FC = () => {
       </div>
 
       <div className="relative w-full max-w-md min-h-screen px-4 pt-3 pb-24 flex flex-col space-y-4">
+        <AppErrorBoundary
+          key={currentScreen}
+          fallbackTitle={
+            currentScreen === 'withdraw'
+              ? 'Could not load Withdrawal Page'
+              : `Could not load ${SCREEN_TITLES[currentScreen] || 'Page'}`
+          }
+          onResetToHome={() => navigateTo('dashboard')}
+        >
         {/* Render Dedicated Full Page Screens if active */}
         {currentScreen === 'earn' && (
           <EarnPage
@@ -754,8 +822,8 @@ const DashboardContent: React.FC = () => {
           />
         )}
 
-        {/* Primary Dashboard View (Tabs) */}
-        {currentScreen === 'dashboard' && (
+        {/* Primary Dashboard View (Tabs) - also serves as safe fallback if screen is unrecognized */}
+        {!VALID_DEDICATED_SCREENS.includes(currentScreen) && (
           <>
             {/* Top Header */}
             <Header
@@ -882,6 +950,7 @@ const DashboardContent: React.FC = () => {
             />
           </>
         )}
+        </AppErrorBoundary>
       </div>
     </div>
   );
@@ -1059,10 +1128,12 @@ const MainApp: React.FC = () => {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <AuthProvider>
-        <MainApp />
-      </AuthProvider>
-    </ThemeProvider>
+    <AppErrorBoundary fallbackTitle="Something went wrong loading 9jacash">
+      <ThemeProvider>
+        <AuthProvider>
+          <MainApp />
+        </AuthProvider>
+      </ThemeProvider>
+    </AppErrorBoundary>
   );
 }

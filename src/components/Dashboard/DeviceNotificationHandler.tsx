@@ -1,15 +1,17 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Bell, ShieldAlert, X } from 'lucide-react';
+import { Bell, CheckCircle2, Loader2, ShieldAlert, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
 import {
   getDeviceNotificationPermission,
-  requestDeviceNotificationPermission,
+  enableNotificationsFromUserGesture,
   triggerDashboardVisitDeviceNotification,
   hasDashboardVisitNotificationShown,
-  markDashboardVisitNotificationShown,
   isDeviceNotificationSupported,
+  isInAppNotificationsEnabled,
+  NOTIF_STATE_EVENT,
   NotificationPermissionState,
+  EnableNotificationsResult,
 } from '../../utils/deviceNotifications.ts';
 
 interface DeviceNotificationHandlerProps {
@@ -19,81 +21,142 @@ interface DeviceNotificationHandlerProps {
 export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps> = ({ isActive: _isActive }) => {
   const { user } = useAuth();
   const { isLight } = useTheme();
-  const [permission, setPermission] = useState<NotificationPermissionState>('default');
-  const [isSupported, setIsSupported] = useState<boolean>(true);
+  const [permission, setPermission] = useState<NotificationPermissionState>(() =>
+    getDeviceNotificationPermission()
+  );
+  const [isSupported, setIsSupported] = useState<boolean>(() => isDeviceNotificationSupported());
+  const [inAppEnabled, setInAppEnabled] = useState<boolean>(() => isInAppNotificationsEnabled());
+  const [isRequesting, setIsRequesting] = useState<boolean>(false);
+  const [feedback, setFeedback] = useState<EnableNotificationsResult | null>(null);
   const [isPromptDismissed, setIsPromptDismissed] = useState<boolean>(() => {
-    return sessionStorage.getItem('9jacash_dismiss_device_notif_banner') === 'true';
+    try {
+      return sessionStorage.getItem('9jacash_dismiss_device_notif_banner') === 'true';
+    } catch {
+      return false;
+    }
   });
 
-  // Sync current permission state
+  // Sync current permission & in-app alert state
   const refreshPermissionState = useCallback(() => {
     const supported = isDeviceNotificationSupported();
     setIsSupported(supported);
+    setInAppEnabled(isInAppNotificationsEnabled());
     if (!supported) {
       setPermission('unsupported');
       return;
     }
-    const currentPerm = getDeviceNotificationPermission();
-    setPermission(currentPerm);
+    setPermission(getDeviceNotificationPermission());
   }, []);
 
-  // Request permission and fire device notification once granted
+  // User-gesture click handler: NEVER hangs, ALWAYS gives instant feedback
   const handleEnableNotifications = async () => {
+    if (isRequesting) return;
+    setIsRequesting(true);
     try {
-      const res = await requestDeviceNotificationPermission();
-      setPermission(res);
-      if (res === 'granted' && !hasDashboardVisitNotificationShown(user?.id)) {
-        await triggerDashboardVisitDeviceNotification(user, true);
-        markDashboardVisitNotificationShown(user?.id);
+      const result = await enableNotificationsFromUserGesture(user);
+      setPermission(result.permission);
+      setInAppEnabled(result.inAppEnabled);
+      setFeedback(result);
+
+      // Auto-dismiss banner cleanly after showing confirmation when fully granted
+      if (result.outcome === 'granted') {
+        setTimeout(() => {
+          setIsPromptDismissed(true);
+          try {
+            sessionStorage.setItem('9jacash_dismiss_device_notif_banner', 'true');
+          } catch {
+            // ignore
+          }
+        }, 2600);
       }
     } catch (err) {
       console.warn('Failed to enable device notifications:', err);
+      setFeedback({
+        outcome: 'unsupported',
+        permission: getDeviceNotificationPermission(),
+        inAppEnabled: true,
+        message: 'In-app alerts have been enabled for your session.',
+      });
+    } finally {
+      setIsRequesting(false);
     }
   };
 
   const handleDismissBanner = () => {
     setIsPromptDismissed(true);
-    sessionStorage.setItem('9jacash_dismiss_device_notif_banner', 'true');
+    try {
+      sessionStorage.setItem('9jacash_dismiss_device_notif_banner', 'true');
+    } catch {
+      // ignore
+    }
   };
 
-  // Initial Visit Alert: Fires ONLY ONCE ever for this user visit.
-  // Persisted in localStorage so going into any button, returning back to the dashboard,
-  // or refreshing the dashboard will NEVER show it again!
+  // Sync permission state on mount, focus, and cross-component updates.
+  // IMPORTANT: Do NOT auto-call Notification.requestPermission() inside useEffect without a click gesture
+  // because Chrome/Android/Safari silently block or suppress ungestured permission prompts.
   useEffect(() => {
     refreshPermissionState();
 
-    // If already shown once on this device/user, never re-fire
-    if (hasDashboardVisitNotificationShown(user?.id)) {
-      return;
+    const handleSync = () => refreshPermissionState();
+    window.addEventListener('focus', handleSync);
+    window.addEventListener(NOTIF_STATE_EVENT, handleSync);
+
+    // If permission is ALREADY granted, fire the one-time dashboard visit alert cleanly
+    if (getDeviceNotificationPermission() === 'granted' && !hasDashboardVisitNotificationShown(user?.id)) {
+      triggerDashboardVisitDeviceNotification(user).catch(() => {});
     }
 
-    const currentPerm = getDeviceNotificationPermission();
-    if (currentPerm === 'granted') {
-      triggerDashboardVisitDeviceNotification(user);
-    } else if (currentPerm === 'default') {
-      // Proactively request permission if browser allows auto-request
-      requestDeviceNotificationPermission()
-        .then((res) => {
-          setPermission(res);
-          if (res === 'granted' && !hasDashboardVisitNotificationShown(user?.id)) {
-            triggerDashboardVisitDeviceNotification(user, true);
-          }
-        })
-        .catch(() => {});
-    }
+    return () => {
+      window.removeEventListener('focus', handleSync);
+      window.removeEventListener(NOTIF_STATE_EVENT, handleSync);
+    };
   }, [user, refreshPermissionState]);
 
-  if (!isSupported) {
-    return null;
+  // If feedback toast is currently visible after clicking Turn On, show it before dismissing
+  if (feedback && feedback.outcome === 'granted') {
+    return (
+      <div
+        className={`relative mx-1 my-2 overflow-hidden rounded-2xl border p-3.5 animate-in fade-in slide-in-from-top-2 duration-200 ${
+          isLight
+            ? 'bg-emerald-50 border-emerald-300 text-emerald-950 shadow-sm'
+            : 'bg-emerald-950/70 border-emerald-500/40 text-emerald-100 shadow-lg'
+        }`}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
+            <div className="min-w-0">
+              <h4 className="text-xs font-extrabold">Notifications Turned On</h4>
+              <p className={`text-[11px] leading-snug ${isLight ? 'text-emerald-800' : 'text-emerald-200/90'}`}>
+                {feedback.message}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleDismissBanner}
+            className="p-1 rounded-lg text-emerald-500 hover:bg-emerald-500/15 cursor-pointer shrink-0"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    );
   }
 
-  // If permission is already granted, render nothing
+  // Already granted and no active confirmation toast -> hide banner
   if (permission === 'granted') {
     return null;
   }
 
-  // If user dismissed the prompt in this session, do not render banner
+  // If user already turned on in-app alerts and dismissed the prompt, hide banner
   if (isPromptDismissed) {
+    return null;
+  }
+
+  // If browser doesn't support native Notification API and user already activated in-app alerts, hide banner
+  if (!isSupported && inAppEnabled && !feedback) {
     return null;
   }
 
@@ -121,7 +184,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
                 : 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
             }`}
           >
-            <Bell className="w-5 h-5 animate-pulse" />
+            <Bell className="w-5 h-5" />
           </div>
 
           <div>
@@ -132,17 +195,41 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
               Turn on notifications to receive alerts on your device when you visit the app and for your withdrawals.
             </p>
 
-            <div className="mt-3 flex items-center gap-2.5">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <button
                 type="button"
+                disabled={isRequesting}
                 onClick={handleEnableNotifications}
-                className={`px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 font-bold text-xs hover:from-emerald-400 hover:to-emerald-500 transition-all shadow-md shadow-emerald-500/25 active:scale-95 flex items-center gap-1.5 cursor-pointer ${
+                className={`px-3.5 py-2 min-h-[38px] rounded-xl bg-gradient-to-r from-emerald-500 to-emerald-600 font-bold text-xs hover:from-emerald-400 hover:to-emerald-500 disabled:opacity-70 transition-all shadow-md shadow-emerald-500/25 active:scale-95 flex items-center gap-1.5 cursor-pointer ${
                   isLight ? 'text-white' : 'text-black'
                 }`}
               >
-                <Bell className="w-3.5 h-3.5" />
-                Turn On Notification
+                {isRequesting ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Enabling...</span>
+                  </>
+                ) : (
+                  <>
+                    <Bell className="w-3.5 h-3.5" />
+                    <span>{feedback ? 'Try Again' : 'Turn On Notification'}</span>
+                  </>
+                )}
               </button>
+
+              {feedback && (
+                <button
+                  type="button"
+                  onClick={handleDismissBanner}
+                  className={`px-3 py-2 min-h-[38px] rounded-xl font-semibold text-xs border cursor-pointer transition-colors ${
+                    isLight
+                      ? 'bg-white border-emerald-200 text-emerald-800 hover:bg-emerald-50'
+                      : 'bg-emerald-950/60 border-emerald-500/30 text-emerald-200 hover:bg-emerald-900/50'
+                  }`}
+                >
+                  Done
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -150,27 +237,44 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
         <button
           type="button"
           onClick={handleDismissBanner}
-          className={`p-1 rounded-lg transition-colors cursor-pointer ${
+          className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
             isLight
               ? 'text-slate-500 hover:text-slate-900 hover:bg-emerald-100/70'
               : 'text-stone-400 hover:text-white hover:bg-stone-800/50'
           }`}
           title="Dismiss"
+          aria-label="Dismiss notification banner"
         >
           <X className="w-4 h-4" />
         </button>
       </div>
 
-      {permission === 'denied' && (
+      {/* Clear immediate feedback whenever browser blocks, ignores, or needs PWA on iOS */}
+      {feedback && (
         <div
-          className={`mt-2 pt-2 border-t flex items-center gap-1.5 text-[11px] ${
+          className={`mt-2.5 pt-2.5 border-t flex items-start gap-2 text-[11px] leading-relaxed ${
+            isLight
+              ? 'border-emerald-200 text-emerald-900 font-medium'
+              : 'border-emerald-900/50 text-emerald-200'
+          }`}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5 shrink-0 mt-0.5 text-emerald-500" />
+          <span>{feedback.message}</span>
+        </div>
+      )}
+
+      {!feedback && permission === 'denied' && (
+        <div
+          className={`mt-2.5 pt-2.5 border-t flex items-start gap-1.5 text-[11px] leading-relaxed ${
             isLight
               ? 'border-emerald-200 text-amber-800 font-medium'
               : 'border-emerald-900/40 text-amber-300'
           }`}
         >
-          <ShieldAlert className={`w-3.5 h-3.5 shrink-0 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
-          <span>Notifications are currently blocked. Please tap the lock or site settings icon in your browser to allow notifications.</span>
+          <ShieldAlert className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
+          <span>
+            Notifications are currently blocked by your browser. Tap the lock or site settings icon in your address bar to allow notifications, or tap the button above to activate in-app alerts.
+          </span>
         </div>
       )}
     </div>
