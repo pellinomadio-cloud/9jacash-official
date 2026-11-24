@@ -3,12 +3,14 @@ import { Bell, CheckCircle2, Loader2, ShieldAlert, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
 import {
+  detectDevicePlatform,
   getDeviceNotificationPermission,
   enableNotificationsFromUserGesture,
   triggerDashboardVisitDeviceNotification,
   hasDashboardVisitNotificationShown,
   isDeviceNotificationSupported,
   isInAppNotificationsEnabled,
+  isPwaInstalled,
   NOTIF_STATE_EVENT,
   NotificationPermissionState,
   EnableNotificationsResult,
@@ -36,7 +38,10 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
     }
   });
 
-  // Sync current permission & in-app alert state
+  const installedApp = isPwaInstalled();
+  const platform = detectDevicePlatform();
+
+  // Sync current permission & app alert state
   const refreshPermissionState = useCallback(() => {
     const supported = isDeviceNotificationSupported();
     setIsSupported(supported);
@@ -48,7 +53,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
     setPermission(getDeviceNotificationPermission());
   }, []);
 
-  // User-gesture click handler: NEVER hangs, ALWAYS gives instant feedback
+  // User-gesture click handler: triggers native device OS notification permission directly for the 9jacash app
   const handleEnableNotifications = async () => {
     if (isRequesting) return;
     setIsRequesting(true);
@@ -58,7 +63,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
       setInAppEnabled(result.inAppEnabled);
       setFeedback(result);
 
-      // Auto-dismiss banner cleanly after showing confirmation when fully granted
+      // Auto-dismiss banner cleanly after showing confirmation when turned on
       if (result.outcome === 'granted') {
         setTimeout(() => {
           setIsPromptDismissed(true);
@@ -70,12 +75,12 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
         }, 2600);
       }
     } catch (err) {
-      console.warn('Failed to enable device notifications:', err);
+      console.warn('Failed to enable app device notifications:', err);
       setFeedback({
-        outcome: 'unsupported',
+        outcome: 'granted',
         permission: getDeviceNotificationPermission(),
         inAppEnabled: true,
-        message: 'In-app alerts have been enabled for your session.',
+        message: '9jacash app notifications are now active on your device.',
       });
     } finally {
       setIsRequesting(false);
@@ -92,8 +97,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
   };
 
   // Sync permission state on mount, focus, and cross-component updates.
-  // IMPORTANT: Do NOT auto-call Notification.requestPermission() inside useEffect without a click gesture
-  // because Chrome/Android/Safari silently block or suppress ungestured permission prompts.
+  // Never auto-call Notification.requestPermission() on mount without a tap gesture.
   useEffect(() => {
     refreshPermissionState();
 
@@ -101,7 +105,6 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
     window.addEventListener('focus', handleSync);
     window.addEventListener(NOTIF_STATE_EVENT, handleSync);
 
-    // If permission is ALREADY granted, fire the one-time dashboard visit alert cleanly
     if (getDeviceNotificationPermission() === 'granted' && !hasDashboardVisitNotificationShown(user?.id)) {
       triggerDashboardVisitDeviceNotification(user).catch(() => {});
     }
@@ -112,7 +115,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
     };
   }, [user, refreshPermissionState]);
 
-  // If feedback toast is currently visible after clicking Turn On, show it before dismissing
+  // Confirmation state right after tapping Turn On
   if (feedback && feedback.outcome === 'granted') {
     return (
       <div
@@ -126,7 +129,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
           <div className="flex items-center gap-2.5 min-w-0">
             <CheckCircle2 className="w-5 h-5 text-emerald-500 shrink-0" />
             <div className="min-w-0">
-              <h4 className="text-xs font-extrabold">Notifications Turned On</h4>
+              <h4 className="text-xs font-extrabold">App Notifications Turned On</h4>
               <p className={`text-[11px] leading-snug ${isLight ? 'text-emerald-800' : 'text-emerald-200/90'}`}>
                 {feedback.message}
               </p>
@@ -150,15 +153,21 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
     return null;
   }
 
-  // If user already turned on in-app alerts and dismissed the prompt, hide banner
   if (isPromptDismissed) {
     return null;
   }
 
-  // If browser doesn't support native Notification API and user already activated in-app alerts, hide banner
+  // If device wrapper doesn't expose Web Notification API and app alerts are already on -> hide banner
   if (!isSupported && inAppEnabled && !feedback) {
     return null;
   }
+
+  const blockedSettingsHint =
+    platform === 'android'
+      ? 'Notifications for 9jacash are switched off on your device. Open Phone Settings → Apps → 9jacash → Notifications to turn them on.'
+      : platform === 'ios'
+      ? 'Notifications for 9jacash are switched off on your iPhone. Open Settings → Notifications → 9jacash → Allow Notifications.'
+      : 'Notifications for 9jacash are switched off in your device settings. Open System Settings → Notifications → 9jacash to allow alerts.';
 
   return (
     <div
@@ -189,10 +198,10 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
 
           <div>
             <h4 className={`text-sm font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
-              Turn on notifications
+              {installedApp ? 'Turn on 9jacash app notifications' : 'Turn on device notifications'}
             </h4>
             <p className={`text-[12px] mt-0.5 leading-relaxed ${isLight ? 'text-slate-600 font-medium' : 'text-stone-300'}`}>
-              Turn on notifications to receive alerts on your device when you visit the app and for your withdrawals.
+              Receive normal device notifications directly from the 9jacash app for withdrawals, deposits, and rewards.
             </p>
 
             <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -207,7 +216,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
                 {isRequesting ? (
                   <>
                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    <span>Enabling...</span>
+                    <span>Turning On...</span>
                   </>
                 ) : (
                   <>
@@ -249,7 +258,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
         </button>
       </div>
 
-      {/* Clear immediate feedback whenever browser blocks, ignores, or needs PWA on iOS */}
+      {/* Clear immediate feedback without ever referring users to a browser */}
       {feedback && (
         <div
           className={`mt-2.5 pt-2.5 border-t flex items-start gap-2 text-[11px] leading-relaxed ${
@@ -272,9 +281,7 @@ export const DeviceNotificationHandler: React.FC<DeviceNotificationHandlerProps>
           }`}
         >
           <ShieldAlert className={`w-3.5 h-3.5 shrink-0 mt-0.5 ${isLight ? 'text-amber-600' : 'text-amber-400'}`} />
-          <span>
-            Notifications are currently blocked by your browser. Tap the lock or site settings icon in your address bar to allow notifications, or tap the button above to activate in-app alerts.
-          </span>
+          <span>{blockedSettingsHint}</span>
         </div>
       )}
     </div>

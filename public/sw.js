@@ -1,5 +1,5 @@
-// 9jacash Android & Web Device Notification Service Worker
-// Enables native OS status bar & lock screen notifications
+// 9jacash Installed App & Device Notification Service Worker
+// Delivers native OS status bar, lock screen, and notification tray alerts directly for the 9jacash app
 
 self.addEventListener('install', () => {
   self.skipWaiting();
@@ -9,14 +9,51 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
-// Required by Android / Chromium to qualify the Service Worker for native PWA installation (beforeinstallprompt)
+// Required by Android / Chromium to qualify the Service Worker for native PWA installation
 self.addEventListener('fetch', () => {
   // Network pass-through
 });
 
-// Handle user clicking on the notification on their Android status bar or lock screen
+// Helper to show a native OS app notification attributed directly to the installed 9jacash app
+function showNativeAppNotification(title, options) {
+  const safeOptions = options || {};
+  const notifOptions = {
+    body: safeOptions.body || '',
+    icon: safeOptions.icon || '/pwa-192x192.png?v=4',
+    badge: safeOptions.badge || '/icon-badge.png?v=4',
+    vibrate: safeOptions.vibrate || [200, 100, 200, 100, 300],
+    tag: safeOptions.tag || '9jacash-app-' + Date.now(),
+    renotify: safeOptions.renotify !== false,
+    requireInteraction: false,
+    silent: false,
+    timestamp: Date.now(),
+    data: Object.assign({ url: '/' }, safeOptions.data || {}),
+  };
+
+  // Update native home-screen app icon badge where supported
+  try {
+    if (self.navigator && typeof self.navigator.setAppBadge === 'function') {
+      self.navigator.setAppBadge(1).catch(() => {});
+    }
+  } catch {
+    // Ignore unsupported Badging API
+  }
+
+  return self.registration.showNotification(title || '9jacash', notifOptions);
+}
+
+// Handle user tapping an app notification from their phone status bar or lock screen:
+// Opens/focuses the installed 9jacash app directly (never opens an unnecessary browser tab)
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+
+  try {
+    if (self.navigator && typeof self.navigator.clearAppBadge === 'function') {
+      self.navigator.clearAppBadge().catch(() => {});
+    }
+  } catch {
+    // Ignore
+  }
 
   if (event.action === 'dismiss') {
     return;
@@ -26,17 +63,17 @@ self.addEventListener('notificationclick', (event) => {
 
   event.waitUntil(
     self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
-      // If a window is already open, focus it and navigate
+      // Prefer focusing an already open installed 9jacash app window on the same origin
       for (const client of clientList) {
-        if ('focus' in client) {
-          if ('navigate' in client && client.url.indexOf(self.location.origin) !== -1) {
-            client.focus();
-            return client.navigate(targetUrl);
+        if (client.url && client.url.indexOf(self.location.origin) === 0 && 'focus' in client) {
+          const targetFullUrl = new URL(targetUrl, self.location.origin).href;
+          if (client.url !== targetFullUrl && 'navigate' in client && targetUrl !== '/') {
+            return client.focus().then(() => client.navigate(targetFullUrl)).catch(() => client.focus());
           }
           return client.focus();
         }
       }
-      // If no window is open, launch a new window directly into the app
+      // If the installed app is closed, launch directly into the app
       if (self.clients.openWindow) {
         return self.clients.openWindow(targetUrl);
       }
@@ -44,29 +81,31 @@ self.addEventListener('notificationclick', (event) => {
   );
 });
 
-// Direct message triggers from web app
+// Direct notification trigger messages from the installed 9jacash app
 self.addEventListener('message', (event) => {
   if (!event.data) return;
 
-  if (event.data.type === 'SHOW_DEVICE_NOTIFICATION') {
+  if (event.data.type === 'SHOW_DEVICE_NOTIFICATION' || event.data.type === 'SHOW_APP_NOTIFICATION') {
     const { title, options } = event.data;
-    if (self.registration && self.registration.showNotification) {
-      self.registration.showNotification(title, {
-        icon: '/pwa-192x192.png?v=4',
-        badge: '/icon-badge.png?v=4',
-        vibrate: [200, 100, 200, 100, 300],
-        renotify: true,
-        ...options,
-      });
+    if (self.registration && typeof self.registration.showNotification === 'function') {
+      event.waitUntil(showNativeAppNotification(title, options));
+    }
+  } else if (event.data.type === 'CLEAR_APP_BADGE') {
+    try {
+      if (self.navigator && typeof self.navigator.clearAppBadge === 'function') {
+        self.navigator.clearAppBadge().catch(() => {});
+      }
+    } catch {
+      // Ignore
     }
   }
 });
 
-// Background Push Notification handler (for push messages)
+// Background Push Notification handler (OS-level push notifications for the installed app)
 self.addEventListener('push', (event) => {
   let payload = {
     title: '9jacash • Account Alert',
-    body: 'Your 9jacash account is active. Tap to view balance and transactions.',
+    body: 'Your 9jacash account is active. Tap to open the app.',
     icon: '/pwa-192x192.png?v=4',
     badge: '/icon-badge.png?v=4',
     vibrate: [200, 100, 200, 100, 300],
@@ -84,20 +123,10 @@ self.addEventListener('push', (event) => {
     }
   }
 
-  event.waitUntil(
-    self.registration.showNotification(payload.title, {
-      body: payload.body,
-      icon: payload.icon || '/pwa-192x192.png?v=4',
-      badge: payload.badge || '/icon-badge.png?v=4',
-      vibrate: payload.vibrate || [200, 100, 200, 100, 300],
-      tag: payload.tag || '9jacash-alert',
-      renotify: true,
-      data: payload.data || { url: '/' },
-    })
-  );
+  event.waitUntil(showNativeAppNotification(payload.title, payload));
 });
 
-// Periodic background sync (runs in OS background when installed on Android / Chromium)
+// Periodic background sync (runs in OS background when installed on Android)
 self.addEventListener('periodicsync', (event) => {
   if (event.tag === '9jacash-check-broadcasts') {
     event.waitUntil(
@@ -107,16 +136,12 @@ self.addEventListener('periodicsync', (event) => {
           if (data && data.documents && data.documents.length > 0) {
             const doc = data.documents[0];
             const fields = doc.fields || {};
-            const title = (fields.title && fields.title.stringValue) || 'Message from 9jacash company';
-            const body = (fields.body && fields.body.stringValue) || 'New update available from 9jacash company.';
+            const title = (fields.title && fields.title.stringValue) || '9jacash';
+            const body = (fields.body && fields.body.stringValue) || 'New update available on your 9jacash app.';
             const actionUrl = (fields.actionUrl && fields.actionUrl.stringValue) || '/';
-            return self.registration.showNotification(title, {
+            return showNativeAppNotification(title, {
               body,
-              icon: '/pwa-192x192.png?v=4',
-              badge: '/icon-badge.png?v=4',
-              vibrate: [200, 100, 200, 100, 300],
               tag: '9jacash-periodic-' + Date.now(),
-              renotify: true,
               data: { url: actionUrl },
             });
           }
@@ -125,4 +150,3 @@ self.addEventListener('periodicsync', (event) => {
     );
   }
 });
-

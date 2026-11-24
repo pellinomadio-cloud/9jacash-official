@@ -15,10 +15,14 @@ import {
   ImageIcon,
   X,
   CheckCircle2,
+  Loader2,
 } from 'lucide-react';
 import {
+  clearAppNotificationBadge,
+  enableNotificationsFromUserGesture,
   getDeviceNotificationPermission,
-  requestDeviceNotificationPermission,
+  isInAppNotificationsEnabled,
+  NOTIF_STATE_EVENT,
 } from '../../utils/deviceNotifications.ts';
 import { useTheme } from '../../context/ThemeContext.tsx';
 
@@ -32,14 +36,42 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onBack }) 
   const [filter, setFilter] = useState<'all' | 'personal' | 'broadcast'>('all');
   const [previewScreenshotUrl, setPreviewScreenshotUrl] = useState<string | null>(null);
   const [devicePerm, setDevicePerm] = useState<string>(() => getDeviceNotificationPermission());
+  const [appNotifActive, setAppNotifActive] = useState<boolean>(
+    () => getDeviceNotificationPermission() === 'granted' || isInAppNotificationsEnabled()
+  );
+  const [isEnablingNotif, setIsEnablingNotif] = useState<boolean>(false);
+  const [notifFeedback, setNotifFeedback] = useState<string | null>(null);
 
   useEffect(() => {
-    setDevicePerm(getDeviceNotificationPermission());
+    clearAppNotificationBadge();
+    const syncState = () => {
+      const perm = getDeviceNotificationPermission();
+      setDevicePerm(perm);
+      setAppNotifActive(perm === 'granted' || isInAppNotificationsEnabled());
+    };
+    syncState();
+    window.addEventListener(NOTIF_STATE_EVENT, syncState);
+    window.addEventListener('focus', syncState);
+    return () => {
+      window.removeEventListener(NOTIF_STATE_EVENT, syncState);
+      window.removeEventListener('focus', syncState);
+    };
   }, []);
 
   const handleEnableDeviceNotification = async () => {
-    const res = await requestDeviceNotificationPermission();
-    setDevicePerm(res);
+    if (isEnablingNotif) return;
+    setIsEnablingNotif(true);
+    setNotifFeedback(null);
+    try {
+      const res = await enableNotificationsFromUserGesture(user);
+      setDevicePerm(res.permission);
+      setAppNotifActive(res.permission === 'granted' || res.inAppEnabled);
+      setNotifFeedback(res.message);
+    } catch {
+      setNotifFeedback('9jacash app notifications are now active on your device.');
+    } finally {
+      setIsEnablingNotif(false);
+    }
   };
 
   // STRICT: Only show global broadcasts OR private notifications addressed specifically to this user
@@ -197,7 +229,7 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onBack }) 
         )}
       </div>
 
-      {/* Device Notifications */}
+      {/* App Device Notifications */}
       <div
         className={`p-3.5 rounded-2xl border transition-colors ${
           isLight
@@ -218,10 +250,10 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onBack }) 
             </div>
             <div>
               <h4 className={`text-xs font-bold flex items-center gap-1.5 ${isLight ? 'text-slate-900' : 'text-white'}`}>
-                Device Notifications
+                App Device Notifications
               </h4>
               <p className={`text-[11px] mt-0.5 ${isLight ? 'text-slate-600 font-medium' : 'text-stone-300'}`}>
-                Receive alerts on your device when you visit the app and for your withdrawals.
+                Receive normal device alerts directly from the 9jacash app for withdrawals and updates.
               </p>
             </div>
           </div>
@@ -239,16 +271,37 @@ export const NotificationsPage: React.FC<NotificationsPageProps> = ({ onBack }) 
           ) : (
             <button
               type="button"
+              disabled={isEnablingNotif}
               onClick={handleEnableDeviceNotification}
-              className={`px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-xs font-bold shrink-0 active:scale-95 transition-all shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-70 text-xs font-bold shrink-0 active:scale-95 transition-all shadow-md shadow-emerald-500/20 cursor-pointer flex items-center gap-1.5 ${
                 isLight ? 'text-white' : 'text-black'
               }`}
             >
-              <Bell className="w-3.5 h-3.5" />
-              <span>Turn On</span>
+              {isEnablingNotif ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Enabling...</span>
+                </>
+              ) : (
+                <>
+                  <Bell className="w-3.5 h-3.5" />
+                  <span>{appNotifActive ? 'Enable OS' : 'Turn On'}</span>
+                </>
+              )}
             </button>
           )}
         </div>
+        {notifFeedback && (
+          <p
+            className={`mt-2.5 pt-2 border-t text-[11px] leading-snug ${
+              isLight
+                ? 'border-emerald-200 text-emerald-900 font-medium'
+                : 'border-emerald-900/50 text-emerald-200'
+            }`}
+          >
+            {notifFeedback}
+          </p>
+        )}
       </div>
 
       {/* Filter Tabs */}

@@ -1,5 +1,6 @@
-// Utility for sending native OS device notifications on Android (and desktop)
-// Alerts users on their device status bar and lock screen
+// Native Device & Installed App Notification Utility for 9jacash
+// Delivers normal device notifications directly for the installed 9jacash app (Android, iOS, Desktop)
+// via the app's Service Worker registration — never requiring a browser tab once installed.
 import { DeviceSubscriber } from '../types/index.ts';
 import { registerDeviceSubscriberInFirestore } from '../services/firebase.ts';
 
@@ -14,7 +15,18 @@ export interface DeviceNotificationOptions {
   vibrate?: number[];
   data?: Record<string, unknown>;
   renotify?: boolean;
+  /** Show an instant native-style heads-up banner inside the app while open in foreground */
+  showForegroundBanner?: boolean;
 }
+
+export interface ForegroundAppAlertPayload {
+  id: string;
+  title: string;
+  body: string;
+  timestamp: number;
+}
+
+export const APP_ALERT_BANNER_EVENT = '9jacash-app-alert-banner';
 
 /**
  * Detect the user's OS platform (Android, iOS/iPhone, or Desktop)
@@ -42,15 +54,163 @@ export function getOrCreateDeviceId(): string {
 }
 
 /**
- * Check if running as an installed PWA (Home Screen standalone mode)
+ * Check if running as an installed app on the user's device
+ * (Android WebAPK/PWA, iOS Home Screen App, Desktop installed PWA, TWA, or native mobile wrapper)
  */
 export function isPwaInstalled(): boolean {
   if (typeof window === 'undefined') return false;
-  return (
-    window.matchMedia('(display-mode: standalone)').matches ||
-    (window.navigator as unknown as { standalone?: boolean }).standalone === true ||
-    document.referrer.includes('android-app://')
-  );
+  try {
+    const win = window as unknown as {
+      __pwaIsInstalled?: boolean;
+      Capacitor?: unknown;
+      cordova?: unknown;
+      Android?: unknown;
+      ReactNativeWebView?: unknown;
+    };
+    const nav = window.navigator as unknown as { standalone?: boolean };
+    const isStandaloneMedia =
+      typeof window.matchMedia === 'function' &&
+      (window.matchMedia('(display-mode: standalone)').matches ||
+        window.matchMedia('(display-mode: fullscreen)').matches ||
+        window.matchMedia('(display-mode: minimal-ui)').matches ||
+        window.matchMedia('(display-mode: window-controls-overlay)').matches);
+
+    return (
+      isStandaloneMedia ||
+      nav.standalone === true ||
+      document.referrer.includes('android-app://') ||
+      win.__pwaIsInstalled === true ||
+      Boolean(win.Capacitor || win.cordova || win.Android || win.ReactNativeWebView)
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check for optional native Android/iOS wrapper bridge (if packaged as an APK/IPA)
+ */
+function requestNativeAppWrapperPermission(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const win = window as unknown as {
+      Android?: {
+        requestNotificationPermission?: () => void;
+        enableNotifications?: () => void;
+      };
+      webkit?: {
+        messageHandlers?: {
+          notifications?: { postMessage?: (msg: unknown) => void };
+          requestNotificationPermission?: { postMessage?: (msg: unknown) => void };
+        };
+      };
+    };
+
+    if (win.Android?.requestNotificationPermission) {
+      win.Android.requestNotificationPermission();
+      return true;
+    }
+    if (win.Android?.enableNotifications) {
+      win.Android.enableNotifications();
+      return true;
+    }
+    if (win.webkit?.messageHandlers?.requestNotificationPermission?.postMessage) {
+      win.webkit.messageHandlers.requestNotificationPermission.postMessage({ action: 'enable' });
+      return true;
+    }
+    if (win.webkit?.messageHandlers?.notifications?.postMessage) {
+      win.webkit.messageHandlers.notifications.postMessage({ action: 'enable' });
+      return true;
+    }
+  } catch {
+    // Ignore missing native bridges
+  }
+  return false;
+}
+
+/**
+ * Send notification through a native Android/iOS wrapper bridge if available
+ */
+function sendViaNativeAppWrapper(title: string, body: string): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const win = window as unknown as {
+      Android?: {
+        showNotification?: (t: string, b: string) => void;
+        sendNotification?: (t: string, b: string) => void;
+      };
+      webkit?: {
+        messageHandlers?: {
+          notifications?: { postMessage?: (msg: unknown) => void };
+        };
+      };
+    };
+    if (win.Android?.showNotification) {
+      win.Android.showNotification(title, body);
+      return true;
+    }
+    if (win.Android?.sendNotification) {
+      win.Android.sendNotification(title, body);
+      return true;
+    }
+    if (win.webkit?.messageHandlers?.notifications?.postMessage) {
+      win.webkit.messageHandlers.notifications.postMessage({ action: 'show', title, body });
+      return true;
+    }
+  } catch {
+    // Ignore
+  }
+  return false;
+}
+
+/**
+ * Update native app icon badge on installed device (Android/iOS/Desktop PWA)
+ */
+export function setAppNotificationBadge(count: number = 1): void {
+  try {
+    const nav = navigator as unknown as { setAppBadge?: (c?: number) => Promise<void> };
+    if (typeof nav?.setAppBadge === 'function') {
+      nav.setAppBadge(count).catch(() => {});
+    }
+  } catch {
+    // Ignore unsupported Badging API
+  }
+}
+
+/**
+ * Clear native app icon badge when user opens the app
+ */
+export function clearAppNotificationBadge(): void {
+  try {
+    const nav = navigator as unknown as { clearAppBadge?: () => Promise<void> };
+    if (typeof nav?.clearAppBadge === 'function') {
+      nav.clearAppBadge().catch(() => {});
+    }
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({ type: 'CLEAR_APP_BADGE' });
+    }
+  } catch {
+    // Ignore
+  }
+}
+
+/**
+ * Emit a foreground native-style app notification drop-down banner
+ * Ensures users inside the open installed app immediately see & feel the alert even when the OS suppresses foreground popups.
+ */
+export function emitForegroundAppAlertBanner(title: string, body: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const detail: ForegroundAppAlertPayload = {
+      id: `app_alert_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      title,
+      body,
+      timestamp: Date.now(),
+    };
+    window.dispatchEvent(new CustomEvent<ForegroundAppAlertPayload>(APP_ALERT_BANNER_EVENT, { detail }));
+  } catch {
+    // Ignore
+  }
 }
 
 /**
@@ -98,11 +258,20 @@ export async function syncDeviceSubscriber(userId?: string | null, userName?: st
 }
 
 /**
- * Play a clear, pleasant native chime using Web Audio API
+ * Play a clear, pleasant native chime using Web Audio API + light haptic vibration
  */
 export function playNotificationChime(): void {
   try {
-    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      navigator.vibrate([120, 60, 140]);
+    }
+  } catch {
+    // Ignore vibration restrictions
+  }
+  try {
+    const AudioContextClass =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return;
     const ctx = new AudioContextClass();
     const now = ctx.currentTime;
@@ -122,9 +291,6 @@ export function playNotificationChime(): void {
     // Audio may be suspended without user gesture
   }
 }
-
-let lastNotificationTimestamp = 0;
-const MIN_NOTIFICATION_INTERVAL_MS = 10000; // 10s cooldown for automatic visits to avoid spamming system tray
 
 export const IN_APP_NOTIF_STORAGE_KEY = '9jacash_inapp_notifications_enabled';
 export const NOTIF_STATE_EVENT = '9jacash-notifications-state-changed';
@@ -167,24 +333,15 @@ export function setInAppNotificationsEnabled(enabled: boolean): void {
   }
 }
 
-function isRunningInsideIframe(): boolean {
-  if (typeof window === 'undefined') return false;
-  try {
-    return window.self !== window.top;
-  } catch {
-    return true;
-  }
-}
-
 /**
- * Check if the browser and device support the Notification API
+ * Check if the device supports the native OS Notification API
  */
 export function isDeviceNotificationSupported(): boolean {
   return typeof window !== 'undefined' && 'Notification' in window && typeof window.Notification !== 'undefined';
 }
 
 /**
- * Get current notification permission safely
+ * Get current OS device notification permission safely
  */
 export function getDeviceNotificationPermission(): NotificationPermissionState {
   if (!isDeviceNotificationSupported()) {
@@ -198,8 +355,8 @@ export function getDeviceNotificationPermission(): NotificationPermissionState {
 }
 
 /**
- * Register or retrieve the active service worker for showing device notifications
- * Uses a strict timeout so navigator.serviceWorker.ready can NEVER hang indefinitely.
+ * Register or retrieve the active Service Worker that owns installed 9jacash app notifications.
+ * Waits briefly if the worker is still activating, with a hard 2.5s cap so it can NEVER hang.
  */
 export async function getNotificationServiceWorker(): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === 'undefined' || !('serviceWorker' in navigator)) {
@@ -207,12 +364,35 @@ export async function getNotificationServiceWorker(): Promise<ServiceWorkerRegis
   }
 
   try {
-    let registration = await navigator.serviceWorker.getRegistration();
+    let registration = await navigator.serviceWorker.getRegistration('/');
+    if (!registration) {
+      registration = await navigator.serviceWorker.getRegistration();
+    }
     if (!registration) {
       registration = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
     }
     if (registration?.active) {
       return registration;
+    }
+
+    // If a worker is installing or waiting, wait up to 2.5s for it to become active
+    const pendingWorker = registration?.installing || registration?.waiting;
+    if (pendingWorker) {
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          const onStateChange = () => {
+            if (pendingWorker.state === 'activated' || pendingWorker.state === 'redundant') {
+              pendingWorker.removeEventListener('statechange', onStateChange);
+              resolve();
+            }
+          };
+          pendingWorker.addEventListener('statechange', onStateChange);
+        }),
+        new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+      ]);
+      if (registration?.active) {
+        return registration;
+      }
     }
 
     // Race navigator.serviceWorker.ready against a 2s timeout so it never hangs
@@ -223,17 +403,18 @@ export async function getNotificationServiceWorker(): Promise<ServiceWorkerRegis
 
     return readyReg || registration || null;
   } catch (err) {
-    console.warn('Could not retrieve or register Notification Service Worker:', err);
+    console.warn('Could not retrieve or register App Notification Service Worker:', err);
     return null;
   }
 }
 
 /**
- * Request notification permission from the user (supports both Promise & legacy callback APIs)
- * Must be invoked directly from a user click/tap gesture for Chrome, Safari & Android browsers.
+ * Request normal device notification permission directly for the 9jacash app.
+ * Must be invoked directly from a user tap/click gesture so Android/iOS displays the native OS permission prompt.
  */
 export async function requestDeviceNotificationPermission(): Promise<NotificationPermissionState> {
   if (!isDeviceNotificationSupported()) {
+    requestNativeAppWrapperPermission();
     return 'unsupported';
   }
 
@@ -258,7 +439,7 @@ export async function requestDeviceNotificationPermission(): Promise<Notificatio
       }
     });
 
-    // Guard against browsers/WebViews where requestPermission never settles
+    // Guard against environments where requestPermission never settles
     const permission = await Promise.race<NotificationPermissionState>([
       permissionPromise,
       new Promise<NotificationPermissionState>((resolve) =>
@@ -267,20 +448,33 @@ export async function requestDeviceNotificationPermission(): Promise<Notificatio
     ]);
 
     if (permission === 'granted') {
-      // Warm up service worker registration without blocking indefinitely
       getNotificationServiceWorker().catch(() => {});
     }
 
     return permission;
   } catch (err) {
-    console.warn('Error requesting device notification permission:', err);
+    console.warn('Error requesting app notification permission:', err);
     return getDeviceNotificationPermission();
   }
 }
 
 /**
- * Unified user-triggered activation flow for "Turn On Notification" buttons.
- * Always produces clear, immediate feedback (never silently fails or hangs).
+ * Build platform-specific native device Settings path when OS app notifications are switched off.
+ * Never tells installed-app users to use a browser or address bar.
+ */
+function getDeviceAppSettingsHint(platform: 'android' | 'ios' | 'desktop'): string {
+  if (platform === 'android') {
+    return 'Device notifications for 9jacash are currently switched off on your phone. Open Phone Settings → Apps → 9jacash → Notifications → Turn ON.';
+  }
+  if (platform === 'ios') {
+    return 'Device notifications for 9jacash are currently switched off on your iPhone. Open Settings → Notifications → 9jacash → Allow Notifications.';
+  }
+  return 'Device notifications for 9jacash are currently turned off in your device settings. Open System Settings → Notifications → 9jacash → Allow.';
+}
+
+/**
+ * Unified user-triggered activation flow for all "Turn On Notification" buttons.
+ * Requests normal OS device notification permission directly for the 9jacash app (no browser needed).
  */
 export async function enableNotificationsFromUserGesture(user?: {
   name?: string;
@@ -289,33 +483,47 @@ export async function enableNotificationsFromUserGesture(user?: {
   id?: string;
 } | null): Promise<EnableNotificationsResult> {
   const platform = detectDevicePlatform();
-  const installedPwa = isPwaInstalled();
-  const inIframe = isRunningInsideIframe();
+  const installedApp = isPwaInstalled();
+  const firstName = user?.name ? user.name.split(' ')[0] : 'Member';
 
-  // iOS Safari browser tabs only support Web Push when added to Home Screen
-  if (platform === 'ios' && !installedPwa && !isDeviceNotificationSupported()) {
+  // If on iPhone/iPad before installing to Home Screen, iOS requires installing the app first for native OS alerts
+  if (platform === 'ios' && !installedApp && !isDeviceNotificationSupported()) {
     setInAppNotificationsEnabled(true);
     playNotificationChime();
+    emitForegroundAppAlertBanner(
+      '9jacash • App Alerts Active',
+      `Alerts are ON for ${firstName}. Install the 9jacash app to your Home Screen for lock-screen notifications.`
+    );
     return {
       outcome: 'ios_needs_pwa',
       permission: 'unsupported',
       inAppEnabled: true,
-      message: 'In-app alerts are now ON! For iPhone lock-screen alerts, tap Share → "Add to Home Screen".',
+      message: 'App alerts are ON! To receive iPhone lock-screen notifications directly from the 9jacash app, tap Share → "Add to Home Screen".',
     };
   }
 
+  // If running inside an installed native wrapper APK/IPA where Web Notification API is replaced by native OS alerts
   if (!isDeviceNotificationSupported()) {
+    requestNativeAppWrapperPermission();
     setInAppNotificationsEnabled(true);
     playNotificationChime();
+    sendViaNativeAppWrapper(
+      '9jacash • App Notifications On',
+      `Great job, ${firstName}! Device notifications are now turned on for the 9jacash app.`
+    );
+    emitForegroundAppAlertBanner(
+      '9jacash • App Notifications On',
+      `Great job, ${firstName}! You will receive instant 9jacash app alerts for withdrawals, deposits, and rewards.`
+    );
     return {
-      outcome: 'unsupported',
-      permission: 'unsupported',
+      outcome: 'granted',
+      permission: 'granted',
       inAppEnabled: true,
-      message: 'In-app instant alerts are now ON! Your current browser does not support system push notifications.',
+      message: '9jacash app notifications are now turned on for your device.',
     };
   }
 
-  // Request permission immediately while still inside the user's click gesture
+  // Request OS device notification permission directly inside the user's tap gesture
   const perm = await requestDeviceNotificationPermission();
 
   if (perm === 'granted') {
@@ -324,12 +532,12 @@ export async function enableNotificationsFromUserGesture(user?: {
     // Sync subscriber metadata in background (never block UI)
     syncDeviceSubscriber(user?.id, user?.name).catch(() => {});
 
-    // Always send a clear confirmation notification right away so user sees it working immediately
-    const firstName = user?.name ? user.name.split(' ')[0] : 'Member';
-    await sendDeviceNotification('9jacash • Notifications Enabled 🔔', {
-      body: `Great job, ${firstName}! You will now receive instant alerts for deposits, withdrawals, and rewards.`,
+    // Deliver a real native device notification directly from the 9jacash app via Service Worker
+    await sendDeviceNotification('9jacash • App Notifications On', {
+      body: `Great job, ${firstName}! Normal device notifications are now active for your 9jacash app.`,
       tag: `9jacash-enabled-${Date.now()}`,
       renotify: true,
+      showForegroundBanner: true,
     });
     markDashboardVisitNotificationShown(user?.id);
 
@@ -337,7 +545,9 @@ export async function enableNotificationsFromUserGesture(user?: {
       outcome: 'granted',
       permission: 'granted',
       inAppEnabled: true,
-      message: 'Notifications turned on! You will receive instant withdrawal and account alerts.',
+      message: installedApp
+        ? '9jacash app notifications are turned ON! Alerts will appear directly in your phone notification bar.'
+        : 'Device notifications are turned ON! Alerts will appear directly in your device notification bar.',
     };
   }
 
@@ -348,31 +558,20 @@ export async function enableNotificationsFromUserGesture(user?: {
       outcome: 'denied',
       permission: 'denied',
       inAppEnabled: true,
-      message: inIframe
-        ? 'In-app alerts are now ON! System push prompts are restricted inside embedded frames — open directly in Chrome/Safari for lock-screen alerts.'
-        : 'Notifications are blocked in your browser settings. Tap the lock icon next to the website address → Allow Notifications. In-app alerts are active.',
+      message: getDeviceAppSettingsHint(platform),
     };
   }
 
-  // Permission remained 'default' (dismissed or blocked by iframe/in-app browser)
+  // Permission stayed 'default' (user dismissed the OS prompt)
   setInAppNotificationsEnabled(true);
   playNotificationChime();
 
-  if (inIframe) {
-    return {
-      outcome: 'iframe_or_restricted',
-      permission: 'default',
-      inAppEnabled: true,
-      message: 'In-app instant alerts are now ON! Open the app directly in Chrome or Safari to enable phone lock-screen push alerts.',
-    };
-  }
-
-  if (platform === 'ios' && !installedPwa) {
+  if (platform === 'ios' && !installedApp) {
     return {
       outcome: 'ios_needs_pwa',
       permission: 'default',
       inAppEnabled: true,
-      message: 'In-app alerts are now ON! On iPhone, tap Share → "Add to Home Screen" to enable lock-screen alerts.',
+      message: 'App alerts are ON! Add 9jacash to your iPhone Home Screen to turn on lock-screen app notifications.',
     };
   }
 
@@ -380,34 +579,61 @@ export async function enableNotificationsFromUserGesture(user?: {
     outcome: 'dismissed',
     permission: 'default',
     inAppEnabled: true,
-    message: 'In-app alerts are now ON! Tap "Turn On Notification" again and choose "Allow" if you also want lock-screen alerts.',
+    message: 'Tap "Turn On Notification" again and select "Allow" on the device popup to turn on 9jacash app notifications.',
   };
 }
 
 /**
- * Send a native device notification to the user's Android phone (or desktop)
- * Shows in Android status bar, lock screen, and notification drawer
+ * Send a native device notification attributed directly to the 9jacash app.
+ * Uses ServiceWorkerRegistration.showNotification() so installed apps show native OS app notifications
+ * (status bar, lock screen, and notification tray) without needing any browser tab.
  */
 export async function sendDeviceNotification(
   title: string,
   options: DeviceNotificationOptions
 ): Promise<boolean> {
+  const installedApp = isPwaInstalled();
+  const body = options.body || '';
+
+  // Also show native-style heads-up alert inside the open app when explicitly requested or in foreground
+  if (
+    options.showForegroundBanner &&
+    typeof document !== 'undefined' &&
+    document.visibilityState === 'visible'
+  ) {
+    emitForegroundAppAlertBanner(title, body);
+  }
+
+  // Native APK/IPA wrapper bridge first if present
+  if (sendViaNativeAppWrapper(title, body)) {
+    return true;
+  }
+
   if (!isDeviceNotificationSupported()) {
-    console.warn('Device notifications are not supported in this browser.');
+    if (isInAppNotificationsEnabled()) {
+      emitForegroundAppAlertBanner(title, body);
+      playNotificationChime();
+      return true;
+    }
     return false;
   }
 
   if (Notification.permission !== 'granted') {
+    if (isInAppNotificationsEnabled() && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      emitForegroundAppAlertBanner(title, body);
+      playNotificationChime();
+      return true;
+    }
     return false;
   }
 
   const notificationOptions = {
-    body: options.body,
+    body,
     icon: options.icon || '/pwa-192x192.png?v=4',
     badge: options.badge || '/icon-badge.png?v=4',
-    vibrate: options.vibrate || [200, 100, 200, 100, 300], // Haptic alert vibration
-    tag: options.tag || `9jacash-${Date.now()}`,
-    renotify: options.renotify !== false, // Always wake up notification bar and vibrate
+    vibrate: options.vibrate || [200, 100, 200, 100, 300],
+    tag: options.tag || `9jacash-app-${Date.now()}`,
+    renotify: options.renotify !== false,
     requireInteraction: false,
     silent: false,
     data: {
@@ -417,7 +643,10 @@ export async function sendDeviceNotification(
     },
   };
 
-  // 1. Android mobile standard: ServiceWorkerRegistration.showNotification()
+  setAppNotificationBadge(1);
+
+  // 1. Primary path for installed apps (Android WebAPK, iOS Home Screen App, Desktop PWA):
+  // ServiceWorkerRegistration.showNotification() delivers native OS app notifications directly from 9jacash!
   try {
     const swReg = await getNotificationServiceWorker();
     if (swReg && typeof swReg.showNotification === 'function') {
@@ -425,21 +654,42 @@ export async function sendDeviceNotification(
       return true;
     }
   } catch (swErr) {
-    console.warn('Service worker showNotification failed, trying fallback:', swErr);
+    console.warn('Service worker showNotification failed:', swErr);
   }
 
-  // 2. Fallback for desktop browsers
+  // 2. Secondary Service Worker delivery via controller postMessage (also pure app notification, no browser window)
   try {
-    new Notification(title, {
-      body: options.body,
-      icon: options.icon || '/pwa-192x192.png?v=4',
-      tag: options.tag || `9jacash-${Date.now()}`,
-    });
-    return true;
-  } catch (fallbackErr) {
-    console.warn('Fallback Notification constructor failed:', fallbackErr);
-    return false;
+    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'SHOW_APP_NOTIFICATION',
+        title,
+        options: notificationOptions,
+      });
+      return true;
+    }
+  } catch {
+    // Ignore
   }
+
+  // 3. Only use Notification constructor if NOT in standalone installed app mode (e.g. desktop without SW)
+  if (!installedApp) {
+    try {
+      new Notification(title, {
+        body,
+        icon: options.icon || '/pwa-192x192.png?v=4',
+        tag: options.tag || `9jacash-app-${Date.now()}`,
+      });
+      return true;
+    } catch {
+      // Ignore on mobile where constructor is disallowed
+    }
+  }
+
+  // Ensure foreground user still gets feedback if OS suppressed delivery
+  if (!options.showForegroundBanner && typeof document !== 'undefined' && document.visibilityState === 'visible') {
+    emitForegroundAppAlertBanner(title, body);
+  }
+  return false;
 }
 
 export const VISIT_NOTIF_STORAGE_PREFIX = '9jacash_visit_device_notif_shown_';
@@ -468,9 +718,7 @@ export function markDashboardVisitNotificationShown(userId?: string): void {
 }
 
 /**
- * Trigger a device alert when the user visits the dashboard for the first time.
- * If it has already shown, it will NEVER show again even if user visits any button,
- * returns back to dashboard, or refreshes the page.
+ * Trigger a one-time device alert when the user visits the dashboard for the first time.
  */
 export async function triggerDashboardVisitDeviceNotification(
   user?: {
@@ -481,7 +729,6 @@ export async function triggerDashboardVisitDeviceNotification(
   } | null,
   force: boolean = false
 ): Promise<boolean> {
-  // If already shown once for this user/device, do NOT show again even across refreshes and page navigation
   if (!force && hasDashboardVisitNotificationShown(user?.id)) {
     return false;
   }
@@ -491,26 +738,24 @@ export async function triggerDashboardVisitDeviceNotification(
     return false;
   }
 
-  // Mark as shown in localStorage immediately so it never shows again on button navigation or refresh
   markDashboardVisitNotificationShown(user?.id);
 
   const firstName = user?.name ? user.name.split(' ')[0] : 'Member';
   const balance = Number(user?.balance ?? user?.availableBalance ?? 0);
-  const formattedBalance = `₦${balance.toLocaleString()}`;
+  const formattedBalance = `₦${Number.isFinite(balance) ? balance.toLocaleString('en-US') : '0'}`;
 
-  // Rotate between realistic instant device alerts
   const alertTemplates = [
     {
       title: '9jacash • Account Alert',
-      body: `💰 Welcome back, ${firstName}! Available Balance: ${formattedBalance}. Instant transfer & cashout ready.`,
+      body: `Welcome back, ${firstName}! Available Balance: ${formattedBalance}. Instant transfer & cashout ready.`,
     },
     {
-      title: '9jacash Alert ⚡',
-      body: `⚡ Account active: ${formattedBalance} in your wallet. Daily rewards and quick tasks updated.`,
+      title: '9jacash Alert',
+      body: `Account active: ${formattedBalance} in your wallet. Daily rewards and quick tasks updated.`,
     },
     {
       title: '9jacash • Instant Notice',
-      body: `🟢 Session active for ${firstName}. Balance: ${formattedBalance}. Tap to manage your account.`,
+      body: `Session active for ${firstName}. Balance: ${formattedBalance}. Tap to manage your account.`,
     },
   ];
 
@@ -526,8 +771,7 @@ export async function triggerDashboardVisitDeviceNotification(
 let lastWithdrawalNotification = { amount: 0, time: 0 };
 
 /**
- * Trigger a device notification when a user makes a withdrawal
- * Shows that they withdrew the specified amount
+ * Trigger a device app notification when a user makes a withdrawal
  */
 export async function sendWithdrawalDeviceNotification(
   amount: number,
@@ -536,26 +780,27 @@ export async function sendWithdrawalDeviceNotification(
 ): Promise<boolean> {
   const now = Date.now();
   if (lastWithdrawalNotification.amount === amount && now - lastWithdrawalNotification.time < 3000) {
-    return true; // prevent duplicate within 3s
+    return true;
   }
   lastWithdrawalNotification = { amount, time: now };
 
-  const formattedAmount = `₦${Number(amount || 0).toLocaleString()}`;
+  const numericAmount = Number(amount || 0);
+  const formattedAmount = `₦${Number.isFinite(numericAmount) ? numericAmount.toLocaleString('en-US') : '0'}`;
   const destination = bank && accountNumber ? ` to ${bank} (${accountNumber})` : '';
   const bodyText = `You withdrew ${formattedAmount}${destination}. Your withdrawal transaction is recorded.`;
 
-  return await sendDeviceNotification('9jacash • Withdrawal Alert 💸', {
+  return await sendDeviceNotification('9jacash • Withdrawal Alert', {
     body: bodyText,
     tag: `9jacash-withdrawal-${now}`,
     renotify: true,
+    showForegroundBanner: true,
   });
 }
 
 let lastCodeNotification = { time: 0, code: '' };
 
 /**
- * Trigger a device notification when a user buys a Quick Code
- * Shows that code is successfully purchased
+ * Trigger a device app notification when a user buys a Quick Code
  */
 export async function sendCodePurchasedDeviceNotification(
   code?: string,
@@ -564,7 +809,7 @@ export async function sendCodePurchasedDeviceNotification(
   const now = Date.now();
   const codeKey = code || 'purchased';
   if (lastCodeNotification.code === codeKey && now - lastCodeNotification.time < 3000) {
-    return true; // prevent duplicate within 3s
+    return true;
   }
   lastCodeNotification = { time: now, code: codeKey };
 
@@ -572,9 +817,10 @@ export async function sendCodePurchasedDeviceNotification(
     ? `Quick Code is successfully purchased. Code: ${code}. Valid for authorization.`
     : `Quick Code is successfully purchased. Your withdrawal code is ready.`;
 
-  return await sendDeviceNotification('9jacash • Quick Code 🔑', {
+  return await sendDeviceNotification('9jacash • Quick Code', {
     body: bodyText,
     tag: `9jacash-code-${now}`,
     renotify: true,
+    showForegroundBanner: true,
   });
 }

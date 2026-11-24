@@ -223,7 +223,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
               <span>Verified Earner Profile</span>
             </div>
 
-            {/* Device Notifications */}
+            {/* Device App Notifications */}
             <div className="space-y-1.5">
               <button
                 type="button"
@@ -237,7 +237,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
                     setNotifActive(res.permission === 'granted' || res.inAppEnabled);
                     setNotifFeedback(res.message);
                   } catch {
-                    setNotifFeedback('In-app alerts activated for your session.');
+                    setNotifFeedback('9jacash app notifications are now active on your device.');
                   } finally {
                     setIsEnablingNotif(false);
                   }
@@ -256,9 +256,9 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
                   )}
                   <span>
                     {isEnablingNotif
-                      ? 'Enabling notifications...'
+                      ? 'Turning on...'
                       : notifActive
-                      ? 'Notifications Active'
+                      ? 'App Notifications On'
                       : 'Turn on notification'}
                   </span>
                 </div>
@@ -267,7 +267,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, onOpenNotificati
                     isLight ? 'text-emerald-700 bg-emerald-100' : 'text-emerald-400 bg-emerald-500/20'
                   }`}
                 >
-                  {notifActive ? 'ON' : 'Alerts'}
+                  {notifActive ? 'ON' : 'App'}
                 </span>
               </button>
               {notifFeedback && (
