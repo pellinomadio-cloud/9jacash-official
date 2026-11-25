@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { BrandIcon } from '../Common/BrandIcon.tsx';
 import { useAuth } from '../../context/AuthContext.tsx';
+import { useTheme } from '../../context/ThemeContext.tsx';
 import {
   subscribeToDeviceBroadcasts,
   subscribeToNotifications,
@@ -19,6 +20,7 @@ import {
 
 export const GlobalDeviceNotificationListener: React.FC = () => {
   const { user } = useAuth();
+  const { isLight } = useTheme();
   const isListeningRef = useRef(false);
   const [activeBanner, setActiveBanner] = useState<ForegroundAppAlertPayload | null>(null);
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -177,25 +179,53 @@ export const GlobalDeviceNotificationListener: React.FC = () => {
       aria-live="polite"
       className="fixed top-3 left-1/2 -translate-x-1/2 z-[99999] w-[calc(100%-24px)] max-w-sm animate-in fade-in slide-in-from-top-3 duration-200"
     >
-      <div className="rounded-2xl bg-[#161820]/95 backdrop-blur-xl border border-stone-700/80 shadow-2xl shadow-black/50 p-3 flex items-start gap-3 text-white">
-        <div className="w-10 h-10 rounded-xl overflow-hidden border border-amber-400/40 shrink-0 shadow-md bg-[#090d16]">
+      <div
+        className={`rounded-2xl backdrop-blur-xl border p-3 flex items-start gap-3 transition-colors ${
+          isLight
+            ? 'bg-white/95 border-slate-200/90 shadow-2xl shadow-slate-900/15 text-slate-900'
+            : 'bg-[#161820]/95 border-stone-700/80 shadow-2xl shadow-black/50 text-white'
+        }`}
+      >
+        <div
+          className={`w-10 h-10 rounded-xl overflow-hidden border shrink-0 shadow-md bg-[#090d16] ${
+            isLight ? 'border-amber-400' : 'border-amber-400/40'
+          }`}
+        >
           <BrandIcon alt="9jacash" className="w-full h-full object-cover" />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-extrabold text-amber-400 truncate">
+            <span
+              className={`text-[11px] font-extrabold truncate ${
+                isLight ? 'text-amber-700' : 'text-amber-400'
+              }`}
+            >
               {activeBanner.title}
             </span>
-            <span className="text-[10px] text-stone-400 shrink-0">now</span>
+            <span
+              className={`text-[10px] shrink-0 font-medium ${
+                isLight ? 'text-slate-500' : 'text-stone-400'
+              }`}
+            >
+              now
+            </span>
           </div>
-          <p className="text-xs text-stone-200 leading-snug mt-0.5 line-clamp-3">
+          <p
+            className={`text-xs leading-snug mt-0.5 line-clamp-3 ${
+              isLight ? 'text-slate-700 font-medium' : 'text-stone-200'
+            }`}
+          >
             {activeBanner.body}
           </p>
         </div>
         <button
           type="button"
           onClick={() => setActiveBanner(null)}
-          className="p-1 rounded-lg text-stone-400 hover:text-white hover:bg-stone-800 cursor-pointer shrink-0"
+          className={`p-1 rounded-lg cursor-pointer shrink-0 transition-colors ${
+            isLight
+              ? 'text-slate-400 hover:text-slate-800 hover:bg-slate-100'
+              : 'text-stone-400 hover:text-white hover:bg-stone-800'
+          }`}
           aria-label="Dismiss notification"
         >
           <X className="w-4 h-4" />
