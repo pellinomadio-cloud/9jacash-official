@@ -43,7 +43,7 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
   const hasInitialScrolledRef = useRef(false);
   const pendingOptimisticTsRef = useRef<number>(0);
 
@@ -51,15 +51,19 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
   const lastMessage = messages[messages.length - 1];
   const isWaitingForSupportReply = Boolean(lastMessage && lastMessage.sender === 'user');
 
-  // Seed instantly from live user profile if newer than cached thread
+  // Seed instantly from live user profile if newer or contains additional messages
   useEffect(() => {
     if (!user?.supportChat) return;
     setThread((prev) => {
       if (!prev) return user.supportChat || null;
-      const incomingTs = user.supportChat?.lastTimestamp || 0;
+      const incoming = user.supportChat;
+      if (!incoming) return prev;
+      const incomingTs = incoming.lastTimestamp || 0;
       const currentTs = prev.lastTimestamp || 0;
-      if (incomingTs > currentTs) {
-        return user.supportChat || prev;
+      const incomingLen = Array.isArray(incoming.messages) ? incoming.messages.length : 0;
+      const currentLen = Array.isArray(prev.messages) ? prev.messages.length : 0;
+      if (incomingTs > currentTs || (incomingTs >= currentTs && incomingLen > currentLen)) {
+        return incoming;
       }
       return prev;
     });
@@ -99,12 +103,14 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
     };
   }, [user?.id]);
 
-  // Smooth auto-scroll on new messages, instant scroll on initial open
+  // Smooth container-only auto-scroll on new messages, instant scroll on initial open
   useEffect(() => {
     const behavior: ScrollBehavior = hasInitialScrolledRef.current ? 'smooth' : 'auto';
     hasInitialScrolledRef.current = true;
     const rafId = requestAnimationFrame(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
+      const container = messagesContainerRef.current;
+      if (!container) return;
+      container.scrollTo({ top: container.scrollHeight, behavior });
     });
     return () => cancelAnimationFrame(rafId);
   }, [messages.length, isWaitingForSupportReply]);
@@ -247,7 +253,8 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
 
         {/* Messages Thread */}
         <div
-          className={`flex-1 overflow-y-auto overscroll-contain scroll-smooth px-3.5 py-4 space-y-3 ${
+          ref={messagesContainerRef}
+          className={`flex-1 overflow-y-auto overscroll-contain px-3.5 py-4 space-y-3 ${
             isLight ? 'bg-stone-50/70' : 'bg-[#0e0f14]'
           }`}
         >
@@ -322,7 +329,6 @@ export const SupportTab: React.FC<SupportTabProps> = () => {
               );
             })
           )}
-          <div ref={messagesEndRef} />
         </div>
 
         {/* Turn-taking lock status + Error feedback */}

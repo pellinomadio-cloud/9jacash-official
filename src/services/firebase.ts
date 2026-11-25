@@ -1562,6 +1562,31 @@ export async function getAdminQuickCodesFromFirestore(): Promise<AdminQuickCode[
 // 12. 9jacash Support Chat Threads (User <-> Admin Live Support)
 export const SUPPORT_CHATS_COLLECTION = 'support_chats';
 
+// In-memory per-user sequential queue & latest-thread cache so consecutive admin messages
+// sent back-to-back (2, 3, or more in a row) always persist in exact order with zero race conditions.
+const adminReplyQueues = new Map<string, Promise<unknown>>();
+const latestSupportThreadCache = new Map<string, SupportChatThread>();
+
+function mergeSupportMessages(
+  aMessages?: SupportChatMessage[] | null,
+  bMessages?: SupportChatMessage[] | null
+): SupportChatMessage[] {
+  const byId = new Map<string, SupportChatMessage>();
+  const addList = (list?: SupportChatMessage[] | null) => {
+    if (!Array.isArray(list)) return;
+    for (const m of list) {
+      if (!m || !m.id || typeof m.text !== 'string') continue;
+      byId.set(m.id, m);
+    }
+  };
+  addList(aMessages);
+  addList(bMessages);
+
+  return Array.from(byId.values())
+    .sort((x, y) => (x.timestamp || 0) - (y.timestamp || 0))
+    .slice(-80);
+}
+
 function pickNewerSupportThread(
   a?: SupportChatThread | null,
   b?: SupportChatThread | null
@@ -1569,12 +1594,36 @@ function pickNewerSupportThread(
   if (!a && !b) return null;
   if (!a) return b || null;
   if (!b) return a || null;
-  const aLen = Array.isArray(a.messages) ? a.messages.length : 0;
-  const bLen = Array.isArray(b.messages) ? b.messages.length : 0;
-  if ((b.lastTimestamp || 0) !== (a.lastTimestamp || 0)) {
-    return (b.lastTimestamp || 0) > (a.lastTimestamp || 0) ? b : a;
-  }
-  return bLen >= aLen ? b : a;
+
+  const aMsgs = Array.isArray(a.messages) ? a.messages : [];
+  const bMsgs = Array.isArray(b.messages) ? b.messages : [];
+  const aTs = a.lastTimestamp || 0;
+  const bTs = b.lastTimestamp || 0;
+
+  // Respect explicit chat deletion (empty messages with a strictly newer timestamp)
+  if (aMsgs.length === 0 && bMsgs.length > 0 && aTs > bTs) return a;
+  if (bMsgs.length === 0 && aMsgs.length > 0 && bTs > aTs) return b;
+  if (aMsgs.length === 0 && bMsgs.length === 0) return bTs >= aTs ? b : a;
+
+  // Union messages from both sources so consecutive replies written across collections are never lost
+  const mergedMessages = mergeSupportMessages(aMsgs, bMsgs);
+  const newestBase = bTs >= aTs ? b : a;
+  const fallbackBase = bTs >= aTs ? a : b;
+  const latestMsg = mergedMessages[mergedMessages.length - 1];
+
+  return {
+    ...fallbackBase,
+    ...newestBase,
+    userName: newestBase.userName || fallbackBase.userName || '9jacash User',
+    userEmail: newestBase.userEmail || fallbackBase.userEmail || '',
+    userProfilePicture: newestBase.userProfilePicture || fallbackBase.userProfilePicture || '',
+    messages: mergedMessages,
+    lastMessage: latestMsg ? latestMsg.text : newestBase.lastMessage || '',
+    lastSender: latestMsg ? latestMsg.sender : newestBase.lastSender || 'user',
+    awaitingAdminReply: latestMsg ? latestMsg.sender === 'user' : Boolean(newestBase.awaitingAdminReply),
+    lastTimestamp: Math.max(aTs, bTs, latestMsg?.timestamp || 0),
+    updatedAt: latestMsg?.createdAt || newestBase.updatedAt || fallbackBase.updatedAt || new Date().toISOString(),
+  };
 }
 
 async function readExistingSupportThread(userId: string): Promise<SupportChatThread | null> {
@@ -1596,7 +1645,9 @@ async function readExistingSupportThread(userId: string): Promise<SupportChatThr
     }
   }
 
-  return pickNewerSupportThread(chatDocThread, userDocThread);
+  const remoteMerged = pickNewerSupportThread(chatDocThread, userDocThread);
+  const cached = latestSupportThreadCache.get(userId) || null;
+  return pickNewerSupportThread(remoteMerged, cached);
 }
 
 async function persistSupportThread(userId: string, thread: SupportChatThread): Promise<boolean> {
@@ -1632,7 +1683,11 @@ async function persistSupportThread(userId: string, thread: SupportChatThread): 
     handleFirestoreError(userWrite.reason, OperationType.WRITE, `${USERS_COLLECTION}/${userId}`);
   }
 
-  return chatWrite.status === 'fulfilled' || userWrite.status === 'fulfilled';
+  const ok = chatWrite.status === 'fulfilled' || userWrite.status === 'fulfilled';
+  if (ok) {
+    latestSupportThreadCache.set(userId, thread);
+  }
+  return ok;
 }
 
 export async function sendUserSupportMessageToFirestore(
@@ -1655,7 +1710,7 @@ export async function sendUserSupportMessageToFirestore(
     const existingMessages = Array.isArray(existing?.messages) ? existing.messages : [];
     const latestMsg = existingMessages[existingMessages.length - 1];
 
-    // Enforce turn-taking: user cannot send consecutive messages before admin replies
+    // Enforce turn-taking for users: user cannot send consecutive messages before admin replies
     if (latestMsg && latestMsg.sender === 'user') {
       return {
         ok: false,
@@ -1675,7 +1730,7 @@ export async function sendUserSupportMessageToFirestore(
       createdAt: nowIso,
     };
 
-    const updatedMessages = [...existingMessages, newMsg].slice(-80);
+    const updatedMessages = mergeSupportMessages(existingMessages, [newMsg]);
     const thread: SupportChatThread = {
       id: user.id,
       userId: user.id,
@@ -1707,9 +1762,10 @@ export async function sendUserSupportMessageToFirestore(
 export async function sendAdminSupportReplyToFirestore(
   userId: string,
   rawText: string,
-  userMeta?: { name?: string; email?: string; profilePicture?: string }
+  userMeta?: { name?: string; email?: string; profilePicture?: string },
+  prebuiltMessage?: SupportChatMessage
 ): Promise<{ ok: boolean; reason?: string; thread?: SupportChatThread }> {
-  const text = rawText.trim().slice(0, 2000);
+  const text = (prebuiltMessage?.text ?? rawText).trim().slice(0, 2000);
   if (!text) {
     return { ok: false, reason: 'Please enter a reply message.' };
   }
@@ -1720,45 +1776,67 @@ export async function sendAdminSupportReplyToFirestore(
     return { ok: false, reason: 'Service is temporarily busy. Please try again shortly.' };
   }
 
-  try {
-    const existing = await readExistingSupportThread(userId);
-    const existingMessages = Array.isArray(existing?.messages) ? existing.messages : [];
+  // Serialize consecutive admin replies per userId so sending 2, 3, or more messages rapidly
+  // executes strictly in order and never overwrites an earlier reply.
+  const previousTask = adminReplyQueues.get(userId) || Promise.resolve();
 
-    const now = Date.now();
-    const nowIso = new Date(now).toISOString();
-    const adminMsg: SupportChatMessage = {
-      id: `msg_${now}_${Math.random().toString(36).slice(2, 8)}`,
-      sender: 'admin',
-      senderName: '9jacash Support',
-      text,
-      timestamp: now,
-      createdAt: nowIso,
-    };
+  const currentTask = previousTask
+    .catch(() => {})
+    .then(async (): Promise<{ ok: boolean; reason?: string; thread?: SupportChatThread }> => {
+      try {
+        const existing = await readExistingSupportThread(userId);
+        const existingMessages = Array.isArray(existing?.messages) ? existing.messages : [];
+        const prevMaxTs = existingMessages.reduce((max, m) => Math.max(max, m.timestamp || 0), 0);
 
-    const updatedMessages = [...existingMessages, adminMsg].slice(-80);
-    const thread: SupportChatThread = {
-      id: userId,
-      userId,
-      userName: existing?.userName || userMeta?.name || '9jacash User',
-      userEmail: existing?.userEmail || userMeta?.email || '',
-      userProfilePicture: existing?.userProfilePicture || userMeta?.profilePicture || '',
-      messages: updatedMessages,
-      lastMessage: text,
-      lastSender: 'admin',
-      awaitingAdminReply: false,
-      lastTimestamp: now,
-      updatedAt: nowIso,
-    };
+        const baseNow = prebuiltMessage?.timestamp || Date.now();
+        const now = Math.max(baseNow, prevMaxTs + 1);
+        const nowIso = new Date(now).toISOString();
 
-    const saved = await persistSupportThread(userId, thread);
-    if (!saved) {
-      return { ok: false, reason: 'Failed to send reply. Please try again.' };
+        const adminMsg: SupportChatMessage = {
+          id: prebuiltMessage?.id || `msg_${now}_${Math.random().toString(36).slice(2, 8)}`,
+          sender: 'admin',
+          senderName: '9jacash Support',
+          text,
+          timestamp: now,
+          createdAt: nowIso,
+        };
+
+        const updatedMessages = mergeSupportMessages(existingMessages, [adminMsg]);
+        const latestMsg = updatedMessages[updatedMessages.length - 1] || adminMsg;
+
+        const thread: SupportChatThread = {
+          id: userId,
+          userId,
+          userName: existing?.userName || userMeta?.name || '9jacash User',
+          userEmail: existing?.userEmail || userMeta?.email || '',
+          userProfilePicture: existing?.userProfilePicture || userMeta?.profilePicture || '',
+          messages: updatedMessages,
+          lastMessage: latestMsg.text,
+          lastSender: latestMsg.sender,
+          awaitingAdminReply: latestMsg.sender === 'user',
+          lastTimestamp: latestMsg.timestamp,
+          updatedAt: latestMsg.createdAt || nowIso,
+        };
+
+        const saved = await persistSupportThread(userId, thread);
+        if (!saved) {
+          return { ok: false, reason: 'Failed to send reply. Please try again.' };
+        }
+        return { ok: true, thread };
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, `${SUPPORT_CHATS_COLLECTION}/${userId}`);
+        return { ok: false, reason: 'Failed to send reply. Please try again.' };
+      }
+    });
+
+  adminReplyQueues.set(userId, currentTask);
+  currentTask.finally(() => {
+    if (adminReplyQueues.get(userId) === currentTask) {
+      adminReplyQueues.delete(userId);
     }
-    return { ok: true, thread };
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `${SUPPORT_CHATS_COLLECTION}/${userId}`);
-    return { ok: false, reason: 'Failed to send reply. Please try again.' };
-  }
+  });
+
+  return currentTask;
 }
 
 export function subscribeToUserSupportChat(
@@ -1770,7 +1848,11 @@ export function subscribeToUserSupportChat(
   let userThread: SupportChatThread | null = null;
 
   const emit = () => {
-    onUpdate(pickNewerSupportThread(chatThread, userThread));
+    const merged = pickNewerSupportThread(chatThread, userThread);
+    if (merged) {
+      latestSupportThreadCache.set(userId, merged);
+    }
+    onUpdate(merged);
   };
 
   let unsubChat: Unsubscribe = () => {};
@@ -1885,6 +1967,8 @@ export async function deleteSupportChatFromFirestore(userId: string): Promise<vo
     lastTimestamp: now,
     updatedAt: nowIso,
   };
+
+  latestSupportThreadCache.set(userId, clearedThread);
 
   try {
     await setDoc(doc(db, SUPPORT_CHATS_COLLECTION, userId), clearedThread);

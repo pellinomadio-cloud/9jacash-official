@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth, isGlobalBroadcastNotification } from '../../context/AuthContext.tsx';
-import { User, AppNotification, CompanyAccount, DepositRequest, SafeWithdrawalAccount, SupportChatThread } from '../../types/index.ts';
+import { User, AppNotification, CompanyAccount, DepositRequest, SafeWithdrawalAccount, SupportChatThread, SupportChatMessage } from '../../types/index.ts';
 import {
   subscribeToAllSupportChats,
   sendAdminSupportReplyToFirestore,
@@ -126,10 +126,14 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   });
   const [selectedSupportUserId, setSelectedSupportUserId] = useState<string | null>(null);
   const [supportReplyInput, setSupportReplyInput] = useState('');
-  const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
+  const [pendingAdminMessages, setPendingAdminMessages] = useState<Record<string, SupportChatMessage[]>>({});
   const [supportSearchQuery, setSupportSearchQuery] = useState('');
   const [supportFeedbackMsg, setSupportFeedbackMsg] = useState('');
-  const adminSupportEndRef = React.useRef<HTMLDivElement>(null);
+  const [supportFeedbackIsError, setSupportFeedbackIsError] = useState(false);
+  const adminSupportContainerRef = React.useRef<HTMLDivElement>(null);
+  const adminSupportInputRef = React.useRef<HTMLInputElement>(null);
+  const prevAdminThreadIdRef = React.useRef<string | null>(null);
+  const supportFeedbackTimerRef = React.useRef<number | null>(null);
 
   // Pricing & Fee Controls state (Quick Code & KYC)
   const [kycPriceInput, setKycPriceInput] = useState<number>(appPricing?.kycPrice ?? 22000);
@@ -266,16 +270,74 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
       ? [user]
       : [];
 
-  // Merge support_chats collection with users/{userId}.supportChat for guaranteed real-time visibility
+  // Merge support_chats collection, users/{userId}.supportChat, and in-flight optimistic admin replies
+  // so consecutive admin replies never flicker or disappear mid-write.
   const combinedSupportThreads: SupportChatThread[] = React.useMemo(() => {
     const map = new Map<string, SupportChatThread>();
 
+    const mergeMessages = (
+      aMsgs: SupportChatMessage[] = [],
+      bMsgs: SupportChatMessage[] = []
+    ): SupportChatMessage[] => {
+      const byId = new Map<string, SupportChatMessage>();
+      for (const m of aMsgs) {
+        if (m && m.id) byId.set(m.id, m);
+      }
+      for (const m of bMsgs) {
+        if (m && m.id) byId.set(m.id, m);
+      }
+      return Array.from(byId.values())
+        .sort((x, y) => (x.timestamp || 0) - (y.timestamp || 0))
+        .slice(-80);
+    };
+
+    const mergeIntoMap = (incoming: SupportChatThread) => {
+      if (!incoming || !incoming.userId) return;
+      const deletedAt = deletedSupportMap[incoming.userId] || 0;
+      const incomingMsgs = Array.isArray(incoming.messages)
+        ? incoming.messages.filter((m) => m && (!deletedAt || (m.timestamp || 0) > deletedAt))
+        : [];
+      if (incomingMsgs.length === 0) return;
+
+      const existing = map.get(incoming.userId);
+      if (!existing) {
+        const lastMsg = incomingMsgs[incomingMsgs.length - 1];
+        map.set(incoming.userId, {
+          ...incoming,
+          messages: incomingMsgs,
+          lastMessage: lastMsg.text,
+          lastSender: lastMsg.sender,
+          awaitingAdminReply: lastMsg.sender === 'user',
+          lastTimestamp: Math.max(incoming.lastTimestamp || 0, lastMsg.timestamp || 0),
+          updatedAt: lastMsg.createdAt || incoming.updatedAt || new Date().toISOString(),
+        });
+        return;
+      }
+
+      const mergedMsgs = mergeMessages(existing.messages, incomingMsgs);
+      const lastMsg = mergedMsgs[mergedMsgs.length - 1];
+      map.set(incoming.userId, {
+        ...existing,
+        ...incoming,
+        userName: incoming.userName || existing.userName || '9jacash User',
+        userEmail: incoming.userEmail || existing.userEmail || '',
+        userProfilePicture: existing.userProfilePicture || incoming.userProfilePicture || '',
+        messages: mergedMsgs,
+        lastMessage: lastMsg ? lastMsg.text : '',
+        lastSender: lastMsg ? lastMsg.sender : 'admin',
+        awaitingAdminReply: lastMsg ? lastMsg.sender === 'user' : false,
+        lastTimestamp: Math.max(
+          existing.lastTimestamp || 0,
+          incoming.lastTimestamp || 0,
+          lastMsg ? lastMsg.timestamp || 0 : 0
+        ),
+        updatedAt: (lastMsg && lastMsg.createdAt) || incoming.updatedAt || existing.updatedAt,
+      });
+    };
+
     (allUsersList || []).forEach((u) => {
       if (u && isGmailAddress(u.email) && u.supportChat && Array.isArray(u.supportChat.messages) && u.supportChat.messages.length > 0) {
-        const deletedAt = deletedSupportMap[u.id] || 0;
-        const threadTs = u.supportChat.lastTimestamp || 0;
-        if (deletedAt > 0 && threadTs <= deletedAt) return;
-        map.set(u.id, {
+        mergeIntoMap({
           ...u.supportChat,
           userId: u.id,
           userName: u.supportChat.userName || u.name || '9jacash User',
@@ -288,20 +350,26 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     (supportThreads || []).forEach((t) => {
       if (!t || !t.userId || !Array.isArray(t.messages) || t.messages.length === 0) return;
       if (t.userEmail && !isGmailAddress(t.userEmail)) return;
-      const deletedAt = deletedSupportMap[t.userId] || 0;
-      const threadTs = t.lastTimestamp || 0;
-      if (deletedAt > 0 && threadTs <= deletedAt) return;
-      const existing = map.get(t.userId);
-      if (!existing) {
-        map.set(t.userId, t);
-      } else {
-        const useCloud = (t.lastTimestamp || 0) >= (existing.lastTimestamp || 0);
-        const picked = useCloud ? t : existing;
-        map.set(t.userId, {
-          ...picked,
-          userProfilePicture: picked.userProfilePicture || existing.userProfilePicture || '',
-        });
-      }
+      mergeIntoMap(t);
+    });
+
+    // Overlay in-flight optimistic admin replies so 2+ consecutive messages stay pinned seamlessly
+    Object.entries(pendingAdminMessages).forEach(([uid, pendingMsgs]) => {
+      if (!pendingMsgs || pendingMsgs.length === 0) return;
+      const existing = map.get(uid);
+      if (!existing) return;
+      const mergedMsgs = mergeMessages(existing.messages, pendingMsgs);
+      const lastMsg = mergedMsgs[mergedMsgs.length - 1];
+      if (!lastMsg) return;
+      map.set(uid, {
+        ...existing,
+        messages: mergedMsgs,
+        lastMessage: lastMsg.text,
+        lastSender: lastMsg.sender,
+        awaitingAdminReply: lastMsg.sender === 'user',
+        lastTimestamp: Math.max(existing.lastTimestamp || 0, lastMsg.timestamp || 0),
+        updatedAt: lastMsg.createdAt || existing.updatedAt,
+      });
     });
 
     const list = Array.from(map.values());
@@ -312,7 +380,7 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
       return (b.lastTimestamp || 0) - (a.lastTimestamp || 0);
     });
     return list;
-  }, [supportThreads, allUsersList, deletedSupportMap]);
+  }, [supportThreads, allUsersList, deletedSupportMap, pendingAdminMessages]);
 
   const handleDeleteSupportChat = async (targetUserId: string) => {
     if (!targetUserId) return;
@@ -362,6 +430,12 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
     }
 
     setSupportThreads((prev) => prev.filter((t) => t.userId !== targetUserId));
+    setPendingAdminMessages((prev) => {
+      if (!prev[targetUserId]) return prev;
+      const next = { ...prev };
+      delete next[targetUserId];
+      return next;
+    });
     if (selectedSupportUserId === targetUserId) {
       const remaining = combinedSupportThreads.filter((t) => t.userId !== targetUserId);
       setSelectedSupportUserId(remaining.length > 0 ? remaining[0].userId : null);
@@ -385,56 +459,77 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
   const selectedSupportThread =
     combinedSupportThreads.find((t) => t.userId === selectedSupportUserId) || null;
 
+  // Smooth container-only auto-scroll (never jumps the outer dashboard viewport)
   useEffect(() => {
     if (activeTab !== 'support' || !selectedSupportThread) return;
+    const isThreadSwitch = prevAdminThreadIdRef.current !== selectedSupportThread.userId;
+    prevAdminThreadIdRef.current = selectedSupportThread.userId;
     const rafId = requestAnimationFrame(() => {
-      adminSupportEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      const container = adminSupportContainerRef.current;
+      if (!container) return;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: isThreadSwitch ? 'auto' : 'smooth',
+      });
     });
     return () => cancelAnimationFrame(rafId);
   }, [activeTab, selectedSupportThread?.userId, selectedSupportThread?.messages?.length]);
 
+  // Cleanup feedback timer on unmount
+  useEffect(() => {
+    return () => {
+      if (supportFeedbackTimerRef.current) {
+        window.clearTimeout(supportFeedbackTimerRef.current);
+      }
+    };
+  }, []);
+
+  const showSupportFeedback = (msg: string, isError = false) => {
+    if (supportFeedbackTimerRef.current) {
+      window.clearTimeout(supportFeedbackTimerRef.current);
+    }
+    setSupportFeedbackMsg(msg);
+    setSupportFeedbackIsError(isError);
+    supportFeedbackTimerRef.current = window.setTimeout(() => {
+      setSupportFeedbackMsg('');
+      setSupportFeedbackIsError(false);
+    }, isError ? 4500 : 2500);
+  };
+
+  // Non-blocking consecutive admin reply handler: admin can send 2, 3, or unlimited messages in a row smoothly
   const handleSendSupportReply = async (e: React.FormEvent) => {
     e.preventDefault();
     const replyText = supportReplyInput.trim();
-    if (!selectedSupportThread || !replyText || isSendingSupportReply) return;
+    if (!selectedSupportThread || !replyText) return;
 
     const targetThread = selectedSupportThread;
-    const now = Date.now();
+    const existingMessages = targetThread.messages || [];
+    const lastExistingTs = existingMessages.length > 0
+      ? existingMessages[existingMessages.length - 1].timestamp || 0
+      : 0;
+    const now = Math.max(Date.now(), lastExistingTs + 1);
     const nowIso = new Date(now).toISOString();
-    const optimisticThread: SupportChatThread = {
-      ...targetThread,
-      messages: [
-        ...(targetThread.messages || []),
-        {
-          id: `opt_admin_${now}`,
-          sender: 'admin' as const,
-          senderName: '9jacash Support',
-          text: replyText,
-          timestamp: now,
-          createdAt: nowIso,
-        },
-      ].slice(-80),
-      lastMessage: replyText,
-      lastSender: 'admin',
-      awaitingAdminReply: false,
-      lastTimestamp: now,
-      updatedAt: nowIso,
+    const newMsg: SupportChatMessage = {
+      id: `msg_${now}_${Math.random().toString(36).slice(2, 7)}`,
+      sender: 'admin',
+      senderName: '9jacash Support',
+      text: replyText,
+      timestamp: now,
+      createdAt: nowIso,
     };
 
-    // Instant optimistic UI update
+    // Instant optimistic UI update — keep input enabled & focused so admin can send multiple messages smoothly
     setSupportReplyInput('');
-    setSupportFeedbackMsg('');
-    setSupportThreads((prev) => {
-      const idx = prev.findIndex((t) => t.userId === targetThread.userId);
-      if (idx >= 0) {
-        const copy = [...prev];
-        copy[idx] = optimisticThread;
-        return copy;
-      }
-      return [optimisticThread, ...prev];
+    setPendingAdminMessages((prev) => ({
+      ...prev,
+      [targetThread.userId]: [...(prev[targetThread.userId] || []), newMsg],
+    }));
+
+    // Keep focus on the input for rapid follow-up messages
+    requestAnimationFrame(() => {
+      adminSupportInputRef.current?.focus();
     });
 
-    setIsSendingSupportReply(true);
     const res = await sendAdminSupportReplyToFirestore(
       targetThread.userId,
       replyText,
@@ -442,9 +537,10 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
         name: targetThread.userName,
         email: targetThread.userEmail,
         profilePicture: targetThread.userProfilePicture,
-      }
+      },
+      newMsg
     );
-    setIsSendingSupportReply(false);
+
     if (res.ok) {
       if (res.thread) {
         setSupportThreads((prev) => {
@@ -457,11 +553,28 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
           return [res.thread!, ...prev];
         });
       }
-      setSupportFeedbackMsg(`Reply sent to ${targetThread.userName}.`);
-      setTimeout(() => setSupportFeedbackMsg(''), 3000);
+      setPendingAdminMessages((prev) => {
+        const list = (prev[targetThread.userId] || []).filter((m) => m.id !== newMsg.id);
+        if (list.length === 0) {
+          const next = { ...prev };
+          delete next[targetThread.userId];
+          return next;
+        }
+        return { ...prev, [targetThread.userId]: list };
+      });
+      showSupportFeedback(`Sent to ${targetThread.userName || 'user'}.`, false);
     } else {
-      setSupportReplyInput(replyText);
-      setSupportFeedbackMsg(res.reason || 'Failed to send reply.');
+      setPendingAdminMessages((prev) => {
+        const list = (prev[targetThread.userId] || []).filter((m) => m.id !== newMsg.id);
+        if (list.length === 0) {
+          const next = { ...prev };
+          delete next[targetThread.userId];
+          return next;
+        }
+        return { ...prev, [targetThread.userId]: list };
+      });
+      setSupportReplyInput((current) => (current.trim() ? current : replyText));
+      showSupportFeedback(res.reason || 'Failed to send reply. Please try again.', true);
     }
   };
 
@@ -3495,19 +3608,31 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
         <div className="space-y-3.5 animate-in fade-in">
           <div className="flex items-center justify-between flex-wrap gap-2 px-1">
             <div>
-              <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                <Headphones className="w-4 h-4 text-emerald-400" />
+              <h3 className={`text-sm font-bold flex items-center gap-1.5 ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                <Headphones className={`w-4 h-4 ${isLight ? 'text-emerald-600' : 'text-emerald-400'}`} />
                 9jacash Support Inbox
               </h3>
-              <p className="text-[10px] text-stone-400">
-                User support messages arrive here in real time. Replying unlocks the user&apos;s next message.
+              <p className={`text-[10px] ${isLight ? 'text-slate-500' : 'text-stone-400'}`}>
+                Messages sync in real time. You can send multiple messages in a row; replying unlocks the user&apos;s next message.
               </p>
             </div>
             <div className="flex items-center gap-2 text-[10px]">
-              <span className="px-2.5 py-1 rounded-lg bg-amber-500/15 text-amber-300 border border-amber-500/30 font-bold">
+              <span
+                className={`px-2.5 py-1 rounded-lg border font-bold ${
+                  isLight
+                    ? 'bg-amber-50 text-amber-800 border-amber-200'
+                    : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                }`}
+              >
                 {awaitingSupportCount} Awaiting Reply
               </span>
-              <span className="px-2.5 py-1 rounded-lg bg-stone-800 text-stone-300 border border-stone-700 font-semibold">
+              <span
+                className={`px-2.5 py-1 rounded-lg border font-semibold ${
+                  isLight
+                    ? 'bg-slate-100 text-slate-700 border-slate-200'
+                    : 'bg-stone-800 text-stone-300 border-stone-700'
+                }`}
+              >
                 {combinedSupportThreads.length} Total Chats
               </span>
             </div>
@@ -3515,28 +3640,48 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
 
           {/* Search Support Conversations */}
           <div className="relative">
-            <Search className="w-3.5 h-3.5 text-stone-500 absolute left-3 top-1/2 -translate-y-1/2" />
+            <Search
+              className={`w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 ${
+                isLight ? 'text-slate-400' : 'text-stone-500'
+              }`}
+            />
             <input
               type="text"
               value={supportSearchQuery}
               onChange={(e) => setSupportSearchQuery(e.target.value)}
               placeholder="Search user name, email, or support message..."
-              className="w-full pl-8 pr-3 py-2 rounded-xl bg-[#14151b] border border-stone-800 text-xs text-white placeholder:text-stone-500 focus:outline-none focus:border-emerald-500/50"
+              className={`w-full pl-8 pr-3 py-2 rounded-xl border text-xs focus:outline-none transition-colors ${
+                isLight
+                  ? 'bg-white border-slate-200 text-slate-900 placeholder:text-slate-400 focus:border-emerald-500 shadow-xs'
+                  : 'bg-[#14151b] border-stone-800 text-white placeholder:text-stone-500 focus:border-emerald-500/50'
+              }`}
             />
           </div>
 
           {combinedSupportThreads.length === 0 ? (
-            <div className="p-8 text-center bg-[#14151b] rounded-2xl border border-stone-800 text-stone-400 text-xs space-y-2">
-              <Headphones className="w-8 h-8 text-emerald-400 mx-auto opacity-50" />
-              <p className="font-bold text-white">No Support Messages Yet</p>
-              <p className="text-[11px] text-stone-500">
+            <div
+              className={`p-8 text-center rounded-2xl border text-xs space-y-2 ${
+                isLight
+                  ? 'bg-white border-slate-200 text-slate-500 shadow-xs'
+                  : 'bg-[#14151b] border-stone-800 text-stone-400'
+              }`}
+            >
+              <Headphones
+                className={`w-8 h-8 mx-auto opacity-60 ${
+                  isLight ? 'text-emerald-600' : 'text-emerald-400'
+                }`}
+              />
+              <p className={`font-bold ${isLight ? 'text-slate-900' : 'text-white'}`}>
+                No Support Messages Yet
+              </p>
+              <p className={`text-[11px] ${isLight ? 'text-slate-500' : 'text-stone-500'}`}>
                 When users message 9jacash Support from the Support page, their conversation will appear here immediately.
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
               {/* Conversations List */}
-              <div className="lg:col-span-5 space-y-2 max-h-[340px] lg:max-h-[480px] overflow-y-auto pr-0.5">
+              <div className="lg:col-span-5 space-y-2 max-h-[340px] lg:max-h-[500px] overflow-y-auto overscroll-contain pr-0.5">
                 {combinedSupportThreads
                   .filter((t) => {
                     const q = supportSearchQuery.trim().toLowerCase();
@@ -3555,14 +3700,26 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                         key={thread.userId}
                         onClick={() => setSelectedSupportUserId(thread.userId)}
                         className={`w-full text-left p-3 rounded-xl border transition-all flex items-start gap-2.5 cursor-pointer ${
-                          isSelected
+                          isLight
+                            ? isSelected
+                              ? 'bg-emerald-50 border-emerald-400 shadow-sm'
+                              : needsReply
+                              ? 'bg-amber-50/70 border-amber-300 hover:border-amber-400'
+                              : 'bg-white border-slate-200 hover:border-slate-300'
+                            : isSelected
                             ? 'bg-emerald-500/15 border-emerald-500/50 shadow-md'
                             : needsReply
                             ? 'bg-[#171820] border-amber-500/40 hover:border-amber-400/70'
                             : 'bg-[#14151b] border-stone-800 hover:border-stone-700'
                         }`}
                       >
-                        <div className="w-9 h-9 rounded-full bg-stone-800 border border-stone-700 flex items-center justify-center text-xs font-bold text-emerald-400 flex-shrink-0 overflow-hidden">
+                        <div
+                          className={`w-9 h-9 rounded-full border flex items-center justify-center text-xs font-bold flex-shrink-0 overflow-hidden ${
+                            isLight
+                              ? 'bg-emerald-100 border-emerald-200 text-emerald-700'
+                              : 'bg-stone-800 border-stone-700 text-emerald-400'
+                          }`}
+                        >
                           {thread.userProfilePicture ? (
                             <img
                               src={thread.userProfilePicture}
@@ -3575,15 +3732,23 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between gap-1.5">
-                            <span className="text-xs font-bold text-white truncate">
+                            <span
+                              className={`text-xs font-bold truncate ${
+                                isLight ? 'text-slate-900' : 'text-white'
+                              }`}
+                            >
                               {thread.userName || '9jacash User'}
                             </span>
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <span
-                                className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                                className={`text-[9px] px-1.5 py-0.5 rounded font-bold border ${
                                   needsReply
-                                    ? 'bg-red-500/20 text-red-300 border border-red-500/30'
-                                    : 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                                    ? isLight
+                                      ? 'bg-red-50 text-red-700 border-red-200'
+                                      : 'bg-red-500/20 text-red-300 border-red-500/30'
+                                    : isLight
+                                    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+                                    : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
                                 }`}
                               >
                                 {needsReply ? 'Needs Reply' : 'Replied'}
@@ -3594,7 +3759,11 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                                   e.stopPropagation();
                                   handleDeleteSupportChat(thread.userId);
                                 }}
-                                className="p-1 rounded-md bg-red-500/10 hover:bg-red-500/25 text-red-400 border border-red-500/25 transition-colors cursor-pointer"
+                                className={`p-1 rounded-md border transition-colors cursor-pointer ${
+                                  isLight
+                                    ? 'bg-red-50 hover:bg-red-100 text-red-600 border-red-200'
+                                    : 'bg-red-500/10 hover:bg-red-500/25 text-red-400 border-red-500/25'
+                                }`}
                                 title="Delete chat"
                               >
                                 <Trash2 className="w-3 h-3" />
@@ -3602,13 +3771,27 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
                             </div>
                           </div>
                           {thread.userEmail && (
-                            <p className="text-[10px] text-stone-400 truncate">{thread.userEmail}</p>
+                            <p
+                              className={`text-[10px] truncate ${
+                                isLight ? 'text-slate-500' : 'text-stone-400'
+                              }`}
+                            >
+                              {thread.userEmail}
+                            </p>
                           )}
-                          <p className="text-[11px] text-stone-300 truncate mt-1">
+                          <p
+                            className={`text-[11px] truncate mt-1 ${
+                              isLight ? 'text-slate-700' : 'text-stone-300'
+                            }`}
+                          >
                             {thread.lastSender === 'admin' ? 'You: ' : ''}
                             {thread.lastMessage}
                           </p>
-                          <p className="text-[9px] text-stone-500 mt-0.5 font-mono">
+                          <p
+                            className={`text-[9px] mt-0.5 font-mono ${
+                              isLight ? 'text-slate-400' : 'text-stone-500'
+                            }`}
+                          >
                             {thread.lastTimestamp
                               ? new Date(thread.lastTimestamp).toLocaleString([], {
                                   month: 'short',
@@ -3625,102 +3808,206 @@ export const AdminDashboardPage: React.FC<AdminDashboardPageProps> = ({ onBack }
               </div>
 
               {/* Active Conversation Thread + Reply Form */}
-              <div className="lg:col-span-7 flex flex-col rounded-2xl bg-[#14151b] border border-stone-800 overflow-hidden min-h-[380px] max-h-[500px]">
-                {selectedSupportThread ? (
-                  <>
-                    {/* Thread Header */}
-                    <div className="px-4 py-3 border-b border-stone-800 bg-[#171820] flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <h4 className="text-xs font-bold text-white truncate">
-                          {selectedSupportThread.userName || '9jacash User'}
-                        </h4>
-                        <p className="text-[10px] text-stone-400 truncate">
-                          {selectedSupportThread.userEmail || selectedSupportThread.userId}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSupportChat(selectedSupportThread.userId)}
-                        className="px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-bold flex items-center gap-1 cursor-pointer flex-shrink-0"
-                        title="Delete conversation"
+              <div
+                className={`lg:col-span-7 flex flex-col rounded-2xl border overflow-hidden min-h-[400px] max-h-[520px] ${
+                  isLight
+                    ? 'bg-white border-slate-200 shadow-sm'
+                    : 'bg-[#14151b] border-stone-800'
+                }`}
+              >
+                {selectedSupportThread ? (() => {
+                  const pendingIdsForSelected = new Set(
+                    (pendingAdminMessages[selectedSupportThread.userId] || []).map((m) => m.id)
+                  );
+                  return (
+                    <>
+                      {/* Thread Header */}
+                      <div
+                        className={`px-4 py-3 border-b flex items-center justify-between gap-2 ${
+                          isLight
+                            ? 'border-slate-200 bg-slate-50'
+                            : 'border-stone-800 bg-[#171820]'
+                        }`}
                       >
-                        <Trash2 className="w-3 h-3" /> Delete Chat
-                      </button>
-                    </div>
-
-                    {/* Messages */}
-                    <div className="flex-1 overflow-y-auto overscroll-contain scroll-smooth p-3.5 space-y-2.5 bg-[#0f1015]">
-                      {(selectedSupportThread.messages || []).map((m) => {
-                        const isAdmin = m.sender === 'admin';
-                        return (
+                        <div className="min-w-0 flex items-center gap-2.5">
                           <div
-                            key={m.id}
-                            className={`flex flex-col animate-in fade-in slide-in-from-bottom-1 duration-150 ${isAdmin ? 'items-end' : 'items-start'}`}
+                            className={`w-8 h-8 rounded-full border flex items-center justify-center text-[11px] font-bold flex-shrink-0 overflow-hidden ${
+                              isLight
+                                ? 'bg-emerald-100 border-emerald-200 text-emerald-700'
+                                : 'bg-stone-800 border-stone-700 text-emerald-400'
+                            }`}
                           >
-                            <span
-                              className={`text-[9px] font-bold mb-0.5 px-1 ${
-                                isAdmin ? 'text-emerald-400' : 'text-amber-300'
+                            {selectedSupportThread.userProfilePicture ? (
+                              <img
+                                src={selectedSupportThread.userProfilePicture}
+                                alt={selectedSupportThread.userName}
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              (selectedSupportThread.userName || 'U').slice(0, 2).toUpperCase()
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <h4
+                              className={`text-xs font-bold truncate ${
+                                isLight ? 'text-slate-900' : 'text-white'
                               }`}
                             >
-                              {isAdmin ? '9jacash Support (You)' : selectedSupportThread.userName || 'User'}
-                            </span>
+                              {selectedSupportThread.userName || '9jacash User'}
+                            </h4>
+                            <p
+                              className={`text-[10px] truncate ${
+                                isLight ? 'text-slate-500' : 'text-stone-400'
+                              }`}
+                            >
+                              {selectedSupportThread.userEmail || selectedSupportThread.userId}
+                            </p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteSupportChat(selectedSupportThread.userId)}
+                          className={`px-2.5 py-1 rounded-lg border text-[10px] font-bold flex items-center gap-1 cursor-pointer flex-shrink-0 transition-colors ${
+                            isLight
+                              ? 'bg-red-50 hover:bg-red-100 text-red-700 border-red-200'
+                              : 'bg-red-500/10 hover:bg-red-500/20 text-red-400 border-red-500/30'
+                          }`}
+                          title="Delete conversation"
+                        >
+                          <Trash2 className="w-3 h-3" /> Delete Chat
+                        </button>
+                      </div>
+
+                      {/* Messages Viewport */}
+                      <div
+                        ref={adminSupportContainerRef}
+                        className={`flex-1 overflow-y-auto overscroll-contain p-3.5 space-y-2.5 ${
+                          isLight ? 'bg-slate-50/90' : 'bg-[#0f1015]'
+                        }`}
+                      >
+                        {(selectedSupportThread.messages || []).map((m) => {
+                          const isAdmin = m.sender === 'admin';
+                          const isPending = isAdmin && pendingIdsForSelected.has(m.id);
+                          return (
                             <div
-                              className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-relaxed ${
-                                isAdmin
-                                  ? 'bg-emerald-500 text-black font-medium rounded-br-sm'
-                                  : 'bg-[#1a1c24] text-stone-100 border border-stone-800 rounded-bl-sm'
-                              }`}
+                              key={m.id}
+                              className={`flex flex-col ${isAdmin ? 'items-end' : 'items-start'}`}
                             >
-                              <p className="whitespace-pre-wrap break-words">{m.text}</p>
                               <span
-                                className={`block text-[9px] mt-1 text-right ${
-                                  isAdmin ? 'text-emerald-950/75 font-semibold' : 'text-stone-500'
+                                className={`text-[9px] font-bold mb-0.5 px-1 ${
+                                  isAdmin
+                                    ? isLight
+                                      ? 'text-emerald-700'
+                                      : 'text-emerald-400'
+                                    : isLight
+                                    ? 'text-amber-700'
+                                    : 'text-amber-300'
                                 }`}
                               >
-                                {new Date(m.timestamp).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })}
+                                {isAdmin ? '9jacash Support (You)' : selectedSupportThread.userName || 'User'}
                               </span>
+                              <div
+                                className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-xs leading-relaxed transition-opacity ${
+                                  isAdmin
+                                    ? isLight
+                                      ? 'bg-emerald-600 text-[#ffffff] font-medium rounded-br-sm shadow-xs'
+                                      : 'bg-emerald-500 text-black font-medium rounded-br-sm'
+                                    : isLight
+                                    ? 'bg-white text-slate-900 border border-slate-200 rounded-bl-sm shadow-xs'
+                                    : 'bg-[#1a1c24] text-stone-100 border border-stone-800 rounded-bl-sm'
+                                } ${isPending ? 'opacity-80' : 'opacity-100'}`}
+                              >
+                                <p className="whitespace-pre-wrap break-words">{m.text}</p>
+                                <span
+                                  className={`flex items-center justify-end gap-1 text-[9px] mt-1 ${
+                                    isAdmin
+                                      ? isLight
+                                        ? 'text-emerald-100/90 font-medium'
+                                        : 'text-emerald-950/75 font-semibold'
+                                      : isLight
+                                      ? 'text-slate-400'
+                                      : 'text-stone-500'
+                                  }`}
+                                >
+                                  <span>
+                                    {new Date(m.timestamp).toLocaleTimeString([], {
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
+                                  {isAdmin &&
+                                    (isPending ? (
+                                      <Clock className="w-2.5 h-2.5 animate-pulse" />
+                                    ) : (
+                                      <CheckCheck className="w-3 h-3" />
+                                    ))}
+                                </span>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                      <div ref={adminSupportEndRef} />
-                    </div>
-
-                    {supportFeedbackMsg && (
-                      <div className="px-3.5 py-1.5 bg-emerald-500/10 border-t border-emerald-500/25 text-emerald-300 text-[10px] font-semibold">
-                        {supportFeedbackMsg}
+                          );
+                        })}
                       </div>
-                    )}
 
-                    {/* Reply Composer */}
-                    <form
-                      onSubmit={handleSendSupportReply}
-                      className="p-3 border-t border-stone-800 bg-[#171820] flex items-center gap-2"
-                    >
-                      <input
-                        type="text"
-                        value={supportReplyInput}
-                        onChange={(e) => setSupportReplyInput(e.target.value)}
-                        disabled={isSendingSupportReply}
-                        maxLength={1000}
-                        placeholder={`Reply to ${selectedSupportThread.userName || 'user'}...`}
-                        className="flex-1 rounded-xl px-3 py-2 text-xs bg-[#0e0f14] border border-stone-800 text-white placeholder:text-stone-500 focus:outline-none focus:border-emerald-500/60"
-                      />
-                      <button
-                        type="submit"
-                        disabled={isSendingSupportReply || !supportReplyInput.trim()}
-                        className="px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed text-black text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer flex-shrink-0"
+                      {supportFeedbackMsg && (
+                        <div
+                          className={`px-3.5 py-1.5 border-t text-[10px] font-semibold ${
+                            supportFeedbackIsError
+                              ? isLight
+                                ? 'bg-red-50 border-red-200 text-red-700'
+                                : 'bg-red-500/10 border-red-500/25 text-red-300'
+                              : isLight
+                              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                              : 'bg-emerald-500/10 border-emerald-500/25 text-emerald-300'
+                          }`}
+                        >
+                          {supportFeedbackMsg}
+                        </div>
+                      )}
+
+                      {/* Reply Composer (never locks while sending so admin can send 2+ messages back-to-back) */}
+                      <form
+                        onSubmit={handleSendSupportReply}
+                        className={`p-3 border-t flex items-center gap-2 ${
+                          isLight
+                            ? 'border-slate-200 bg-white'
+                            : 'border-stone-800 bg-[#171820]'
+                        }`}
                       >
-                        <Send className="w-3.5 h-3.5" />
-                        Reply
-                      </button>
-                    </form>
-                  </>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center text-stone-500 text-xs p-6 text-center">
+                        <input
+                          ref={adminSupportInputRef}
+                          type="text"
+                          value={supportReplyInput}
+                          onChange={(e) => setSupportReplyInput(e.target.value)}
+                          maxLength={1000}
+                          autoComplete="off"
+                          placeholder={`Message ${selectedSupportThread.userName || 'user'}...`}
+                          className={`flex-1 rounded-xl px-3.5 py-2.5 text-xs border focus:outline-none transition-colors ${
+                            isLight
+                              ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder:text-slate-400 focus:bg-white focus:border-emerald-500'
+                              : 'bg-[#0e0f14] border-stone-800 text-white placeholder:text-stone-500 focus:border-emerald-500/60'
+                          }`}
+                        />
+                        <button
+                          type="submit"
+                          disabled={!supportReplyInput.trim()}
+                          className={`px-3.5 py-2.5 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed text-xs font-extrabold flex items-center gap-1.5 transition-all active:scale-95 cursor-pointer flex-shrink-0 ${
+                            isLight
+                              ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm'
+                              : 'bg-emerald-500 hover:bg-emerald-400 text-black'
+                          }`}
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          Send
+                        </button>
+                      </form>
+                    </>
+                  );
+                })() : (
+                  <div
+                    className={`flex-1 flex items-center justify-center text-xs p-6 text-center ${
+                      isLight ? 'text-slate-500 bg-slate-50/50' : 'text-stone-500'
+                    }`}
+                  >
                     Select a user chat on the left to view their message and reply.
                   </div>
                 )}
