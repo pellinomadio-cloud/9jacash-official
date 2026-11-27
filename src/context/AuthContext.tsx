@@ -44,6 +44,7 @@ import {
   getUserFromFirestore,
   findUserByEmailOrIdInFirestore,
   verifyUserExistsOnServerInFirestore,
+  checkEmailExistsFastInFirestore,
   deleteUserFromFirestore,
   purgeNonGmailUserFromFirestore,
   deleteDepositRequestFromFirestore,
@@ -64,7 +65,7 @@ import {
   getRegisteredAccountsOnDevice,
   DEVICE_ACCOUNTS_STORAGE_KEY,
 } from '../utils/deviceLimit.ts';
-import { verifyEmailAddress, isGmailAddress } from '../utils/emailValidation.ts';
+import { validateEmailFormat, isGmailAddress } from '../utils/emailValidation.ts';
 
 export const TIER_LIMITS: Record<number, number> = {
   1: 400000,    // ₦400,000 for Tier 1
@@ -791,6 +792,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
   const adminQuickCodesRef = useRef<AdminQuickCode[]>(adminQuickCodes);
   const lastAutoSyncedHashRef = useRef<string>('');
+  const hasLiveUsersServerSnapshotRef = useRef<boolean>(false);
+  const recentlyRegisteredGraceRef = useRef<Record<string, number>>({});
+  const isWithinRegistrationGrace = useCallback((uid?: string | null): boolean => {
+    if (!uid) return false;
+    const regTs = recentlyRegisteredGraceRef.current[uid];
+    if (!regTs) return false;
+    if (Date.now() - regTs < 45000) return true;
+    delete recentlyRegisteredGraceRef.current[uid];
+    return false;
+  }, []);
   useEffect(() => {
     adminQuickCodesRef.current = adminQuickCodes;
   }, [adminQuickCodes]);
@@ -1310,6 +1321,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 1. Subscribe to all registered users in Firestore (non-@gmail.com users are automatically purged)
     const unsubUsers = subscribeToAllUsers((rawCloudUsers, meta) => {
       const isAuthoritativeServerSnapshot = !meta?.fromCache;
+      if (isAuthoritativeServerSnapshot) {
+        hasLiveUsersServerSnapshotRef.current = true;
+      }
       const cloudUsers = (rawCloudUsers || []).filter((u) => {
         if (!u) return false;
         if (!isGmailAddress(u.email)) {
@@ -1410,16 +1424,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return (currentEmailClean && cuEmail === currentEmailClean) || (currentId && cuId === currentId);
           });
 
+          if (matchingCloudUser && currentId && recentlyRegisteredGraceRef.current[currentId]) {
+            delete recentlyRegisteredGraceRef.current[currentId];
+          }
+
+          // Preserve a newly registered user in local list while their initial Firestore write propagates
+          if (currentLoggedIn && !matchingCloudUser && isWithinRegistrationGrace(currentId)) {
+            if (!merged.some((u) => u.id === currentLoggedIn.id)) {
+              merged.push(currentLoggedIn);
+            }
+          }
+
           // Only purge if the user is missing by BOTH email and ID on an authoritative server snapshot, confirmed via live server check
           if (
             isAuthoritativeServerSnapshot &&
             currentLoggedIn &&
             (currentLoggedIn.id || currentLoggedIn.email) &&
-            !matchingCloudUser
+            !matchingCloudUser &&
+            !isWithinRegistrationGrace(currentId)
           ) {
             verifyUserExistsOnServerInFirestore(currentId, currentEmailClean)
               .then((verifyRes) => {
-                if (verifyRes.status === 'not_found' && userRef.current) {
+                if (verifyRes.status === 'not_found' && userRef.current && !isWithinRegistrationGrace(currentId)) {
                   purgeAccountFromPhone(
                     currentId,
                     currentEmailClean,
@@ -1476,11 +1502,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               lastAutoSyncedHashRef.current = syncHash;
               saveUserToFirestore(mergedUser).catch(console.error);
             }
-          } else if (isAuthoritativeServerSnapshot && userRef.current) {
+          } else if (isAuthoritativeServerSnapshot && userRef.current && !isWithinRegistrationGrace(currentUid)) {
             // Confirm directly on live Firestore server before purging
             verifyUserExistsOnServerInFirestore(currentUid, currentEmail)
               .then((verifyRes) => {
-                if (verifyRes.status === 'not_found' && userRef.current) {
+                if (verifyRes.status === 'not_found' && userRef.current && !isWithinRegistrationGrace(currentUid)) {
                   purgeAccountFromPhone(
                     currentUid,
                     currentEmail,
@@ -1493,15 +1519,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } else if (isAuthoritativeServerSnapshot) {
         // Authoritative server snapshot confirmed 0 registered users on Admin Dashboard:
-        // wipe local user caches and verify/purge active session on this phone
+        // wipe local user caches unless active user just registered and is mid-sync
+        const activeUser = userRef.current;
+        if (activeUser && isWithinRegistrationGrace(activeUser.id)) {
+          return;
+        }
         setAllUsers([]);
         safeLocalStorageSet(USERS_STORAGE_KEY, JSON.stringify([]));
         safeLocalStorageSet(DEVICE_ACCOUNTS_STORAGE_KEY, JSON.stringify([]));
-        const activeUser = userRef.current;
         if (activeUser && (activeUser.id || activeUser.email)) {
           verifyUserExistsOnServerInFirestore(activeUser.id, activeUser.email)
             .then((verifyRes) => {
-              if (verifyRes.status === 'not_found' && userRef.current) {
+              if (verifyRes.status === 'not_found' && userRef.current && !isWithinRegistrationGrace(activeUser.id)) {
                 purgeAccountFromPhone(
                   activeUser.id,
                   activeUser.email,
@@ -4118,7 +4147,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user?.id, allUsers.length]);
 
-  // Firebase Registration with strict Admin Dashboard / Firestore server persistence
+  // Fast, smooth Firebase Registration with Firestore server persistence
   const register = async (name: string, email: string, pin: string, inputReferralCode?: string) => {
     try {
       if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -4128,7 +4157,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       }
 
-      const emailCheck = await verifyEmailAddress(email);
+      // 1. Synchronous email format & @gmail.com validation (0ms)
+      const emailCheck = validateEmailFormat(email);
       if (!emailCheck.valid || !isGmailAddress(emailCheck.normalizedEmail)) {
         return {
           success: false,
@@ -4137,15 +4167,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const cleanEmail = emailCheck.normalizedEmail;
-      let existingUsers = getAllRegisteredUsers();
+      const existingUsers = getAllRegisteredUsers();
 
-      // Check live Firestore server FIRST so duplicate emails on Admin Dashboard are caught accurately
-      const serverDupCheck = await verifyUserExistsOnServerInFirestore(undefined, cleanEmail);
-      if (serverDupCheck.status === 'exists') {
+      // 2. Instant in-memory duplicate email check (0ms — already synced via live Firestore listener)
+      const localDuplicate = existingUsers.find(
+        (u) => u && (u.email || '').trim().toLowerCase() === cleanEmail
+      );
+      if (localDuplicate) {
         return { success: false, message: 'An account with this email already exists. Please log in.' };
       }
 
-      // Enforce device registration limit (Maximum 10 accounts per device)
+      // 3. Enforce device registration limit (Maximum 10 accounts per device)
       const deviceCheck = canRegisterAccountOnDevice(existingUsers);
       if (!deviceCheck.allowed) {
         return {
@@ -4155,14 +4187,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const myReferralCode = extractReferralCodeFromEmail(cleanEmail);
-      // If a user accessed via a referral link, preserve the incoming referral code permanently
       const storedIncoming = getIncomingReferralCode();
       const rawRefInput = (storedIncoming || inputReferralCode || '').trim().toLowerCase();
       const cleanRefCode = rawRefInput ? (cleanReferralCodeInput(rawRefInput) || rawRefInput) : undefined;
       let matchedReferrer: User | undefined;
 
       if (cleanRefCode) {
-        // 1. Search in-memory / locally stored users first (instant)
+        // Search in-memory / locally stored users first (instant, 0ms)
         matchedReferrer = existingUsers.find((u) => {
           if (!u) return false;
           const uRef = (u.referralCode || '').toLowerCase().trim();
@@ -4180,17 +4211,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             uEmail === rawRefInput
           );
         });
+      }
 
-        // 2. If not found in local memory (e.g. cross-device registration), look up in Firestore directly
-        if (!matchedReferrer) {
-          try {
-            const cloudReferrer = await findUserByReferralCodeInFirestore(cleanRefCode);
-            if (cloudReferrer) {
-              matchedReferrer = cloudReferrer;
-            }
-          } catch (e) {
-            console.warn('Error fetching referrer from Firestore:', e);
-          }
+      // 4. Run any needed server duplicate check & cross-device referral lookup IN PARALLEL with tight caps
+      const needsServerDupCheck = !hasLiveUsersServerSnapshotRef.current;
+      const needsCloudReferrerLookup = Boolean(cleanRefCode && !matchedReferrer);
+
+      if (needsServerDupCheck || needsCloudReferrerLookup) {
+        const [dupStatus, cloudReferrer] = await Promise.all([
+          needsServerDupCheck
+            ? checkEmailExistsFastInFirestore(cleanEmail, 1200)
+            : Promise.resolve<'not_found'>('not_found'),
+          needsCloudReferrerLookup && cleanRefCode
+            ? findUserByReferralCodeInFirestore(cleanRefCode, 1200).catch(() => null)
+            : Promise.resolve<User | null>(null),
+        ]);
+
+        if (dupStatus === 'exists') {
+          return { success: false, message: 'An account with this email already exists. Please log in.' };
+        }
+        if (cloudReferrer) {
+          matchedReferrer = cloudReferrer;
         }
       }
 
@@ -4221,33 +4262,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         updatedAt: new Date(regNowMs).toISOString(),
       };
 
-      // CRITICAL: Persist new user to Firebase Firestore (Admin Dashboard) BEFORE allowing account to exist on phone!
-      const primarySaveResult = await Promise.race([
-        saveUserToFirestore(newUser, { forceAttempt: true }),
-        new Promise<{ ok: boolean; error?: string; quotaExceeded?: boolean }>((resolve) =>
-          setTimeout(() => resolve({ ok: false, error: 'Connection timed out while registering account on server.' }), 10000)
+      // Protect the brand-new account during initial Firestore propagation
+      recentlyRegisteredGraceRef.current[newUser.id] = Date.now();
+
+      // 5. Persist new user to Firebase Firestore:
+      // Normally completes in ~150-350ms. Race with 1,200ms smooth-entry threshold so slow networks
+      // never freeze the button (Firestore's persistent cache finishes syncing seamlessly in background).
+      const primarySavePromise = saveUserToFirestore(newUser, { forceAttempt: true });
+      const fastSaveOutcome = await Promise.race([
+        primarySavePromise.then((res) => ({ settled: true as const, res })),
+        new Promise<{ settled: false }>((resolve) =>
+          setTimeout(() => resolve({ settled: false }), 1200)
         ),
       ]);
 
-      if (!primarySaveResult.ok) {
+      if (fastSaveOutcome.settled && !fastSaveOutcome.res.ok) {
+        delete recentlyRegisteredGraceRef.current[newUser.id];
         return {
           success: false,
-          message: primarySaveResult.quotaExceeded
+          message: fastSaveOutcome.res.quotaExceeded
             ? 'Server database is temporarily busy (daily quota reached). Accounts cannot be created until they can be recorded on the Admin Dashboard. Please try again later.'
             : 'Unable to register your account on the server right now. Please check your internet connection and try again.',
         };
       }
 
-      // Record account on device only after confirmed server registration
+      // If still in-flight past 1,200ms, ensure background completion with automatic retry
+      if (!fastSaveOutcome.settled) {
+        primarySavePromise
+          .then((res) => {
+            if (!res.ok) {
+              setTimeout(() => {
+                saveUserToFirestore(newUser, { forceAttempt: true }).catch(console.error);
+              }, 2000);
+            }
+          })
+          .catch(() => {
+            setTimeout(() => {
+              saveUserToFirestore(newUser, { forceAttempt: true }).catch(console.error);
+            }, 2000);
+          });
+      }
+
+      // Record account on device
       recordAccountOnDevice(cleanEmail);
       setAccountRemovedMessage(null);
 
-      let initialTxs: Transaction[] = [];
+      const initialTxs: Transaction[] = [];
       const now = new Date();
       const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
       const timeStr = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
 
-      const firestoreTasks: Promise<any>[] = [];
+      const backgroundFirestoreTasks: Promise<any>[] = [];
 
       // If registered with a referral link or code, grant ₦3,000 welcome bonus to the referred user!
       if (welcomeBonus > 0) {
@@ -4266,7 +4331,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           createdAt: now.toISOString(),
         };
         initialTxs.push(welcomeTx);
-        firestoreTasks.push(saveTransactionToFirestore(welcomeTx, newUser.id));
+        backgroundFirestoreTasks.push(saveTransactionToFirestore(welcomeTx, newUser.id));
       }
 
       // If registered with a valid referrer, credit ₦15,000 bonus directly to the referrer's wallet balance!
@@ -4291,7 +4356,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const updatedReferrer = normalizeUser(rawUpdatedReferrer) || rawUpdatedReferrer;
         updatedReferrerToStore = updatedReferrer;
 
-        // Mark this referred user ID as credited for the referrer so reconciliation doesn't double-credit
         try {
           const creditedKey = `9jacash_credited_ref_ids_${matchedReferrer.id}`;
           const existingCreditedRaw = localStorage.getItem(creditedKey);
@@ -4302,9 +4366,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         } catch {}
 
-        // Record Referral Transaction for Referrer (both localStorage and Firestore)
         const reference = 'REF9JA' + Math.floor(10000000 + Math.random() * 90000000);
-
         const refTx: Transaction = {
           id: 'tx_ref_' + Date.now(),
           type: 'earn',
@@ -4327,7 +4389,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           safeLocalStorageSet(refTxKey, JSON.stringify(sortTransactionsNewestFirst([refTx, ...existingRefTxs])));
         } catch {}
 
-        // Save Referral Record (both localStorage and Firestore)
         const newRefRecord: ReferralRecord = {
           id: 'ref_rec_' + matchedReferrer.id + '_' + newUser.id,
           referrerId: matchedReferrer.id,
@@ -4346,13 +4407,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return updatedRefs;
         });
 
-        firestoreTasks.push(
+        backgroundFirestoreTasks.push(
           saveUserToFirestore(updatedReferrer),
           saveTransactionToFirestore(refTx, matchedReferrer.id),
           saveReferralRecordToFirestore(newRefRecord)
         );
 
-        // Send In-App Notification directly to the Referrer
         sendNotificationToUser(
           matchedReferrer.id,
           'Referral Cash Bonus! 🎉',
@@ -4362,14 +4422,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         );
       }
 
-      if (firestoreTasks.length > 0) {
-        await Promise.race([
-          Promise.all(firestoreTasks),
-          new Promise((resolve) => setTimeout(resolve, 2500)),
-        ]).catch(console.error);
+      // Run all secondary welcome/referral Firestore writes in the background so dashboard transition is instant!
+      if (backgroundFirestoreTasks.length > 0) {
+        Promise.allSettled(backgroundFirestoreTasks).catch(console.error);
       }
 
-      // Update local state and storage - accurately ensuring the updated referrer is persisted
+      // Update local state and storage in one clean pass
       let updatedAll = existingUsers.filter((u) => u.id !== newUser.id);
       if (updatedReferrerToStore) {
         const refId = updatedReferrerToStore.id;
@@ -4392,13 +4450,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setKycPendingWithdrawalState(null);
       setShowKycNoticeModal(false);
 
+      userRef.current = newUser;
       setUser(newUser);
       setTransactions(initialTxs);
       setShowTelegramAdvert(true);
 
       // Trigger 100,000 naira credit alert from bot earn rewards after 6 seconds
       sessionStorage.setItem(`9jacash_new_user_reg_pending_${newUser.id}`, Date.now().toString());
-      // Trigger profile picture prompt 2 minutes after registration
       try {
         localStorage.setItem(`9jacash_profile_pic_reg_at_${newUser.id}`, Date.now().toString());
         localStorage.removeItem(`9jacash_profile_pic_prompt_done_${newUser.id}`);

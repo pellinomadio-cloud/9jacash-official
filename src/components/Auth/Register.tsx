@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext.tsx';
 import { useTheme } from '../../context/ThemeContext.tsx';
 import { TermsModal } from './TermsModal.tsx';
@@ -10,7 +10,7 @@ import {
   SITE_DOMAIN,
 } from '../../utils/referral.ts';
 import { canRegisterAccountOnDevice } from '../../utils/deviceLimit.ts';
-import { validateEmailFormat, verifyEmailAddress } from '../../utils/emailValidation.ts';
+import { validateEmailFormat } from '../../utils/emailValidation.ts';
 import {
   Landmark,
   User as UserIcon,
@@ -44,6 +44,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   const [emailTouched, setEmailTouched] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isDeviceLimitReached, setIsDeviceLimitReached] = useState(false);
+  const isSubmittingRef = useRef(false);
 
   useEffect(() => {
     // Check if device has reached maximum 10 accounts
@@ -76,10 +77,12 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   const handlePinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value.replace(/\D/g, '').slice(0, 4);
     setPin(val);
+    if (error) setError('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current || isLoading) return;
     setError('');
     if (accountRemovedMessage) clearAccountRemovedMessage();
     setEmailTouched(true);
@@ -99,7 +102,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
 
     const formatCheck = validateEmailFormat(email);
     if (!formatCheck.valid) {
-      setError(formatCheck.error || 'Please enter a valid email address');
+      setError(formatCheck.error || 'Please enter a valid @gmail.com email address');
       return;
     }
 
@@ -117,22 +120,19 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
       ? (incomingRef || referralCode)
       : (cleanReferralCodeInput(referralCode) || incomingRef || undefined);
 
+    isSubmittingRef.current = true;
     setIsLoading(true);
-    const domainCheck = await verifyEmailAddress(formatCheck.normalizedEmail);
-    if (!domainCheck.valid) {
-      setIsLoading(false);
-      setError(domainCheck.error || 'Please enter a valid, working email address.');
-      return;
-    }
-
-    const result = await register(name, domainCheck.normalizedEmail, pin, finalRefCode);
-    setIsLoading(false);
-
-    if (!result.success) {
-      setError(result.message || 'Failed to create account');
-      if (result.message?.includes('Device registration limit')) {
-        setIsDeviceLimitReached(true);
+    try {
+      const result = await register(name, formatCheck.normalizedEmail, pin, finalRefCode);
+      if (!result.success) {
+        setError(result.message || 'Failed to create account');
+        if (result.message?.includes('Device registration limit')) {
+          setIsDeviceLimitReached(true);
+        }
       }
+    } finally {
+      isSubmittingRef.current = false;
+      setIsLoading(false);
     }
   };
 
@@ -203,9 +203,13 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
               </div>
               <input
                 type="text"
+                autoComplete="name"
                 placeholder="Enter your full name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={(e) => {
+                  setName(e.target.value);
+                  if (error) setError('');
+                }}
                 className={`w-full pl-10 pr-4 py-3 rounded-xl text-sm transition-all border ${
                   isLight
                     ? 'bg-slate-50 border-slate-300 text-slate-900 placeholder-slate-400 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500/50'
@@ -292,6 +296,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
               <input
                 type="password"
                 inputMode="numeric"
+                autoComplete="new-password"
                 maxLength={4}
                 placeholder="••••"
                 value={pin}
@@ -397,9 +402,14 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
 
           {/* Terms & Conditions Checkbox */}
           <div className="pt-1">
-            <label className="flex items-start gap-3 cursor-pointer select-none">
+            <label
+              onClick={() => {
+                setAcceptedTerms((prev) => !prev);
+                if (error) setError('');
+              }}
+              className="flex items-start gap-3 cursor-pointer select-none"
+            >
               <div
-                onClick={() => setAcceptedTerms(!acceptedTerms)}
                 className={`w-5 h-5 mt-0.5 rounded-md border flex items-center justify-center transition-all flex-shrink-0 ${
                   acceptedTerms
                     ? 'bg-amber-500 border-amber-500 text-black'
@@ -431,10 +441,13 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full mt-3 py-3.5 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-black font-extrabold text-sm rounded-xl shadow-lg shadow-amber-500/20 transition-all transform active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+            className="w-full mt-3 py-3.5 px-4 bg-gradient-to-r from-amber-400 via-amber-500 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-black font-extrabold text-sm rounded-xl shadow-lg shadow-amber-500/20 transition-all transform active:scale-[0.99] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70"
           >
             {isLoading ? (
-              <span className="inline-block animate-spin rounded-full h-4 w-4 border-2 border-black border-t-transparent" />
+              <>
+                <span className="inline-block animate-spin rounded-full h-4 w-4 border-2 border-black border-t-transparent" />
+                <span>Creating Account...</span>
+              </>
             ) : (
               <>
                 <span>Open Account</span>

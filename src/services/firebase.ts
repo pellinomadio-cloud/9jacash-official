@@ -17,6 +17,7 @@ import {
   onSnapshot,
   query,
   where,
+  limit,
   Unsubscribe,
 } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
@@ -429,9 +430,9 @@ export async function verifyUserExistsOnServerInFirestore(
       }
     }
 
-    // 2. Direct server query by email (exact lowercase)
+    // 2. Direct server query by email (exact lowercase, limited to 1 doc for speed)
     if (cleanEmail) {
-      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', cleanEmail));
+      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', cleanEmail), limit(1));
       const snapEmail = await getDocsFromServer(qEmail);
       confirmedServerReachable = true;
       if (!snapEmail.empty) {
@@ -446,7 +447,7 @@ export async function verifyUserExistsOnServerInFirestore(
 
     // 3. Direct server query by id field (in case doc ID differed from user.id)
     if (cleanUid) {
-      const qId = query(collection(db, USERS_COLLECTION), where('id', '==', cleanUid));
+      const qId = query(collection(db, USERS_COLLECTION), where('id', '==', cleanUid), limit(1));
       const snapId = await getDocsFromServer(qId);
       confirmedServerReachable = true;
       if (!snapId.empty) {
@@ -472,6 +473,39 @@ export async function verifyUserExistsOnServerInFirestore(
       errText.toLowerCase().includes('resource has been exhausted');
     return { status: 'error', quotaExceeded, error: errText };
   }
+}
+
+/**
+ * Fast, bounded email duplicate check used during registration so users never wait on slow server probes.
+ */
+export async function checkEmailExistsFastInFirestore(
+  email: string,
+  timeoutMs = 1400
+): Promise<'exists' | 'not_found' | 'timeout_or_error'> {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  if (!cleanEmail) return 'not_found';
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'timeout_or_error';
+  if (isFirestoreQuotaExhausted()) return 'timeout_or_error';
+
+  const lookup = (async (): Promise<'exists' | 'not_found' | 'timeout_or_error'> => {
+    try {
+      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', cleanEmail), limit(1));
+      const snap = await getDocsFromServer(qEmail);
+      if (snap.empty) return 'not_found';
+      const d = snap.docs[0];
+      const valid = validateOrPurgeCloudUser(d.data() as User, d.id);
+      return valid ? 'exists' : 'not_found';
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, `${USERS_COLLECTION}/${cleanEmail}`);
+      return 'timeout_or_error';
+    }
+  })();
+
+  const timer = new Promise<'timeout_or_error'>((resolve) =>
+    setTimeout(() => resolve('timeout_or_error'), timeoutMs)
+  );
+
+  return Promise.race([lookup, timer]);
 }
 
 export async function findUserByEmailOrIdInFirestore(identifier: string): Promise<User | null> {
@@ -582,56 +616,42 @@ export async function getAllUsersFromFirestore(): Promise<User[]> {
 }
 
 /**
- * Quickly finds a user in Firestore matching a referral code, email, handle or membership ID.
- * Employs an 8-second timeout so registration remains fast while reliably resolving cross-device referrals.
+ * Fast, parallel indexed lookup for a referrer by referralCode, email, or membershipId.
+ * Avoids full collection scans and uses a tight timeout so registration stays snappy.
  */
-export async function findUserByReferralCodeInFirestore(code: string): Promise<User | null> {
+export async function findUserByReferralCodeInFirestore(
+  code: string,
+  timeoutMs = 1500
+): Promise<User | null> {
   if (!code || isFirestoreQuotaExhausted()) return null;
   const clean = code.trim().toLowerCase();
   const cleanHandle = clean.includes('@') ? extractReferralCodeFromEmail(clean) : clean;
 
   const searchOperation = (async (): Promise<User | null> => {
     try {
-      // 1. Direct query by referralCode field
-      const qRef = query(collection(db, USERS_COLLECTION), where('referralCode', '==', cleanHandle));
-      const snapRef = await getDocs(qRef);
-      if (!snapRef.empty) {
-        const docSnap = snapRef.docs[0];
-        return validateOrPurgeCloudUser(docSnap.data() as User, docSnap.id);
+      const queries = [
+        getDocs(query(collection(db, USERS_COLLECTION), where('referralCode', '==', cleanHandle), limit(1))),
+      ];
+
+      if (clean.includes('@')) {
+        queries.push(
+          getDocs(query(collection(db, USERS_COLLECTION), where('email', '==', clean), limit(1)))
+        );
+      } else {
+        queries.push(
+          getDocs(query(collection(db, USERS_COLLECTION), where('email', '==', `${cleanHandle}@gmail.com`), limit(1)))
+        );
+        queries.push(
+          getDocs(query(collection(db, USERS_COLLECTION), where('membershipId', '==', clean.toUpperCase()), limit(1)))
+        );
       }
 
-      // 2. Query by email
-      const qEmail = query(collection(db, USERS_COLLECTION), where('email', '==', clean));
-      const snapEmail = await getDocs(qEmail);
-      if (!snapEmail.empty) {
-        const docSnap = snapEmail.docs[0];
-        return validateOrPurgeCloudUser(docSnap.data() as User, docSnap.id);
-      }
-
-      // 3. Fallback: inspect user documents
-      const snapAll = await getDocs(collection(db, USERS_COLLECTION));
-      for (const d of snapAll.docs) {
-        const raw = d.data() as User;
-        if (!raw) continue;
-        const valid = validateOrPurgeCloudUser(raw, d.id);
-        if (!valid) continue;
-        const u: User = valid;
-        const uRef = (u.referralCode || '').toLowerCase().trim();
-        const uEmail = (u.email || '').toLowerCase().trim();
-        const uLocal = uEmail.split('@')[0];
-        const uEmailRef = extractReferralCodeFromEmail(uEmail);
-        const uMemberId = (u.membershipId || '').toLowerCase().trim();
-        if (
-          uRef === clean ||
-          uRef === cleanHandle ||
-          uEmail === clean ||
-          uLocal === clean ||
-          uLocal === cleanHandle ||
-          uEmailRef === clean ||
-          uEmailRef === cleanHandle ||
-          uMemberId === clean
-        ) {
-          return u;
+      const settled = await Promise.allSettled(queries);
+      for (const res of settled) {
+        if (res.status === 'fulfilled' && !res.value.empty) {
+          const docSnap = res.value.docs[0];
+          const valid = validateOrPurgeCloudUser(docSnap.data() as User, docSnap.id);
+          if (valid) return valid;
         }
       }
       return null;
@@ -641,7 +661,7 @@ export async function findUserByReferralCodeInFirestore(code: string): Promise<U
     }
   })();
 
-  const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 8000));
+  const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
   return Promise.race([searchOperation, timeoutPromise]);
 }
 
